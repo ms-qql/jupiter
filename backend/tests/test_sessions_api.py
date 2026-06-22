@@ -28,6 +28,29 @@ def test_health(client: TestClient):
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_cors_allows_frontend_origin(client: TestClient):
+    """PROJ-3: Browser-Frontend (Next.js :3000) darf das Backend erreichen."""
+    origin = "http://localhost:3000"
+    # Preflight (OPTIONS) muss den Origin zurückspiegeln.
+    pre = client.options(
+        "/sessions",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert pre.headers.get("access-control-allow-origin") == origin
+    # Einfache GET-Anfrage trägt den CORS-Allow-Origin-Header.
+    resp = client.get("/health", headers={"Origin": origin})
+    assert resp.headers.get("access-control-allow-origin") == origin
+
+
+def test_cors_blocks_unknown_origin(client: TestClient):
+    """Fremde Origins erhalten keinen Allow-Origin-Header."""
+    resp = client.get("/health", headers={"Origin": "http://evil.example"})
+    assert resp.headers.get("access-control-allow-origin") is None
+
+
 def test_create_session_ok(client: TestClient):
     resp = _create(client)
     assert resp.status_code == 201

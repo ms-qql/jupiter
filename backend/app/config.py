@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # Single-User-MVP: kein JWT — der Owner wird serverseitig gestempelt (#21).
     default_owner: str = "dev"
 
+    # CORS-Origins für das Browser-Frontend (PROJ-3 Cockpit). Dev-Default = Next.js
+    # auf :3000. In Prod via JUPITER_CORS_ORIGINS (JSON-Liste) überschreiben.
+    cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
     # Sekunden Kulanz zwischen SIGTERM und SIGKILL beim Stoppen.
     process_stop_grace_seconds: float = 5.0
 

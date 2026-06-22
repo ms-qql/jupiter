@@ -8,7 +8,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from .config import settings
 from .engine.base import EngineDriver
 from .engine.manager import SessionManager
 from .engine.vault import VaultService
@@ -20,6 +22,15 @@ def create_app(
     vault_service: VaultService | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Jupiter", version="0.1.0")
+    # CORS für das Browser-Frontend (PROJ-3 Cockpit). Origins via JUPITER_CORS_ORIGINS
+    # konfigurierbar; allow_credentials=True, damit später Cookies/Auth möglich sind.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     vault_service = vault_service or VaultService()
     app.state.vault = vault_service
     app.state.manager = SessionManager(driver_factory=driver_factory, vault=vault_service)
