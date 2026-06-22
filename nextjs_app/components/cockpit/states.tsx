@@ -33,13 +33,17 @@ export function EmptyState() {
 }
 
 export function ErrorState({ message }: { message: string }) {
+  // Generische Standardmeldung nicht doppelt anzeigen (Titel == Meldung).
+  const showDetail = message && message !== "Backend nicht erreichbar";
   return (
     <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-red-500/40 bg-red-500/5 py-20 text-center">
       <div className="text-3xl">⚠️</div>
       <h2 className="text-lg font-semibold text-red-400">
         Backend nicht erreichbar
       </h2>
-      <p className="max-w-sm text-sm text-muted-foreground">{message}</p>
+      {showDetail && (
+        <p className="max-w-sm text-sm text-muted-foreground">{message}</p>
+      )}
       <p className="text-xs text-muted-foreground/70">
         Erneuter Versuch automatisch alle paar Sekunden.
       </p>

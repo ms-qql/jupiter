@@ -31,40 +31,41 @@ export function SessionsProvider({ children }: { children: React.ReactNode }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const loadedOnce = useRef(false);
-
-  const poll = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const data = await listSessions(signal);
-      if (signal?.aborted) return;
-      setSessions(data);
-      setError(null);
-    } catch (e) {
-      if (signal?.aborted) return;
-      const msg =
-        e instanceof ApiError ? e.message : "Backend nicht erreichbar";
-      setError(msg);
-    } finally {
-      if (!signal?.aborted && !loadedOnce.current) {
-        loadedOnce.current = true;
-        setInitialLoading(false);
-      }
-    }
-  }, []);
+  // Manueller Refresh (z. B. nach Session-Erstellung): zeigt auf die aktuelle
+  // tick-Funktion des laufenden Effects — vermeidet setState direkt im Effect-Body.
+  const refreshRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     const ac = new AbortController();
-    poll(ac.signal);
-    const id = setInterval(() => poll(ac.signal), POLL_MS);
+    let loadedOnce = false;
+
+    async function tick() {
+      try {
+        const data = await listSessions(ac.signal);
+        if (ac.signal.aborted) return;
+        setSessions(data);
+        setError(null);
+      } catch (e) {
+        if (ac.signal.aborted) return;
+        setError(e instanceof ApiError ? e.message : "Backend nicht erreichbar");
+      } finally {
+        if (!ac.signal.aborted && !loadedOnce) {
+          loadedOnce = true;
+          setInitialLoading(false);
+        }
+      }
+    }
+
+    refreshRef.current = () => void tick();
+    void tick();
+    const id = setInterval(() => void tick(), POLL_MS);
     return () => {
       ac.abort();
       clearInterval(id);
     };
-  }, [poll]);
+  }, []);
 
-  const refresh = useCallback(() => {
-    poll();
-  }, [poll]);
+  const refresh = useCallback(() => refreshRef.current(), []);
 
   return (
     <SessionsContext.Provider

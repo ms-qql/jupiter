@@ -196,10 +196,12 @@ Keine neuen Endpoints/Tabellen. Damit ist der Backend-Blocker für PROJ-3 (CORS)
 - **Secrets:** Frontend-Bundle enthält nur `NEXT_PUBLIC_API_BASE` (öffentliche API-URL, by design) — keine Secrets geleakt.
 - **Hinweis Phase 2:** WS-/REST-Endpoints sind unauthentifiziert (MVP-Entscheidung). Vor Multi-User/Exponierung echtes Auth nachrüsten (#21).
 
-### Gefundene Bugs (alle **Low** — keine Critical/High/Medium)
-- **LOW-1 (Lint/CI-Hygiene):** `npm run lint` schlägt mit 1 Fehler fehl — `react-hooks/set-state-in-effect` in `components/cockpit/sessions-provider.tsx:57` (initialer `poll()`-Aufruf im Effect-Body). **Kein** Funktionsfehler (Polling läuft verifiziert). *Fix-Vorschlag:* initialen Poll so umstellen, dass die Regel nicht anschlägt (z. B. Guard/erste Iteration im Interval), oder Regel gezielt begründet ausnehmen. → Frontend.
-- **LOW-2 (Responsive < Tablet):** Bei < 600 px (375 px getestet) klappt die feste Rail (w-72) nicht ein → Board-Inhalt beschnitten. **Außerhalb der AC** („nutzbar ab Tablet"), daher kein Blocker. *Fix-Vorschlag:* Rail unter `md` einklappbar/als Drawer. → Frontend (Folge-Feature).
-- **LOW-3 (Kosmetik):** Fehler-State zeigt fixe Überschrift **und** identische Meldung („Backend nicht erreichbar" doppelt), weil die Fehlermeldung dem Titel entspricht. *Fix-Vorschlag:* generische Überschrift + spezifische Meldung trennen. → Frontend.
+### Gefundene Bugs (alle **Low** — keine Critical/High/Medium) — **alle behoben 2026-06-22**
+- **LOW-1 (Lint/CI-Hygiene) — ✅ FIXED:** `react-hooks/set-state-in-effect` in `sessions-provider.tsx`. Poll-Logik in eine lokale `tick()`-Funktion im Effect verlagert, manueller `refresh` über Ref. `npm run lint` jetzt grün.
+- **LOW-2 (Responsive < Tablet) — ✅ FIXED:** Neue `CockpitShell` — Rail inline ab `md`, darunter einklappbarer Overlay-Drawer mit Menü-Button (opak, schließt bei Navigation/Backdrop). 375 px Board jetzt voll nutzbar; Desktop unverändert (Rail inline, kein Menü-Button) — per Screenshot bestätigt.
+- **LOW-3 (Kosmetik) — ✅ FIXED:** `ErrorState` unterdrückt die generische Meldung, wenn sie dem Titel entspricht — „Backend nicht erreichbar" erscheint nur noch einmal; spezifische Detailmeldungen (z. B. „Fehler 500") werden weiterhin angezeigt.
+
+**Verifikation nach Fixes:** `npm run lint` grün · Vitest **17 passed** · `next build` grün · Screenshots (Mobile Board/Drawer, Desktop, Error-State) bestätigt.
 
 ### Empfehlung
 **Production-ready: JA** (innerhalb des MVP-Scopes). Keine Critical/High/Medium-Bugs; 3 Low-Findings als Nachzieharbeiten dokumentiert. Empfohlene Folgearbeit: dedizierte Playwright-E2E-Suite unter `nextjs_app/e2e/` (das QA-E2E lief als Verifikation, ist aber noch nicht als Repo-Regression eingecheckt).

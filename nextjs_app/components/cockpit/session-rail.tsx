@@ -28,7 +28,7 @@ function sortForRail(sessions: Session[]): Session[] {
   });
 }
 
-export function SessionRail() {
+export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
   const { sessions, initialLoading, error } = useSessions();
   const pathname = usePathname();
   const now = useNow();
@@ -40,7 +40,11 @@ export function SessionRail() {
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-card/40">
       <div className="flex items-center justify-between px-4 py-3">
-        <Link href="/" className="text-sm font-semibold tracking-tight">
+        <Link
+          href="/"
+          onClick={onItemClick}
+          className="text-sm font-semibold tracking-tight"
+        >
           🛰️ Jupiter
         </Link>
         <NewSessionDialog>
@@ -69,6 +73,7 @@ export function SessionRail() {
                 session={s}
                 now={now}
                 active={pathname === `/sessions/${s.session_id}`}
+                onNavigate={onItemClick}
               />
             ))
           )}
@@ -78,6 +83,7 @@ export function SessionRail() {
       <div className="border-t border-border px-4 py-2">
         <Link
           href="/"
+          onClick={onItemClick}
           className="text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           {hiddenCount > 0 ? `Alle anzeigen (+${hiddenCount}) →` : "Zum Board →"}
@@ -91,16 +97,19 @@ function RailItem({
   session,
   now,
   active,
+  onNavigate,
 }: {
   session: Session;
   now: number;
   active: boolean;
+  onNavigate?: () => void;
 }) {
   const meta = statusMeta(session.status);
   const role = session.role?.trim();
   return (
     <Link
       href={`/sessions/${session.session_id}`}
+      onClick={onNavigate}
       className={cn(
         "group flex items-center gap-2.5 rounded-md px-2 py-2 text-sm transition-colors",
         active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
