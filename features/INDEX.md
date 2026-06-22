@@ -8,7 +8,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 
 | ID | Feature | Prio | Status | Abhängigkeiten | Spec |
 |----|---------|------|--------|----------------|------|
-| PROJ-1 | Engine-Treiber: Claude-Max-Session headless | P0 | Planned | — | [Spec](PROJ-1-engine-treiber-claude-headless.md) |
+| PROJ-1 | Engine-Treiber: Claude-Max-Session headless | P0 | Architected | — | [Spec](PROJ-1-engine-treiber-claude-headless.md) |
 | PROJ-2 | Vault-Anbindung als Dienst | P0 | Planned | — | [Spec](PROJ-2-vault-anbindung-dienst.md) |
 | PROJ-3 | Cockpit: Mission Control + Kanban + Ampel-Kacheln | P0 | Planned | PROJ-1, PROJ-2 | [Spec](PROJ-3-cockpit-mission-control-kanban.md) |
 | PROJ-4 | Decision Cards (Freigabe-Flow) | P0 | Planned | PROJ-1, PROJ-3 | [Spec](PROJ-4-decision-cards.md) |
