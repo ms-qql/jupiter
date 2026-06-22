@@ -46,6 +46,7 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | — | Trust-Policy / Konstitution (konfigurierbar) | P1 | #5 | Roadmap |
 | — | Fileexplorer + Drag-and-Drop | P1 | #15 | Roadmap |
 | — | MD-Editor mit Obsidian-Features (voll) | P1 | #16 | Roadmap |
+| — | Git-Branch-Handling (in-App, abc-konform: main ↔ dev, Feature-Branches, Promote) | P1 | #31 | Roadmap |
 | — | Vault Stufe 3: lebendes Gehirn + roh↔kuratiert + Kuratierung | P1 | #9, #10, #11 | Roadmap |
 | — | Amok-Watchdog + Limits | P1 | #19 | Roadmap |
 | — | Recovery über den Vault | P1 | #20 | Roadmap |

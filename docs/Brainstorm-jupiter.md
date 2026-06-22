@@ -89,6 +89,8 @@
 
 **[#16] MD-Reader/-Editor mit Obsidian-DNA** — Markdown lesen *und* leicht editieren, mit `[[Wikilinks]]` + Backlinks. *Doku lebendig bearbeitbar, kein Tool-Wechsel.*
 
+**[#31] Git-Branch-Handling (einfach & logisch, abc-konform)** — In-App-Verwaltung der Git-Branches je Projekt/Session: aktuellen Branch sehen, einfach wechseln (z. B. `main` ↔ `dev`), Feature-Branches `specs/PROJ-X-…` anlegen und am Ende `dev → main` promoten — **genau die Branch-Strategie des `abc-architecture`-Skills, aber als Ein-Klick-UI statt manueller git-Befehle**. *Die Versionskontroll-Logik des abc-Workflows wird sichtbar und bedienbar, kein Terminal-Jonglieren.* **(nicht MVP — Phase 1, Teil der abc-Workflow-Integration)**
+
 ### Domäne: Multi-Agent-Orchestrierung
 **[#17] Jupiter als Dispatch-Schicht (der fehlende Orchestrator)** — Koordinator-Modus, der Tickets aus `features/INDEX.md` an Spezialisten-Sessions verteilt und ihre Zusammenarbeit steuert. *Materialisiert die „Hauptsession"-Rolle, die dein Agent-Team-Design schon voraussetzt (du machst sie heute von Hand).*
 
@@ -116,7 +118,7 @@
 | **C. Engine-Layer** | #6, #12, #13, #22 | Treiber-Abstraktion, Launcher, Integration, Routing |
 | **D. Kontext-Engine** | #7, #8, #23, #25, #26, #27 | Handover, Budget, schlanker Kontext |
 | **E. Vault (Gedächtnis)** | #9, #10, #11, #14, #20 | Einzige Wahrheit, Wissen, Recovery |
-| **F. Arbeitsraum** | #15, #16 | Dateien & Doku |
+| **F. Arbeitsraum** | #15, #16, #31 | Dateien, Doku & Versionskontrolle |
 | **I. Eingabe** | #29 | Spracheingabe (Push-to-Talk), abo-frei |
 | **G. Multi-Agent** | #17, #18, #30 | Orchestrierung mehrerer Spezialisten + Cross-Agent-Review |
 | **H. Team-Fundament** | #21 | Zukunftssichere Identität |
@@ -140,6 +142,7 @@ Ziel: Du steuerst **mehrere parallele Claude-Max-Sessions** in einer GUI, mit Va
 
 ### 🟡 Phase 1 — Ausbau (Komfort, Robustheit, Effizienz)
 - **Arbeitsraum:** Fileexplorer + DnD #15 · MD-Editor mit Obsidian-Features #16 (voll)
+- **Versionskontrolle:** Git-Branch-Handling in-App, abc-konform (main ↔ dev, Feature-Branches, Promote) #31
 - **Vault Stufe 3:** lebendes Gehirn #9 · roh↔kuratiert #10 · Kuratierung Schwelle→Freigabe #11
 - **Resilienz:** Amok-Watchdog #19 · Recovery über Vault #20
 - **Weitere Engines:** Codex / Gemini / GLM / Ollama als Treiber · iFrame + Launch-Button #13

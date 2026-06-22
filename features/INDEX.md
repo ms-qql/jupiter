@@ -26,5 +26,5 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 7. **PROJ-7** — MD-Reader
 
 ## Roadmap (noch ohne Spec — siehe docs/PRD.md)
-- **P1:** Smart Launcher #12 · Trust-Policy #5 · Fileexplorer #15 · MD-Editor #16 · Vault Stufe 3 #9/#10/#11 · Watchdog #19 · Recovery #20 · weitere Engines #13 · RAG/Späher/Caching/Token-Dashboard #23/#26/#27/#28 · Spracheingabe #29
+- **P1:** Smart Launcher #12 · Trust-Policy #5 · Fileexplorer #15 · MD-Editor #16 · Vault Stufe 3 #9/#10/#11 · Watchdog #19 · Recovery #20 · weitere Engines #13 · RAG/Späher/Caching/Token-Dashboard #23/#26/#27/#28 · Spracheingabe #29 · Git-Branch-Handling #31
 - **P2:** Multi-Agent-Dispatch #17/#18 · Cross-Agent-Review #30 · Vault als geteilter Dienst #14 · echtes Auth/RLS #21 · Registry
