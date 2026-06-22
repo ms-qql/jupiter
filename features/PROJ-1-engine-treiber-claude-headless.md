@@ -142,7 +142,39 @@ MVP single-user → **kein JWT**; `owner` wird serverseitig gestempelt (bewusste
 - **Tests:** `backend/tests/` — 23 grün (`pytest`), nutzen einen `FakeDriver` (keine echte Session/Quota). Live-Test manuell via `scripts/smoke_driver.py` (verbraucht Quota, nicht in CI).
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-06-22 · **Branch:** dev · **Tester:** QA Engineer · **Suite:** `backend/tests/` → **39 grün** (`pytest`).
+
+### Akzeptanzkriterien (10/10 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | Headless-Start, Subscription-Auth (kein API-Key) | ✅ PASS | Live-Smoke: `apiKeySource:"none"` + Kosten |
+| 2 | Start mit Initial-Prompt + Projektpfad | ✅ PASS | `test_create_session_ok` + Smoke |
+| 3 | Stream-JSON-Events geparst | ✅ PASS | `test_events.py` (reale Events) |
+| 4 | Multi-turn-Eingabe | ✅ PASS | `test_input_flow` + Smoke |
+| 5 | Modell pro Session (`--model`), Default Sonnet | ✅ PASS | Schema-Literal + `build_argv` |
+| 6 | Sauber stoppen + pausieren | ✅ PASS | Smoke (Exit 0, sauberer Stop) + `test_pause_blocks_input` |
+| 7 | Status starting/running/waiting/done/error | ✅ PASS | `test_manager.py` |
+| 8 | Token-/Kontext-Verbrauch extrahiert (#25) | ✅ PASS | `test_extract_usage_and_context_fill` (18.1 %) |
+| 9 | Einfügen (Paste) | ✅ PASS | `test_input_flow` |
+| 10 | Herauskopieren (Copy/Transkript) | ✅ PASS | `test_input_flow` (transcript_text) |
+
+### Security-Audit (Red-Team) — Pfad-Scope hält
+- ✅ **Pfad-Traversal** (`../../etc`), **Prefix-Attacke** (`projects-evil`), **Elternverzeichnis** (`/home/dev`), **Symlink-Escape** (Symlink in Root → `/etc`) — **alle abgelehnt** (`realpath` + `startswith(root+sep)`).
+- ✅ Ungültiges Modell / permission_mode → 422; leere Eingabe → 422; unbekannte Session → 404; Eingabe nach Stop → 409; WS auf unbekannte Session → Close 4404.
+- ✅ Prozess-Isolation: je Session eigener Subprozess + eigenes `cwd`/`session_id`.
+- N/A: JWT/RLS/Mandant-Isolation, Flutter-UI, Responsive — bewusste MVP-Non-Goals bzw. UI in PROJ-3.
+
+### Gefundene Findings (keine Critical/High → nicht deploy-blockierend)
+| ID | Sev | Befund | Empfehlung |
+|----|-----|--------|------------|
+| **QA-1** | **Medium** | API akzeptiert `permission_mode="bypassPermissions"` vom Client → schaltet das vom User gewählte Safety-Net ab; bis PROJ-4 (Cards) + #19 (Watchdog) existiert dann KEIN Schutz. | MVP auf `{default, acceptEdits}` beschränken (→ 422 für bypass), bis PROJ-4/#19 stehen. |
+| **QA-2** | **Low** | Keine Größen-Obergrenze für `initial_prompt`/`input.text` — Spec-Edge-Case „ggf. Hinweis/Limit" nicht erzwungen. | `max_length` an den Schemas + Hinweis bei Überschreitung. |
+| **QA-3** | **Low** | Kein Limit für parallele Sessions (Ressourcen-Erschöpfung möglich). Single-User mindert Risiko. | Konfigurierbares Max + freundliche Ablehnung. |
+
+Hinweis (kein Bug, dokumentierte Scope-Grenze): Sessions sind In-Memory → überleben keinen Neustart (Persistenz via PROJ-2/Infra).
+
+### Produktionsreife-Entscheidung
+**READY (bedingt)** — keine Critical/High-Bugs; alle 10 AC bestanden. Empfehlung: **QA-1 vor jeglicher Exposition über localhost hinaus** fixen (kleiner Backend-Patch), QA-2/QA-3 als Härtung nachziehen.
 
 ## Deployment
 _To be added by /deploy_
