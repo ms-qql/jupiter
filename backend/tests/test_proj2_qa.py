@@ -144,6 +144,21 @@ def test_sec_client_session_id_cannot_escape_jupiter(vault):
         assert full.startswith(vault.write_root + os.sep)
 
 
+def test_sec_session_id_sanitized_no_nested_dirs(vault):
+    """QA-2.1: session_id mit / oder .. erzeugt KEINE verschachtelten Ordner mehr.
+
+    Datei landet flach in Sessions/; der echte Wert bleibt (escaped) im Frontmatter.
+    """
+    yaml = pytest.importorskip("yaml")
+    res = vault.write(type="session_log", body="x", title="doc", session_id="a/b/c")
+    # Genau eine Ebene unter Sessions/ (kein .../doc-a/b/c.md).
+    assert res.path.count("/") == len("Agentic OS/Jupiter/Sessions".split("/"))  # = 3 Schrägstriche
+    assert "/b/" not in res.path and res.path.endswith(".md")
+    raw = open(os.path.join(vault.vault_root, res.path), encoding="utf-8").read()
+    fm = yaml.safe_load(raw.split("---\n", 2)[1])
+    assert fm["session_id"] == "a/b/c"  # Frontmatter bleibt wahrheitsgetreu
+
+
 def test_sec_frontmatter_injection_safe(vault):
     """Title mit YAML-Breakout-Versuch landet als escapter Wert, keine neue Top-Level-Key."""
     yaml = pytest.importorskip("yaml")

@@ -49,6 +49,16 @@ def slugify(text: str) -> str:
     return text or "untitled"
 
 
+def safe_id_segment(session_id: str | None) -> str:
+    """Sichere Kurz-ID für den Dateinamen (QA-2.1).
+
+    Client-gelieferte ``session_id`` kann ``/`` oder ``..`` enthalten → würde sonst
+    verschachtelte Ordner erzeugen. Hier auf ``[A-Za-z0-9_-]`` reduziert und auf 8
+    Zeichen gekürzt; der echte Wert landet unverändert (escaped) im Frontmatter.
+    """
+    return re.sub(r"[^A-Za-z0-9_-]+", "", session_id or "")[:8]
+
+
 def _build_frontmatter(meta: dict) -> str:
     """YAML-Frontmatter aus einem flachen dict (None-Werte werden ausgelassen)."""
     lines = ["---"]
@@ -218,8 +228,9 @@ class VaultService:
 
         ts = created or _now()
         filename = f"{ts.strftime('%Y-%m-%d')}--{slugify(title or type)}"
-        if session_id:
-            filename += f"-{session_id[:8]}"
+        short_id = safe_id_segment(session_id)  # QA-2.1: keine ../-Ordner über den Dateinamen
+        if short_id:
+            filename += f"-{short_id}"
         filename += ".md"
 
         target = self._resolve_write(os.path.join(subdir, filename))

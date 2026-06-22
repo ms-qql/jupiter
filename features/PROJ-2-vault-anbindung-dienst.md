@@ -2,7 +2,7 @@
 
 ## Status: Approved
 **Created:** 2026-06-22
-**Last Updated:** 2026-06-22 (QA bestanden — READY)
+**Last Updated:** 2026-06-22 (QA bestanden — READY; QA-2.1 behoben)
 
 ## Dependencies
 - None — kann parallel zu PROJ-1 gebaut werden (eigenständiger Backend-Dienst).
@@ -167,7 +167,7 @@ POST /sessions/{id}/handover             → schreibt ein kuratiertes Handover-D
 ### Findings (alle Low → nicht deploy-blockierend)
 | ID | Sev | Befund | Empfehlung |
 |----|-----|--------|------------|
-| QA-2.1 | Low | Client-`session_id` mit `/` (z. B. `a/b/c`) erzeugt **verschachtelte Ordner** im Jupiter-Baum (`Sessions/…-a/b/c.md`). **Kein** Sicherheits-Ausbruch (Guard verifiziert), aber unsaubere Dateinamen. | `session_id`-Segment vor dem Dateinamen ebenfalls `slugify`-en bzw. per Regex `^[A-Za-z0-9_-]{1,64}$` validieren (wie Rollenname in PROJ-6). |
+| QA-2.1 | Low | Client-`session_id` mit `/` (z. B. `a/b/c`) erzeugte **verschachtelte Ordner** im Jupiter-Baum (`Sessions/…-a/b/c.md`). **Kein** Sicherheits-Ausbruch (Guard verifiziert), aber unsaubere Dateinamen. | ✅ **Behoben** — `safe_id_segment()` reduziert die ID im Dateinamen auf `[A-Za-z0-9_-]` (max 8); Frontmatter-`session_id` bleibt wahrheitsgetreu. Test `test_sec_session_id_sanitized_no_nested_dirs`. |
 | QA-2.2 | Low | **Streaming-Write** für sehr große Logs noch nicht umgesetzt (Body komplett im RAM). | Für MVP akzeptiert; später Streaming/Chunked-Write nachrüsten (Repository-Seam offen). |
 | QA-2.3 | Low | Fehlt der Vault-Root komplett, schlägt erst der Schreibversuch fehl (kein früher Health-Hinweis). | Optional: beim Start prüfen, ob `vault_root` existiert, und warnen (analog QA-6.2). |
 
