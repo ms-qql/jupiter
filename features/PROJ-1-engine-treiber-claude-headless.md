@@ -1,8 +1,8 @@
 # PROJ-1: Engine-Treiber — Claude-Max-Session headless
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-22
-**Last Updated:** 2026-06-22 (Backend implementiert + Live-verifiziert)
+**Last Updated:** 2026-06-22 (Backend + QA abgeschlossen; QA-1/QA-2 behoben)
 
 ## Dependencies
 - None — **Fundament** des MVP (ersetzt bewusst die übliche „Auth = PROJ-1"-Regel; Auth ist MVP-Non-Goal, single-user).
@@ -142,7 +142,7 @@ MVP single-user → **kein JWT**; `owner` wird serverseitig gestempelt (bewusste
 - **Tests:** `backend/tests/` — 23 grün (`pytest`), nutzen einen `FakeDriver` (keine echte Session/Quota). Live-Test manuell via `scripts/smoke_driver.py` (verbraucht Quota, nicht in CI).
 
 ## QA Test Results
-**Getestet:** 2026-06-22 · **Branch:** dev · **Tester:** QA Engineer · **Suite:** `backend/tests/` → **39 grün** (`pytest`).
+**Getestet:** 2026-06-22 · **Branch:** dev · **Tester:** QA Engineer · **Suite:** `backend/tests/` → **42 grün** (`pytest`, inkl. Fix-Verifikation QA-1/QA-2).
 
 ### Akzeptanzkriterien (10/10 bestanden)
 | # | Kriterium | Ergebnis | Nachweis |
@@ -164,17 +164,17 @@ MVP single-user → **kein JWT**; `owner` wird serverseitig gestempelt (bewusste
 - ✅ Prozess-Isolation: je Session eigener Subprozess + eigenes `cwd`/`session_id`.
 - N/A: JWT/RLS/Mandant-Isolation, Flutter-UI, Responsive — bewusste MVP-Non-Goals bzw. UI in PROJ-3.
 
-### Gefundene Findings (keine Critical/High → nicht deploy-blockierend)
-| ID | Sev | Befund | Empfehlung |
-|----|-----|--------|------------|
-| **QA-1** | **Medium** | API akzeptiert `permission_mode="bypassPermissions"` vom Client → schaltet das vom User gewählte Safety-Net ab; bis PROJ-4 (Cards) + #19 (Watchdog) existiert dann KEIN Schutz. | MVP auf `{default, acceptEdits}` beschränken (→ 422 für bypass), bis PROJ-4/#19 stehen. |
-| **QA-2** | **Low** | Keine Größen-Obergrenze für `initial_prompt`/`input.text` — Spec-Edge-Case „ggf. Hinweis/Limit" nicht erzwungen. | `max_length` an den Schemas + Hinweis bei Überschreitung. |
-| **QA-3** | **Low** | Kein Limit für parallele Sessions (Ressourcen-Erschöpfung möglich). Single-User mindert Risiko. | Konfigurierbares Max + freundliche Ablehnung. |
+### Findings & Behebung
+| ID | Sev | Befund | Status |
+|----|-----|--------|--------|
+| **QA-1** | Medium | API akzeptierte `bypassPermissions` vom Client → Safety-Net abschaltbar. | ✅ **Behoben** — MVP auf `{default, acceptEdits}` beschränkt (Schema-Literal + Manager → 422; Test `test_unsafe_permission_modes_rejected`). |
+| **QA-2** | Low | Kein Größenlimit für `initial_prompt`/`input.text`. | ✅ **Behoben** — `max_length = MAX_INPUT_CHARS` (100k) an allen Eingabe-Feldern (Tests `test_oversized_*`). |
+| **QA-3** | Low | Kein Limit für parallele Sessions (Single-User mindert Risiko). | ➡️ **P1-Härtung** (Roadmap; mit Persistenz/Infra). |
 
 Hinweis (kein Bug, dokumentierte Scope-Grenze): Sessions sind In-Memory → überleben keinen Neustart (Persistenz via PROJ-2/Infra).
 
 ### Produktionsreife-Entscheidung
-**READY (bedingt)** — keine Critical/High-Bugs; alle 10 AC bestanden. Empfehlung: **QA-1 vor jeglicher Exposition über localhost hinaus** fixen (kleiner Backend-Patch), QA-2/QA-3 als Härtung nachziehen.
+**READY / Approved** — keine Critical/High-Bugs; alle 10 AC bestanden; QA-1/QA-2 behoben und per Test abgesichert (42 grün). QA-3 als P1-Härtung eingeplant.
 
 ## Deployment
 _To be added by /deploy_

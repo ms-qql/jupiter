@@ -5,22 +5,31 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ..config import MAX_INPUT_CHARS
+
 ModelName = Literal["haiku", "sonnet", "opus"]
-PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+# QA-1: Im MVP nur die sicheren Modi (bypassPermissions/plan gesperrt).
+PermissionMode = Literal["default", "acceptEdits"]
 
 
 class SessionCreate(BaseModel):
     project_path: str = Field(..., min_length=1, description="Arbeitsverzeichnis der Session.")
-    initial_prompt: str = Field(..., min_length=1, description="Erster Auftrag an die Session.")
+    initial_prompt: str = Field(
+        ..., min_length=1, max_length=MAX_INPUT_CHARS, description="Erster Auftrag an die Session."
+    )
     model: ModelName = "sonnet"
     permission_mode: PermissionMode = "default"
     system_prompt_append: str | None = Field(
-        default=None, description="Optionaler System-Prompt-Zusatz (Konstitution #24, PROJ-6)."
+        default=None, max_length=MAX_INPUT_CHARS,
+        description="Optionaler System-Prompt-Zusatz (Konstitution #24, PROJ-6).",
     )
 
 
 class SessionInput(BaseModel):
-    text: str = Field(..., min_length=1, description="Weitere Eingabe / einzufügender Inhalt.")
+    text: str = Field(
+        ..., min_length=1, max_length=MAX_INPUT_CHARS,
+        description="Weitere Eingabe / einzufügender Inhalt.",
+    )
 
 
 class RateLimit(BaseModel):

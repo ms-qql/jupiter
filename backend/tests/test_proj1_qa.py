@@ -80,28 +80,37 @@ def test_empty_input_422(client: TestClient):
     assert client.post(f"/sessions/{sid}/input", json={"text": ""}).status_code == 422
 
 
-# --- FINDING QA-1: bypassPermissions wird vom Client akzeptiert -------------
+# --- QA-1 (behoben): bypassPermissions im MVP gesperrt ----------------------
 
-def test_bypass_permissions_currently_accepted(client: TestClient):
-    """Dokumentiert den Ist-Zustand: Client kann das Safety-Net abschalten.
-
-    Bis PROJ-4 (Decision Cards) + #19 (Watchdog) existiert dann KEIN Schutz.
-    Erwartung nach Fix: MVP beschränkt auf {default, acceptEdits} → 422.
-    """
+@pytest.mark.parametrize("mode", ["bypassPermissions", "plan"])
+def test_unsafe_permission_modes_rejected(client: TestClient, mode: str):
     r = client.post(
         "/sessions",
-        json={"project_path": PROJECT, "initial_prompt": "x", "permission_mode": "bypassPermissions"},
+        json={"project_path": PROJECT, "initial_prompt": "x", "permission_mode": mode},
     )
-    assert r.status_code == 201  # IST-Zustand (Finding offen)
+    assert r.status_code == 422
 
 
-# --- FINDING QA-2: kein Größenlimit für Eingaben ----------------------------
+def test_safe_permission_modes_accepted(client: TestClient):
+    for mode in ("default", "acceptEdits"):
+        r = client.post(
+            "/sessions",
+            json={"project_path": PROJECT, "initial_prompt": "x", "permission_mode": mode},
+        )
+        assert r.status_code == 201
 
-def test_large_input_has_no_limit(client: TestClient):
-    """Spec-Edge-Case nennt 'ggf. Hinweis/Limit' — aktuell unbegrenzt."""
+
+# --- QA-2 (behoben): Größenlimit für Eingaben -------------------------------
+
+def test_oversized_initial_prompt_rejected(client: TestClient):
+    r = client.post("/sessions", json={"project_path": PROJECT, "initial_prompt": "A" * 200_000})
+    assert r.status_code == 422
+
+
+def test_oversized_input_rejected(client: TestClient):
     sid = client.post("/sessions", json={"project_path": PROJECT, "initial_prompt": "x"}).json()["session_id"]
-    r = client.post(f"/sessions/{sid}/input", json={"text": "A" * 500_000})
-    assert r.status_code == 202  # IST-Zustand (Finding offen)
+    r = client.post(f"/sessions/{sid}/input", json={"text": "A" * 200_000})
+    assert r.status_code == 422
 
 
 # --- Session-Lifecycle / Isolation ------------------------------------------

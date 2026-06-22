@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from ..config import VALID_MODELS, VALID_PERMISSION_MODES, settings
+from ..config import MVP_ALLOWED_PERMISSION_MODES, VALID_MODELS, settings
 from .base import EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .events import (
@@ -200,8 +200,11 @@ class SessionManager:
         permission_mode = permission_mode or settings.default_permission_mode
         if model not in VALID_MODELS:
             raise ValueError(f"Unbekanntes Modell '{model}'. Erlaubt: {sorted(VALID_MODELS)}.")
-        if permission_mode not in VALID_PERMISSION_MODES:
-            raise ValueError(f"Unbekannter permission_mode '{permission_mode}'.")
+        if permission_mode not in MVP_ALLOWED_PERMISSION_MODES:
+            raise ValueError(
+                f"permission_mode '{permission_mode}' ist im MVP nicht erlaubt. "
+                f"Erlaubt: {sorted(MVP_ALLOWED_PERMISSION_MODES)} (Safety-Net bis PROJ-4/#19)."
+            )
         real_path = validate_project_path(project_path)
 
         session_id = str(uuid.uuid4())

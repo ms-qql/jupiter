@@ -6,8 +6,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Im MVP unterstützte Modell-Aliase (werden 1:1 an `claude --model` durchgereicht).
 VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
 
-# Headless-Permission-Modi von Claude Code.
+# Alle Headless-Permission-Modi, die Claude Code kennt.
 VALID_PERMISSION_MODES: set[str] = {"default", "acceptEdits", "plan", "bypassPermissions"}
+
+# Im MVP erlaubte Modi (QA-1): `bypassPermissions`/`plan` sind gesperrt, bis
+# PROJ-4 (Decision Cards) + #19 (Watchdog) ein Safety-Net liefern.
+MVP_ALLOWED_PERMISSION_MODES: set[str] = {"default", "acceptEdits"}
+
+# Obergrenze für Prompt-/Eingabe-Länge in Zeichen (QA-2) — verhindert blindes
+# Fluten des Kontextfensters.
+MAX_INPUT_CHARS: int = 100_000
 
 
 class Settings(BaseSettings):

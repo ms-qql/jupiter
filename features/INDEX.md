@@ -8,7 +8,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 
 | ID | Feature | Prio | Status | Abhängigkeiten | Spec |
 |----|---------|------|--------|----------------|------|
-| PROJ-1 | Engine-Treiber: Claude-Max-Session headless | P0 | In Review | — | [Spec](PROJ-1-engine-treiber-claude-headless.md) |
+| PROJ-1 | Engine-Treiber: Claude-Max-Session headless | P0 | Approved | — | [Spec](PROJ-1-engine-treiber-claude-headless.md) |
 | PROJ-2 | Vault-Anbindung als Dienst | P0 | Planned | — | [Spec](PROJ-2-vault-anbindung-dienst.md) |
 | PROJ-3 | Cockpit: Mission Control + Kanban + Ampel-Kacheln | P0 | Planned | PROJ-1, PROJ-2 | [Spec](PROJ-3-cockpit-mission-control-kanban.md) |
 | PROJ-4 | Decision Cards (Freigabe-Flow) | P0 | Planned | PROJ-1, PROJ-3 | [Spec](PROJ-4-decision-cards.md) |
@@ -26,5 +26,5 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 7. **PROJ-7** — MD-Reader
 
 ## Roadmap (noch ohne Spec — siehe docs/PRD.md)
-- **P1:** Smart Launcher #12 · Trust-Policy #5 · Fileexplorer #15 · MD-Editor #16 · Vault Stufe 3 #9/#10/#11 · Watchdog #19 · Recovery #20 · weitere Engines #13 · RAG/Späher/Caching/Token-Dashboard #23/#26/#27/#28 · Spracheingabe #29 · Git-Branch-Handling #31
+- **P1:** Smart Launcher #12 · Trust-Policy #5 · Fileexplorer #15 · MD-Editor #16 · Vault Stufe 3 #9/#10/#11 · Watchdog #19 · Recovery #20 · weitere Engines #13 · RAG/Späher/Caching/Token-Dashboard #23/#26/#27/#28 · Spracheingabe #29 · Git-Branch-Handling #31 · PROJ-1-Härtung: Session-Limit + Persistenz (QA-3)
 - **P2:** Multi-Agent-Dispatch #17/#18 · Cross-Agent-Review #30 · Vault als geteilter Dienst #14 · echtes Auth/RLS #21 · Registry
