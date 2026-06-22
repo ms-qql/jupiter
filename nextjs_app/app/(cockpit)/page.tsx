@@ -1,0 +1,66 @@
+"use client";
+
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GlobalStatusBar } from "@/components/cockpit/global-status-bar";
+import { SessionGrid } from "@/components/cockpit/session-grid";
+import { KanbanBoard } from "@/components/cockpit/kanban-board";
+import { NewSessionDialog } from "@/components/cockpit/new-session-dialog";
+import {
+  BoardSkeleton,
+  EmptyState,
+  ErrorState,
+} from "@/components/cockpit/states";
+import {
+  useNow,
+  useSessions,
+} from "@/components/cockpit/sessions-provider";
+
+export default function CockpitPage() {
+  const { sessions, initialLoading, error } = useSessions();
+  const now = useNow();
+
+  const showError = error && sessions.length === 0;
+
+  return (
+    <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Mission Control</h1>
+          <p className="text-sm text-muted-foreground">
+            Lagebild aller Sessions
+          </p>
+        </div>
+        <NewSessionDialog>
+          <button className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+            + Neue Session
+          </button>
+        </NewSessionDialog>
+      </header>
+
+      {!initialLoading && sessions.length > 0 && (
+        <GlobalStatusBar sessions={sessions} />
+      )}
+
+      {initialLoading ? (
+        <BoardSkeleton />
+      ) : showError ? (
+        <ErrorState message={error} />
+      ) : sessions.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <Tabs defaultValue="kacheln" className="w-full">
+          <TabsList>
+            <TabsTrigger value="kacheln">Kacheln</TabsTrigger>
+            <TabsTrigger value="kanban">Kanban</TabsTrigger>
+          </TabsList>
+          <TabsContent value="kacheln" className="mt-4">
+            <SessionGrid sessions={sessions} now={now} />
+          </TabsContent>
+          <TabsContent value="kanban" className="mt-4">
+            <KanbanBoard sessions={sessions} now={now} />
+          </TabsContent>
+        </Tabs>
+      )}
+    </div>
+  );
+}

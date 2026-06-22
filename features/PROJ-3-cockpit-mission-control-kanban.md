@@ -141,6 +141,29 @@ Genutzte Felder je Session-Kachel: `status`, `role`, `project_path`, `created_at
 
 Keine neuen Endpoints/Tabellen. Damit ist der Backend-Blocker für PROJ-3 (CORS) erledigt; der Rest von PROJ-3 ist reine Frontend-Arbeit (`/abc-frontend`).
 
+## Implementation Notes — Frontend (abc-frontend, 2026-06-22)
+**Branch:** dev · **Stack:** Next.js 16.2.9 (App Router, Turbopack) · React 19 · Tailwind v4 · shadcn/ui (**Base UI**, nicht Radix).
+
+**Gerüst neu angelegt:** `nextjs_app/` (erstes Frontend des Projekts). shadcn-Komponenten: Button, Card, Badge, Tabs, Dialog, Select, Input, Label, Textarea, ScrollArea, Separator, Skeleton, Sonner. Dark-Mode default, deutsche UI, DSGVO: `next/font/google` (Geist) self-hosted zur Build-Zeit (kein Runtime-CDN-Request).
+
+**Struktur:**
+- `lib/types.ts` — spiegelt `SessionRead`/`SessionCreate`. `lib/api.ts` — dünner Client (`NEXT_PUBLIC_API_BASE`, Default `:8000`, `streamUrl()` für WS). `lib/status.ts` — verbindliches Status→Ampel→Kanban-Mapping, Zähler, `modelLabel()` (fängt aufgelöste IDs wie `claude-haiku-4-5-…` → „Haiku" ab).
+- `components/cockpit/sessions-provider.tsx` — **EIN** Polling (`GET /sessions`, 4 s) via Context für Rail + Board (kein Doppel-Request); `useNow()` für laufende Relativzeiten.
+- `SessionRail` (persistente „Recents"-Liste, klickbar → Detail, „Wartet"/Fehler zuoberst, Footer „Alle anzeigen →"), `GlobalStatusBar`, `SessionTile` (Ampel, Modell, Laufzeit, Kontext-%, Kosten), `SessionGrid`, `KanbanBoard` (4 Spalten; Review/Approval = Platzhalter bis PROJ-4), `NewSessionDialog` (Projekt/Prompt/Modell/Modus → `POST /sessions`), `Ampel`, `states.tsx` (Loading/Empty/Error).
+- Routen: `app/(cockpit)/layout.tsx` (Shell: Rail + Inhalt), `…/page.tsx` (Board, Tabs Kacheln/Kanban), `…/sessions/[id]/page.tsx` (Detail: Live-Transkript via **WebSocket** `/sessions/{id}/stream` mit Reconnect + initialer Historie via `GET /sessions/{id}`, Eingabe/Stop).
+
+**Backend-Anpassung (Base UI):** `DialogTrigger` nutzt `render={…}` statt Radix-`asChild`.
+
+**Verifikation (echter End-to-End-Smoke gegen laufendes Backend, 1 echte Haiku-Session):**
+- `npm run build` grün (TypeScript + 3 Routen).
+- Empty-State, Board (Kacheln), Kanban (4 Spalten, Karte in „Wartet auf dich"), Detailseite (WS „● live", Transkript „Hallo", Eingabe/Stop) per Screenshot bestätigt.
+- Mission-Control-Zähler, Ampel-Pulsieren, amber Hervorhebung „Wartet auf dich", Modell-Label, Klick Rail/Kachel → Detail: alle ok.
+- CORS gegen Browser-Origin verifiziert.
+
+**Bekannte/abgestimmte Grenzen:** Review/Approval-Spalte leer bis PROJ-4. Modell-Wechsel nur bei Erstellung (Backend kennt keinen Runtime-Switch). Rail-Titel = Projekt + Rolle (Initial-Prompt-Snippet ist in `GET /sessions` nicht enthalten).
+
+→ Bereit für `/abc-qa`.
+
 ## QA Test Results
 _To be added by /qa_
 
