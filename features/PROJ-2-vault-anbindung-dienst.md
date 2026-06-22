@@ -1,8 +1,8 @@
 # PROJ-2: Vault-Anbindung als Dienst
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-22
-**Last Updated:** 2026-06-22 (Backend implementiert)
+**Last Updated:** 2026-06-22 (QA bestanden — READY)
 
 ## Dependencies
 - None — kann parallel zu PROJ-1 gebaut werden (eigenständiger Backend-Dienst).
@@ -136,7 +136,43 @@ POST /sessions/{id}/handover             → schreibt ein kuratiertes Handover-D
 - Streaming-Write für sehr große Logs ist noch nicht umgesetzt (aktuell ganzer Body im RAM) — für MVP-Loggrößen unkritisch, später nachrüstbar (Repository-Seam offen).
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-06-22 · **Branch:** dev · **Tester:** QA Engineer · **Suite:** `backend/tests/` → **119 grün** (`pytest`, +20 in `test_proj2_qa.py`).
+
+### Akzeptanzkriterien (6/6 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | MD lesen, schreiben, auflisten | ✅ PASS | `test_ac1_read_write_list`, API `test_api_write_read_list_search` |
+| 2 | Artefakte unter `Agentic OS/Jupiter/…`, PARA unangetastet | ✅ PASS | `test_ac2_dedicated_subfolder_para_untouched` |
+| 3 | Valides Obsidian-MD mit YAML-Frontmatter (`owner`, `session_id`, `created`, `type`) | ✅ PASS | `test_ac3_valid_frontmatter_required_fields` (echter `yaml.safe_load`) |
+| 4 | Rohe Logs (`Sessions/`) vs. kuratierte Docs (`Handovers/`) getrennt | ✅ PASS | `test_ac4_raw_and_curated_separated`, `test_autolog_writes_session_log_on_stop` |
+| 5 | Textsuche → Pfad + Ausschnitt | ✅ PASS | `test_ac5_search_returns_path_and_excerpt` |
+| 6 | Schreibzugriffe atomar (kein halb geschriebenes MD) | ✅ PASS | `test_ac6_atomic_write_no_partial` (temp+`os.replace`, keine `.tmp`-Reste) |
+
+### Edge-Cases (alle abgedeckt)
+- ✅ Datei existiert → **append** (Default, kein stilles Überschreiben), `version` (→ `-2.md`), `error` (→ 409) wählbar.
+- ✅ Vault-Pfad nicht beschreibbar → klarer `PermissionError`/503, keine halbe Datei (`test_edge_vault_unreachable_clear_error_no_corruption`).
+- ✅ Umlaute/Sonderzeichen → sauberer ASCII-Slug (`test_edge_umlaut_slug`).
+- ✅ Gleichzeitige Sessions → getrennte Dateien je `session_id` + `fcntl`-Lock beim Append (`test_edge_concurrent_sessions_separate_files`).
+- ⚠️ Sehr großes Log → **Streaming-Write noch nicht umgesetzt** (ganzer Body im RAM). Für MVP-Loggrößen unkritisch → siehe QA-2.2.
+
+### Security-Audit (Red-Team)
+- ✅ **Pfad-Traversal Lesen** (`..`, `/etc/passwd`, `a/../../b`) → `ValueError`/400 (`test_sec_read_traversal_blocked`, API `test_api_read_traversal_400`).
+- ✅ **Symlink-Escape**: Symlink im Vault, der nach außen zeigt → `realpath`-Guard verweigert das Lesen (`test_sec_symlink_escape_blocked`). Starker Schutz gegen Daten-Exfiltration.
+- ✅ **Schreib-Eingrenzung**: client-gelieferte `session_id` mit `../` bricht NICHT aus dem Jupiter-Baum aus — finaler `_resolve_write`-Guard hält (`test_sec_client_session_id_cannot_escape_jupiter`).
+- ✅ **Frontmatter-Injection**: Title mit YAML-Breakout-Versuch wird via `json.dumps` escaped → kein neuer Top-Level-Key, genau 5 erwartete Keys (`test_sec_frontmatter_injection_safe`, echter YAML-Parser).
+- ✅ **Lese-/Schreib-Asymmetrie**: Suche/Lesen vault-weit, Schreiben nur im Jupiter-Baum (`test_sec_search_write_asymmetry`).
+- ✅ **DoS-Schutz Suche**: max 100 Hits, Dateien > 2 MB übersprungen; `dir`-Traversal in `/vault/files` → 400.
+- N/A: JWT/RLS/Mandant/MinIO, Flutter/Responsive (MVP-Abweichung bzw. UI später in #3/#16).
+
+### Findings (alle Low → nicht deploy-blockierend)
+| ID | Sev | Befund | Empfehlung |
+|----|-----|--------|------------|
+| QA-2.1 | Low | Client-`session_id` mit `/` (z. B. `a/b/c`) erzeugt **verschachtelte Ordner** im Jupiter-Baum (`Sessions/…-a/b/c.md`). **Kein** Sicherheits-Ausbruch (Guard verifiziert), aber unsaubere Dateinamen. | `session_id`-Segment vor dem Dateinamen ebenfalls `slugify`-en bzw. per Regex `^[A-Za-z0-9_-]{1,64}$` validieren (wie Rollenname in PROJ-6). |
+| QA-2.2 | Low | **Streaming-Write** für sehr große Logs noch nicht umgesetzt (Body komplett im RAM). | Für MVP akzeptiert; später Streaming/Chunked-Write nachrüsten (Repository-Seam offen). |
+| QA-2.3 | Low | Fehlt der Vault-Root komplett, schlägt erst der Schreibversuch fehl (kein früher Health-Hinweis). | Optional: beim Start prüfen, ob `vault_root` existiert, und warnen (analog QA-6.2). |
+
+### Produktionsreife-Entscheidung
+**READY / Approved** — alle 6 AC bestanden, alle Edge-Cases abgedeckt, keine Critical/High/Medium-Bugs, 119 Tests grün. QA-2.1–2.3 sind optionale Härtungen (kein Blocker).
 
 ## Deployment
 _To be added by /deploy_
