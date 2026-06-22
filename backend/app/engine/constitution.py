@@ -55,8 +55,9 @@ def resolve_constitution(role: str | None, constitution_dir: str) -> ResolvedCon
     role_raw = _read(os.path.join(constitution_dir, "roles", f"{role}.md"))
     if role_raw is None:
         # Rolle ohne eigene Datei → globale Konstitution gilt (Edge-Case der Spec).
-        src = "global" if global_text else "leer"
-        return ResolvedConstitution(text=global_text, source=src, role=role)
+        # Fallback in der Quelle sichtbar machen (QA-6.3).
+        base = "global" if global_text else "leer"
+        return ResolvedConstitution(text=global_text, source=f"{base} (rolle:{role} ohne Datei)", role=role)
 
     role_text = role_raw.strip()
     first_line = role_text.splitlines()[0].strip() if role_text else ""

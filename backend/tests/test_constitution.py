@@ -55,7 +55,7 @@ def test_role_without_file_falls_back_to_global(tmp_path):
     _write(str(tmp_path / "global.md"), "GLOBAL")
     r = resolve_constitution("ghost", str(tmp_path))
     assert r.text == "GLOBAL"
-    assert r.source == "global"
+    assert r.source == "global (rolle:ghost ohne Datei)"  # QA-6.3: Fallback sichtbar
 
 
 def test_missing_global_is_empty_not_fatal(tmp_path):

@@ -122,7 +122,7 @@ PROJ-1s client-`system_prompt_append` wird zu `extra_system_prompt` umbenannt un
 |----|-----|--------|------------|
 | QA-6.1 | Low | `extra_system_prompt` kann die Konstitution **semantisch** widersprechen (Prompt-Injektion durch den User selbst). Struktur bleibt erhalten, aber das Modell könnte dem Zusatz folgen. Single-User → Selbst-Risiko. | Für MVP akzeptiert; später optional Scan/Begrenzung. |
 | QA-6.2 | Low | Fehlende/leere `global.md` deaktiviert die Disziplin **stillschweigend** (kein Hinweis). | Beim Start/erster Session eine Warnung loggen, wenn `global.md` fehlt. |
-| QA-6.3 | Low | Unbekannte (aber gültige) Rolle fällt **unsichtbar** auf global zurück; `constitution_source` zeigt nur `global`. | `source` sprechend machen, z. B. `global (rolle:X ohne Datei)`. |
+| QA-6.3 | Low | Unbekannte (aber gültige) Rolle fiel **unsichtbar** auf global zurück. | ✅ **Behoben** — `source` zeigt jetzt `global (rolle:X ohne Datei)` (Tests angepasst). |
 
 ### Produktionsreife-Entscheidung
 **READY / Approved** — alle 4 AC bestanden, keine Critical/High/Medium-Bugs, 73 Tests grün. QA-6.1–6.3 sind optionale Härtungen (kein Blocker).

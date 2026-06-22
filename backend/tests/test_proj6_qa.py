@@ -68,13 +68,13 @@ def test_unknown_valid_role_falls_back_to_global(client: TestClient):
     sid = _sid(client, role="Architect")
     eff = client.get(f"/sessions/{sid}/constitution").json()
     assert eff["role"] == "Architect"
-    assert eff["source"] == "global"
+    assert eff["source"] == "global (rolle:Architect ohne Datei)"  # QA-6.3
 
 
 def test_role_preview_unknown_falls_back(client: TestClient):
     data = client.get("/constitution/ghost").json()
     assert data["role"] == "ghost"
-    assert data["source"] == "global"
+    assert data["source"] == "global (rolle:ghost ohne Datei)"  # QA-6.3
 
 
 # --- AC: effektive Konstitution einsehbar + Override greift ------------------
