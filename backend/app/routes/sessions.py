@@ -1,0 +1,135 @@
+"""Session-API — REST (steuern) + WebSocket (Live-Stream). PROJ-1.
+
+MVP single-user: kein JWT; der ``owner`` wird serverseitig gestempelt (#21).
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+
+from ..engine.manager import SessionManager
+from ..schemas.sessions import (
+    SessionCreate,
+    SessionDetail,
+    SessionInput,
+    SessionRead,
+    TranscriptText,
+)
+
+router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+def _manager(request: Request) -> SessionManager:
+    return request.app.state.manager
+
+
+@router.post("", response_model=SessionRead, status_code=201)
+async def create_session(payload: SessionCreate, request: Request) -> dict:
+    try:
+        runtime = await _manager(request).create(
+            project_path=payload.project_path,
+            initial_prompt=payload.initial_prompt,
+            model=payload.model,
+            permission_mode=payload.permission_mode,
+            system_prompt_append=payload.system_prompt_append,
+        )
+    except ValueError as exc:  # ungültiger Pfad / Modell
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:  # claude-Binary nicht gefunden
+        raise HTTPException(
+            status_code=503, detail="Claude-CLI nicht gefunden — ist `claude` installiert/eingeloggt?"
+        ) from exc
+    return runtime.state.to_read()
+
+
+@router.get("", response_model=list[SessionRead])
+async def list_sessions(request: Request) -> list[dict]:
+    return [r.state.to_read() for r in _manager(request).list()]
+
+
+@router.get("/{session_id}", response_model=SessionDetail)
+async def get_session(session_id: str, request: Request) -> dict:
+    runtime = _manager(request).get(session_id)
+    if runtime is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    data = runtime.state.to_read()
+    data["transcript"] = [vars(e) for e in runtime.transcript]
+    return data
+
+
+@router.post("/{session_id}/input", status_code=202)
+async def send_input(session_id: str, payload: SessionInput, request: Request) -> dict:
+    manager = _manager(request)
+    if manager.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    try:
+        await manager.send_input(session_id, payload.text)
+    except RuntimeError as exc:  # pausiert / nicht aktiv
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/{session_id}/pause")
+async def pause_session(session_id: str, request: Request) -> dict:
+    manager = _manager(request)
+    if manager.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    await manager.pause(session_id)
+    return {"ok": True}
+
+
+@router.post("/{session_id}/stop")
+async def stop_session(session_id: str, request: Request) -> dict:
+    manager = _manager(request)
+    if manager.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    await manager.stop(session_id)
+    return {"ok": True}
+
+
+@router.get("/{session_id}/transcript", response_model=TranscriptText)
+async def get_transcript(session_id: str, request: Request) -> dict:
+    manager = _manager(request)
+    if manager.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    return {"text": manager.transcript_text(session_id)}
+
+
+@router.websocket("/{session_id}/stream")
+async def stream_session(websocket: WebSocket, session_id: str) -> None:
+    import asyncio
+
+    manager: SessionManager = websocket.app.state.manager
+    runtime = manager.get(session_id)
+    if runtime is None:
+        await websocket.close(code=4404)
+        return
+    await websocket.accept()
+    queue = runtime.subscribe()
+    queue_get: asyncio.Task | None = None
+    sock_recv: asyncio.Task | None = None
+    try:
+        # Sofort einen Zustands-Snapshot senden, danach live weiterstreamen.
+        await websocket.send_json({"kind": "state", **runtime.state.to_read()})
+        while True:
+            # Auf das nächste Event ODER eine Socket-Aktion (Disconnect) warten,
+            # damit getrennte Clients nicht ewig in queue.get() hängen.
+            queue_get = asyncio.ensure_future(queue.get())
+            sock_recv = asyncio.ensure_future(websocket.receive())
+            done, pending = await asyncio.wait(
+                {queue_get, sock_recv}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+            if sock_recv in done:
+                msg = sock_recv.result()  # kann WebSocketDisconnect werfen
+                if msg.get("type") == "websocket.disconnect":
+                    break
+                continue  # Client-Eingaben laufen im MVP über REST → ignorieren
+            await websocket.send_json(queue_get.result())
+    except WebSocketDisconnect:
+        pass
+    finally:
+        runtime.unsubscribe(queue)
+        for task in (queue_get, sock_recv):
+            if task is not None and not task.done():
+                task.cancel()

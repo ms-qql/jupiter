@@ -1,8 +1,8 @@
 # PROJ-1: Engine-Treiber — Claude-Max-Session headless
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-06-22
-**Last Updated:** 2026-06-22
+**Last Updated:** 2026-06-22 (Backend implementiert + Live-verifiziert)
 
 ## Dependencies
 - None — **Fundament** des MVP (ersetzt bewusst die übliche „Auth = PROJ-1"-Regel; Auth ist MVP-Non-Goal, single-user).
@@ -18,17 +18,17 @@ Der Motor von Jupiter: ein Backend-Dienst, der **eine** Claude-Max-Session über
 - Als Nutzer möchte ich beliebige Inhalte (Logs, Code, Fehlermeldungen) in das Session-Fenster **einfügen** und die Session-Ausgabe **herauskopieren**, um schnell Daten rein- und rauszubekommen.
 
 ## Acceptance Criteria
-- [ ] Backend startet eine Claude-Code-headless-Session als Subprozess (`claude -p`, Stream-JSON I/O) mit **Subscription-Auth** (kein API-Key).
-- [ ] Eine Session ist mit initialem Prompt + Arbeitsverzeichnis (Projektpfad) startbar.
-- [ ] Eingehende Stream-JSON-Events (assistant text, tool_use, result) werden geparst und als strukturierte Events nach oben gereicht.
-- [ ] Weitere Eingaben können an eine laufende Session gesendet werden (multi-turn).
-- [ ] Das Modell ist pro Session über `--model` setzbar (haiku/sonnet/opus); Default = Sonnet.
-- [ ] Session lässt sich sauber **stoppen** (Prozess beendet, kein Zombie) und **pausieren** (keine neuen Eingaben verarbeitet).
-- [ ] Session-Status ist über die API abfragbar: `starting / running / waiting / done / error`.
-- [ ] Token-/Kontext-Verbrauch wird aus den result-Events extrahiert und bereitgestellt (Datenquelle für PROJ-5 / #25).
-- [ ] **Einfügen (Paste):** beliebiger Text-/Code-Inhalt (auch mehrzeilig/groß) kann als Eingabe an eine laufende Session übergeben werden.
-- [ ] **Herauskopieren (Copy):** der Session-Inhalt (vollständiges Transkript bzw. eine einzelne Nachricht/Ausgabe) ist als Klartext abrufbar, sodass er kopiert werden kann.
-- [ ] _(UI-Hinweis: die eigentlichen Copy/Paste-Affordanzen im Session-Fenster rendert die Session-Detailansicht in PROJ-3; PROJ-1 stellt nur die Eingabe-/Ausgabe-Schnittstelle bereit.)_
+- [x] Backend startet eine Claude-Code-headless-Session als Subprozess (`claude -p`, Stream-JSON I/O) mit **Subscription-Auth** (kein API-Key).
+- [x] Eine Session ist mit initialem Prompt + Arbeitsverzeichnis (Projektpfad) startbar.
+- [x] Eingehende Stream-JSON-Events (assistant text, tool_use, result) werden geparst und als strukturierte Events nach oben gereicht.
+- [x] Weitere Eingaben können an eine laufende Session gesendet werden (multi-turn).
+- [x] Das Modell ist pro Session über `--model` setzbar (haiku/sonnet/opus); Default = Sonnet.
+- [x] Session lässt sich sauber **stoppen** (Prozess beendet, kein Zombie) und **pausieren** (keine neuen Eingaben verarbeitet).
+- [x] Session-Status ist über die API abfragbar: `starting / running / waiting / done / error`.
+- [x] Token-/Kontext-Verbrauch wird aus den result-Events extrahiert und bereitgestellt (Datenquelle für PROJ-5 / #25).
+- [x] **Einfügen (Paste):** beliebiger Text-/Code-Inhalt (auch mehrzeilig/groß) kann als Eingabe an eine laufende Session übergeben werden.
+- [x] **Herauskopieren (Copy):** der Session-Inhalt (vollständiges Transkript bzw. eine einzelne Nachricht/Ausgabe) ist als Klartext abrufbar, sodass er kopiert werden kann.
+- ℹ️ _(UI-Hinweis: die eigentlichen Copy/Paste-Affordanzen im Session-Fenster rendert die Session-Detailansicht in PROJ-3; PROJ-1 stellt nur die Eingabe-/Ausgabe-Schnittstelle bereit — erledigt.)_
 
 ## Edge Cases
 - `claude` nicht eingeloggt / Subscription abgelaufen → klare deutsche Fehlermeldung, Status = `error`.
@@ -116,6 +116,30 @@ MVP single-user → **kein JWT**; `owner` wird serverseitig gestempelt (bewusste
 - **Backend (Python):** `fastapi`, `uvicorn[standard]` (WebSocket), `pydantic` v2, `pydantic-settings`; `asyncio.subprocess` (stdlib) für die Prozess-Steuerung; Postgres-Zugriff via Projekt-Helper `run_query_m`/`run_command_m`. **Kein** `anthropic`-SDK (wir nutzen die CLI).
 - **Extern:** `claude` CLI (vorhanden, v2.1.185) — muss als **Max-Subscription** eingeloggt sein (`claude login`).
 - **Frontend:** keins in PROJ-1 (UI = PROJ-3); optional ein minimaler Test-Harness zum Verifizieren.
+
+### Implementation Notes (Backend Developer)
+**Datum:** 2026-06-22 · **Branch:** dev · **Env:** conda `Dashboard` (Python 3.10) · **Stand:** Backend fertig, QA ausstehend.
+
+**Gebaute Module** (`backend/app/`):
+- `engine/events.py` — Parser für den `stream-json`-Strom; gegen die **real verifizierten** Events gebaut. `UsageSnapshot` berechnet Kontext-Füllstand (#25) aus `(input + cache_read + cache_creation) / contextWindow`.
+- `engine/base.py` — `EngineDriver`-Abstraktion + `LaunchSpec` (hält weitere Engines #13 offen).
+- `engine/claude_driver.py` — `ClaudeCodeDriver`: Subprozess-Lifecycle, stdin-Multi-turn, stdout-Reader, stderr-Erfassung. `build_argv()` + `classify_exit()` sind reine, unit-getestete Funktionen.
+- `engine/manager.py` — `SessionManager` (In-Memory-Registry) + `SessionRuntime` (Zustand, Transkript, WS-Fan-out). Pfad-Scope-Validierung gegen `/home/dev/projects/*` + `/home/dev/tools/*`.
+- `schemas/sessions.py` — Pydantic-v2-Modelle. `routes/sessions.py` — REST + WebSocket. `main.py` — `create_app(driver_factory)` (injizierbar für Tests).
+
+**Live-Spike-Befunde (verifiziert gegen `claude` v2.1.185):**
+- `apiKeySource:"none"` + `total_cost_usd` → **Subscription-Auth bestätigt** (kein API-Key).
+- `-p --output-format stream-json` benötigt `--verbose`. Multi-turn-Eingabe (Initial-Prompt + Folge-Turns) läuft über **stdin als stream-json-User-Message** (kein Positional-Prompt) — end-to-end getestet (`scripts/smoke_driver.py`, Exit 0, sauberer Stop).
+- Kontextfenster (`modelUsage[...].contextWindow`) = 200000.
+
+**Im Test gefundener & behobener Bug:** Ein durch uns ausgelöster Stop (SIGTERM → Exit `-15`) wurde fälschlich als Fehler gewertet → Session-Status kippte nach `error`. Fix: `classify_exit(returncode, stopping, stderr)` unterscheidet gewollten Stop von echtem Crash (Unit-Test deckt beide Fälle ab).
+
+**Bewusste Abweichungen / offene Punkte für QA & Folge-Features:**
+- **Kein JWT/RLS/mandant_id** (Auth = MVP-Non-Goal); `owner` serverseitig aus `JUPITER_DEFAULT_OWNER` gestempelt.
+- **Persistenz in-memory** — Postgres-Live-Index + Vault-Transkript kommen via Infra/PROJ-2 (Repository-Seam vorhanden). Sessions überleben aktuell keinen Neustart.
+- **Betrieb mit EINEM uvicorn-Worker** (Registry hält Prozess-Handles im Speicher).
+- `permission-mode=default`: genehmigungspflichtige Tools werden headless auto-verweigert, bis PROJ-4 ein `--permission-prompt-tool` liefert.
+- **Tests:** `backend/tests/` — 23 grün (`pytest`), nutzen einen `FakeDriver` (keine echte Session/Quota). Live-Test manuell via `scripts/smoke_driver.py` (verbraucht Quota, nicht in CI).
 
 ## QA Test Results
 _To be added by /qa_
