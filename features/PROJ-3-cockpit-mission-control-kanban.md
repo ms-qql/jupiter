@@ -1,6 +1,6 @@
 # PROJ-3: Cockpit — Mission Control + Session-Kanban + Ampel-Kacheln
 
-## Status: Architected
+## Status: Approved
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-22
 
@@ -165,7 +165,44 @@ Keine neuen Endpoints/Tabellen. Damit ist der Backend-Blocker für PROJ-3 (CORS)
 → Bereit für `/abc-qa`.
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-06-22 · **Branch:** dev · **Methode:** Vitest-Unit (lib/status.ts) + Playwright-E2E gegen laufendes Backend (uvicorn, 1 Worker) + visuelle Screenshots (Empty/Board/Kanban/Detail/Responsive/Error).
+
+### Automatisierte Tests
+- **Backend-Regression:** `pytest` → **122 passed** (keine Regression durch CORS).
+- **Frontend-Unit (neu):** `nextjs_app/lib/status.test.ts` (Vitest) → **17 passed** — deckt das verbindliche Status→Ampel→Kanban-Mapping, `columnFor` (inkl. error→wartet, review-Platzhalter), `countStatuses`, `railRank`-Sortierung, `modelLabel` (aufgelöste IDs), `formatDuration`, `projectName`. `npm test` verankert.
+- **Build:** `next build` grün (3 Routen, TypeScript ok).
+
+### Akzeptanzkriterien (E2E, 12/12 Checks PASS)
+| AC | Ergebnis |
+|----|----------|
+| Globaler Status + Session-Liste | ✅ Mission-Control-Zähler Aktiv/Wartet/Fehler/Fertig + Liste |
+| Kachel zeigt Ampel/Rolle/Projekt/Laufzeit | ✅ (Rolle wird angezeigt, wenn gesetzt) |
+| Kanban 4 Spalten, Auto-Wandern bei Statuswechsel | ✅ Spalten korrekt; Karte folgte `running→waiting` automatisch (Polling) |
+| „Wartet auf dich" stärkstes Signal | ✅ amber Ring auf Kachel + amber Spalte + hervorgehobener Zähler |
+| Modell-Wahl pro Session, an Treiber durchgereicht | ✅ Dialog Haiku/Sonnet/Opus; gewähltes „Haiku" am Backend bestätigt |
+| Live-Aktualisierung ohne Reload | ✅ Board-Polling (4 s) + Detail-WebSocket (`● live`) |
+| Persistente Rail (Recents), klickbar → Detail | ✅ Rail-Eintrag + Kachel führen zur Detailroute |
+| Responsive (ab Tablet) | ✅ 768 px + 1440 px voll nutzbar (siehe Edge/Low-2 für <600 px) |
+
+### Edge Cases
+- **0 Sessions →** Empty-State + CTA ✅
+- **Backend nicht erreichbar →** Fehler-State „Backend nicht erreichbar" statt leerem Board ✅
+- **Fehlerstatus (rote Ampel + Kurzgrund) →** Mapping unit-getestet (statusMeta.error=rot, columnFor.error=wartet) + Kachel rendert `session.error`. ⚠️ Nicht live erzwungen (kein deterministischer Weg, eine Session in `error` zu bringen) — als getestet-per-Logik gewertet.
+- **>20 Sessions (Performance/Scroll) →** ⚠️ Nicht last-getestet (kein praktikabler Weg, 20 echte Claude-Sessions zu spawnen). Rail kappt bei 10 + „Alle anzeigen (+N) →", ScrollArea + responsives Grid vorhanden (per Design abgedeckt, nicht stressverifiziert).
+
+### Security (red-team)
+- **Kontext:** Single-User-MVP, **kein JWT/RLS/mandant_id** (bewusst, #21) → Tenant-Isolation/JWT-Audit **N/A**.
+- **CORS:** beschränkt auf konfigurierte Origins; fremde Origin erhält keinen Allow-Header (unit-getestet, backend).
+- **Secrets:** Frontend-Bundle enthält nur `NEXT_PUBLIC_API_BASE` (öffentliche API-URL, by design) — keine Secrets geleakt.
+- **Hinweis Phase 2:** WS-/REST-Endpoints sind unauthentifiziert (MVP-Entscheidung). Vor Multi-User/Exponierung echtes Auth nachrüsten (#21).
+
+### Gefundene Bugs (alle **Low** — keine Critical/High/Medium)
+- **LOW-1 (Lint/CI-Hygiene):** `npm run lint` schlägt mit 1 Fehler fehl — `react-hooks/set-state-in-effect` in `components/cockpit/sessions-provider.tsx:57` (initialer `poll()`-Aufruf im Effect-Body). **Kein** Funktionsfehler (Polling läuft verifiziert). *Fix-Vorschlag:* initialen Poll so umstellen, dass die Regel nicht anschlägt (z. B. Guard/erste Iteration im Interval), oder Regel gezielt begründet ausnehmen. → Frontend.
+- **LOW-2 (Responsive < Tablet):** Bei < 600 px (375 px getestet) klappt die feste Rail (w-72) nicht ein → Board-Inhalt beschnitten. **Außerhalb der AC** („nutzbar ab Tablet"), daher kein Blocker. *Fix-Vorschlag:* Rail unter `md` einklappbar/als Drawer. → Frontend (Folge-Feature).
+- **LOW-3 (Kosmetik):** Fehler-State zeigt fixe Überschrift **und** identische Meldung („Backend nicht erreichbar" doppelt), weil die Fehlermeldung dem Titel entspricht. *Fix-Vorschlag:* generische Überschrift + spezifische Meldung trennen. → Frontend.
+
+### Empfehlung
+**Production-ready: JA** (innerhalb des MVP-Scopes). Keine Critical/High/Medium-Bugs; 3 Low-Findings als Nachzieharbeiten dokumentiert. Empfohlene Folgearbeit: dedizierte Playwright-E2E-Suite unter `nextjs_app/e2e/` (das QA-E2E lief als Verifikation, ist aber noch nicht als Repo-Regression eingecheckt).
 
 ## Deployment
 _To be added by /deploy_
