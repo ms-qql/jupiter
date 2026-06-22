@@ -1,7 +1,12 @@
 """Konfiguration (pydantic-settings). Env-Prefix: JUPITER_."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Standard-Ort der Konstitutions-MD-Dateien: backend/constitution/.
+_DEFAULT_CONSTITUTION_DIR = str(Path(__file__).resolve().parent.parent / "constitution")
 
 # Im MVP unterstützte Modell-Aliase (werden 1:1 an `claude --model` durchgereicht).
 VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
@@ -36,6 +41,9 @@ class Settings(BaseSettings):
 
     # Sekunden Kulanz zwischen SIGTERM und SIGKILL beim Stoppen.
     process_stop_grace_seconds: float = 5.0
+
+    # Verzeichnis der Knappheits-Konstitution (PROJ-6): global.md + roles/<rolle>.md.
+    constitution_dir: str = _DEFAULT_CONSTITUTION_DIR
 
 
 settings = Settings()

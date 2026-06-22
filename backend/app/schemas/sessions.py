@@ -19,9 +19,13 @@ class SessionCreate(BaseModel):
     )
     model: ModelName = "sonnet"
     permission_mode: PermissionMode = "default"
-    system_prompt_append: str | None = Field(
+    role: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$",
+        description="Optionale Rolle für den Konstitutions-Override (PROJ-6).",
+    )
+    extra_system_prompt: str | None = Field(
         default=None, max_length=MAX_INPUT_CHARS,
-        description="Optionaler System-Prompt-Zusatz (Konstitution #24, PROJ-6).",
+        description="Optionaler Zusatz NACH der Konstitution (kann diese nicht entfernen).",
     )
 
 
@@ -44,6 +48,8 @@ class SessionRead(BaseModel):
     project_path: str
     model: str
     permission_mode: str
+    role: str | None = None
+    constitution_source: str | None = None
     status: str
     created_at: str
     last_activity: str
@@ -68,3 +74,18 @@ class SessionDetail(SessionRead):
 
 class TranscriptText(BaseModel):
     text: str
+
+
+class ConstitutionRead(BaseModel):
+    """Effektive Konstitution (einer Session oder einer Rollen-Vorschau)."""
+
+    role: str | None = None
+    source: str
+    text: str
+
+
+class ConstitutionOverview(BaseModel):
+    """Globale Konstitution + Liste vorhandener Rollen."""
+
+    global_text: str
+    roles: list[str]

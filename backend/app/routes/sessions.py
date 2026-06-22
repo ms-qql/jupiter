@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 
 from ..engine.manager import SessionManager
 from ..schemas.sessions import (
+    ConstitutionRead,
     SessionCreate,
     SessionDetail,
     SessionInput,
@@ -30,7 +31,8 @@ async def create_session(payload: SessionCreate, request: Request) -> dict:
             initial_prompt=payload.initial_prompt,
             model=payload.model,
             permission_mode=payload.permission_mode,
-            system_prompt_append=payload.system_prompt_append,
+            role=payload.role,
+            extra_system_prompt=payload.extra_system_prompt,
         )
     except ValueError as exc:  # ungültiger Pfad / Modell
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -84,6 +86,19 @@ async def stop_session(session_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Session nicht gefunden.")
     await manager.stop(session_id)
     return {"ok": True}
+
+
+@router.get("/{session_id}/constitution", response_model=ConstitutionRead)
+async def get_session_constitution(session_id: str, request: Request) -> dict:
+    """Effektive Konstitution DIESER Session (PROJ-6, AC: einsehbar)."""
+    runtime = _manager(request).get(session_id)
+    if runtime is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    return {
+        "role": runtime.state.role,
+        "source": runtime.state.constitution_source or "leer",
+        "text": runtime.state.effective_constitution,
+    }
 
 
 @router.get("/{session_id}/transcript", response_model=TranscriptText)

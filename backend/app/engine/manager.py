@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from ..config import MVP_ALLOWED_PERMISSION_MODES, VALID_MODELS, settings
 from .base import EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
+from .constitution import combine_with_extra, resolve_constitution
 from .events import (
     StreamEvent,
     extract_rate_limit,
@@ -68,6 +69,9 @@ class SessionState:
     project_path: str
     model: str
     permission_mode: str
+    role: str | None = None
+    constitution_source: str | None = None
+    effective_constitution: str = ""
     status: str = STARTING
     created_at: datetime = field(default_factory=_now)
     last_activity: datetime = field(default_factory=_now)
@@ -85,6 +89,8 @@ class SessionState:
             "project_path": self.project_path,
             "model": self.model,
             "permission_mode": self.permission_mode,
+            "role": self.role,
+            "constitution_source": self.constitution_source,
             "status": self.status,
             "created_at": self.created_at.isoformat(),
             "last_activity": self.last_activity.isoformat(),
@@ -193,7 +199,8 @@ class SessionManager:
         initial_prompt: str,
         model: str | None = None,
         permission_mode: str | None = None,
-        system_prompt_append: str | None = None,
+        role: str | None = None,
+        extra_system_prompt: str | None = None,
         owner: str | None = None,
     ) -> SessionRuntime:
         model = model or settings.default_model
@@ -207,6 +214,11 @@ class SessionManager:
             )
         real_path = validate_project_path(project_path)
 
+        # Knappheits-Konstitution auflösen (#24): global + optionaler Rollen-Override,
+        # danach optionaler session-spezifischer Zusatz (kann Konstitution nicht entfernen).
+        resolved = resolve_constitution(role, settings.constitution_dir)  # ValueError bei ungültiger Rolle
+        effective = combine_with_extra(resolved.text, extra_system_prompt)
+
         session_id = str(uuid.uuid4())
         state = SessionState(
             session_id=session_id,
@@ -214,6 +226,9 @@ class SessionManager:
             project_path=real_path,
             model=model,
             permission_mode=permission_mode,
+            role=resolved.role,
+            constitution_source=resolved.source,
+            effective_constitution=effective,
         )
         driver = self._driver_factory()
         runtime = SessionRuntime(state, driver)
@@ -225,7 +240,7 @@ class SessionManager:
             model=model,
             permission_mode=permission_mode,
             initial_prompt=initial_prompt,
-            system_prompt_append=system_prompt_append,
+            system_prompt_append=effective,
         )
         try:
             await driver.start(spec, runtime.handle_event)
