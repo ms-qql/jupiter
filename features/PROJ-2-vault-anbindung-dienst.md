@@ -1,8 +1,8 @@
 # PROJ-2: Vault-Anbindung als Dienst
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-22
-**Last Updated:** 2026-06-22 (Tech Design hinzugefügt)
+**Last Updated:** 2026-06-22 (Backend implementiert)
 
 ## Dependencies
 - None — kann parallel zu PROJ-1 gebaut werden (eigenständiger Backend-Dienst).
@@ -112,6 +112,28 @@ POST /sessions/{id}/handover             → schreibt ein kuratiertes Handover-D
 - Schreib-Pfad-Validierung gegen den Jupiter-Unterbaum nach dem Vorbild `validate_project_path` (`engine/manager.py`) implementieren; Lese-/Such-Validierung gegen `vault_root`.
 - Session-Hook beim `closed`-Event in `manager.py` (Übergang → DONE) ergänzen, der das Roh-Log nach `Sessions/` schreibt.
 - Atomare Writes (temp + `os.rename`) + Datei-Lock für Append; Slug-/Frontmatter-Helfer als reine Funktionen (testbar wie `constitution.py`).
+
+### Implementation Notes (Backend Developer)
+**Datum:** 2026-06-22 · **Branch:** dev · **Stand:** Backend fertig, QA ausstehend · **Tests:** `pytest` → **99 grün** (26 neue für PROJ-2).
+
+**Gebaute Teile:**
+- **`engine/vault.py` — `VaultService`** (reine Datei-I/O, Muster wie `constitution.py`): `read_file`, `list_files`, `search`, `write`, `write_session_log` + Helfer `slugify`, `_build/_parse_frontmatter`. Lesen/Suchen vault-weit, Schreiben nur im Jupiter-Unterbaum.
+- **Vault-Layout:** geschrieben wird nach `<vault_root>/Agentic OS/Jupiter/Sessions/` (roh) bzw. `…/Handovers/` (kuratiert) — getrennt (AC). Dateiname `YYYY-MM-DD--<slug>-<kurz-id>.md`, ASCII-Slug (Umlaut-Mapping).
+- **Frontmatter:** jede Datei valides Obsidian-MD mit YAML-Frontmatter (`owner`, `session_id`, `created`, `type`, optional `title`) — `owner` serverseitig gestempelt (#21).
+- **Atomare Writes:** temp-Datei + `os.replace`; Default-Kollision **append** mit `fcntl`-Lock (kein zweites Frontmatter beim Anhängen); `version` (→ `-2.md`) und `error` (→ 409) wählbar.
+- **Suche:** case-insensitive Substring über den GANZEN Vault → Pfad + Zeile + Ausschnitt; Limits (max 100 Hits, 2 MB/Datei) als DoS-Schutz.
+- **API (`routes/vault.py`):** `GET /vault/files?dir=`, `GET /vault/file?path=`, `GET /vault/search?q=&limit=`, `POST /vault/files`. Plus `POST /sessions/{id}/handover` (kuratiertes Doc, Default `version`).
+- **Auto-Log:** `SessionManager` bekommt optional einen `VaultService`; bei Übergang **Session → DONE** schreibt ein `on_done`-Hook das Roh-Transkript automatisch nach `Sessions/` (Fehler werden geschluckt → kein Session-Abbruch).
+- **Config:** `vault_root` (`JUPITER_VAULT_ROOT`, Default `/home/dev/tools/Hal`), `vault_jupiter_subdir` (`Agentic OS/Jupiter`), `vault_autolog` (Default an).
+
+**Sicherheit/Edge-Cases (getestet):** Pfad-Traversal beim Lesen/Schreiben (`..`, absolute Pfade, `/etc/passwd`) → `ValueError`/400; Suche sieht fremde PARA-Dateien (read-only), Schreiben bleibt im Jupiter-Baum; fehlender Vault-Pfad → klarer Fehler statt Korruption; keine `.tmp`-Reste; unbekannter `type` → 400/422.
+
+**Test-Isolation:** neue `tests/conftest.py` (autouse) biegt `settings.vault_root` pro Test auf ein tmp-Verzeichnis → **kein** Test schreibt je in den echten Hal-Vault (verifiziert: kein `Agentic OS/Jupiter`-Ordner entsteht).
+
+**Offen / Hinweis für QA:**
+- `--append-system-prompt`-/JWT-/RLS-Themen sind hier N/A (MVP-Abweichung, reine Datei-I/O).
+- `python-frontmatter` bewusst NICHT eingeführt — der tolerante Eigen-Parser genügt fürs MVP.
+- Streaming-Write für sehr große Logs ist noch nicht umgesetzt (aktuell ganzer Body im RAM) — für MVP-Loggrößen unkritisch, später nachrüstbar (Repository-Seam offen).
 
 ## QA Test Results
 _To be added by /qa_

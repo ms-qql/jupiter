@@ -11,14 +11,21 @@ from fastapi import FastAPI
 
 from .engine.base import EngineDriver
 from .engine.manager import SessionManager
-from .routes import constitution, sessions
+from .engine.vault import VaultService
+from .routes import constitution, sessions, vault
 
 
-def create_app(driver_factory: Callable[[], EngineDriver] | None = None) -> FastAPI:
+def create_app(
+    driver_factory: Callable[[], EngineDriver] | None = None,
+    vault_service: VaultService | None = None,
+) -> FastAPI:
     app = FastAPI(title="Jupiter", version="0.1.0")
-    app.state.manager = SessionManager(driver_factory=driver_factory)
+    vault_service = vault_service or VaultService()
+    app.state.vault = vault_service
+    app.state.manager = SessionManager(driver_factory=driver_factory, vault=vault_service)
     app.include_router(sessions.router)
     app.include_router(constitution.router)
+    app.include_router(vault.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

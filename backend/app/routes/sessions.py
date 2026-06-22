@@ -15,6 +15,7 @@ from ..schemas.sessions import (
     SessionRead,
     TranscriptText,
 )
+from ..schemas.vault import HandoverRequest, VaultWriteResult
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -99,6 +100,29 @@ async def get_session_constitution(session_id: str, request: Request) -> dict:
         "source": runtime.state.constitution_source or "leer",
         "text": runtime.state.effective_constitution,
     }
+
+
+@router.post("/{session_id}/handover", response_model=VaultWriteResult, status_code=201)
+async def write_handover(session_id: str, payload: HandoverRequest, request: Request) -> dict:
+    """Kuratiertes Handover-Dokument dieser Session in den Vault schreiben (PROJ-2)."""
+    runtime = _manager(request).get(session_id)
+    if runtime is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    vault = request.app.state.vault
+    try:
+        result = vault.write(
+            type="handover",
+            body=payload.body,
+            title=payload.title or f"handover-{session_id[:8]}",
+            session_id=session_id,
+            owner=runtime.state.owner,
+            on_exists=payload.on_exists,
+        )
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (PermissionError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=f"Vault-Schreibfehler: {exc}") from exc
+    return vars(result)
 
 
 @router.get("/{session_id}/transcript", response_model=TranscriptText)

@@ -45,5 +45,12 @@ class Settings(BaseSettings):
     # Verzeichnis der Knappheits-Konstitution (PROJ-6): global.md + roles/<rolle>.md.
     constitution_dir: str = _DEFAULT_CONSTITUTION_DIR
 
+    # Hal-Vault (PROJ-2): Lese-/Such-Wurzel = GANZER Vault; geschrieben wird NUR im
+    # Jupiter-Unterbaum (Agentic OS/Jupiter), ohne die PARA-Struktur zu verändern.
+    vault_root: str = "/home/dev/tools/Hal"
+    vault_jupiter_subdir: str = "Agentic OS/Jupiter"
+    # Roh-Session-Logs beim Session-Ende automatisch in den Vault schreiben (Grundlage #8/#9).
+    vault_autolog: bool = True
+
 
 settings = Settings()

@@ -106,11 +106,19 @@ class SessionState:
 class SessionRuntime:
     """Bündelt Zustand + Treiber + Transkript + WebSocket-Abonnenten einer Session."""
 
-    def __init__(self, state: SessionState, driver: EngineDriver) -> None:
+    def __init__(
+        self,
+        state: SessionState,
+        driver: EngineDriver,
+        on_done: Callable[["SessionRuntime"], None] | None = None,
+    ) -> None:
         self.state = state
         self.driver = driver
         self.transcript: list[TranscriptEntry] = []
         self._subscribers: set[asyncio.Queue] = set()
+        # Hook: wird genau EINMAL gefeuert, wenn die Session DONE erreicht (PROJ-2-Autolog).
+        self.on_done = on_done
+        self._done_fired = False
 
     # --- WebSocket-Fan-out -------------------------------------------------
 
@@ -176,6 +184,12 @@ class SessionRuntime:
         # Nach jedem Event einen Zustands-Snapshot an die UI streamen.
         self._broadcast({"kind": "state", **self.state.to_read()})
 
+        # Beim Übergang nach DONE genau einmal das Roh-Log in den Vault schreiben (PROJ-2).
+        if self.state.status == DONE and not self._done_fired:
+            self._done_fired = True
+            if self.on_done is not None:
+                self.on_done(self)
+
     def _apply_usage(self, event: StreamEvent) -> None:
         usage = extract_usage(event)
         if usage is None:
@@ -188,9 +202,11 @@ class SessionRuntime:
 
 
 class SessionManager:
-    def __init__(self, driver_factory: DriverFactory | None = None) -> None:
+    def __init__(self, driver_factory: DriverFactory | None = None, vault=None) -> None:
         self._driver_factory: DriverFactory = driver_factory or (lambda: ClaudeCodeDriver())
         self._sessions: dict[str, SessionRuntime] = {}
+        # Optionaler VaultService (PROJ-2): rohe Session-Logs am Ende persistieren.
+        self._vault = vault
 
     async def create(
         self,
@@ -231,7 +247,7 @@ class SessionManager:
             effective_constitution=effective,
         )
         driver = self._driver_factory()
-        runtime = SessionRuntime(state, driver)
+        runtime = SessionRuntime(state, driver, on_done=self._write_session_log)
         self._sessions[session_id] = runtime
 
         spec = LaunchSpec(
@@ -278,6 +294,28 @@ class SessionManager:
             tag = " (denkt)" if e.kind == "thinking" else ""
             lines.append(f"{prefix}{tag}: {e.text}")
         return "\n\n".join(lines)
+
+    @staticmethod
+    def _transcript_md(runtime: SessionRuntime) -> str:
+        """Transkript als Obsidian-MD (Überschriften je Sprecher-Block)."""
+        blocks = []
+        for e in runtime.transcript:
+            who = {"user": "Du", "assistant": "Claude"}.get(e.role, e.role)
+            tag = " (denkt)" if e.kind == "thinking" else ""
+            blocks.append(f"## {who}{tag}\n\n{e.text}")
+        return "\n\n".join(blocks) + "\n"
+
+    def _write_session_log(self, runtime: SessionRuntime) -> None:
+        """Auto-Hook (Session → DONE): rohes Log in den Vault schreiben (PROJ-2).
+
+        Fehler dürfen die Session NICHT abbrechen (Edge-Case: Vault nicht erreichbar).
+        """
+        if self._vault is None or not settings.vault_autolog:
+            return
+        try:
+            self._vault.write_session_log(runtime.state, self._transcript_md(runtime))
+        except Exception:  # noqa: BLE001 — Vault-Fehler bewusst schlucken (Session läuft weiter)
+            pass
 
     def _require(self, session_id: str) -> SessionRuntime:
         runtime = self._sessions.get(session_id)
