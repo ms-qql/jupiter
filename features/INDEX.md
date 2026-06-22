@@ -13,7 +13,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-3 | Cockpit: Mission Control + Kanban + Ampel-Kacheln | P0 | Planned | PROJ-1, PROJ-2 | [Spec](PROJ-3-cockpit-mission-control-kanban.md) |
 | PROJ-4 | Decision Cards (Freigabe-Flow) | P0 | Planned | PROJ-1, PROJ-3 | [Spec](PROJ-4-decision-cards.md) |
 | PROJ-5 | Context-Management & Handover | P0 | Planned | PROJ-1, PROJ-2, PROJ-3 | [Spec](PROJ-5-context-management-handover.md) |
-| PROJ-6 | Knappheits-Konstitution | P0 | In Progress | PROJ-1 | [Spec](PROJ-6-knappheits-konstitution.md) |
+| PROJ-6 | Knappheits-Konstitution | P0 | Approved | PROJ-1 | [Spec](PROJ-6-knappheits-konstitution.md) |
 | PROJ-7 | MD-Reader | P0 | Planned | PROJ-2 | [Spec](PROJ-7-md-reader.md) |
 
 ## Empfohlene Bau-Reihenfolge (Phase 0)

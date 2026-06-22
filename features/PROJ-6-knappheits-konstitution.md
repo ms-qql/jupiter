@@ -1,8 +1,8 @@
 # PROJ-6: Knappheits-Konstitution
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-22
-**Last Updated:** 2026-06-22 (Backend implementiert)
+**Last Updated:** 2026-06-22 (Backend + QA abgeschlossen)
 
 ## Dependencies
 - Requires: PROJ-1 (Engine-Treiber) — Konstitution wird beim Session-Start injiziert
@@ -101,7 +101,31 @@ PROJ-1s client-`system_prompt_append` wird zu `extra_system_prompt` umbenannt un
 **Hinweis für QA:** Live-Wirkung (knappere Outputs) optional via `scripts/smoke_driver.py` prüfbar (injiziert jetzt automatisch die globale Konstitution) — verbraucht Quota, nicht in CI.
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-06-22 · **Branch:** dev · **Tester:** QA Engineer · **Suite:** `backend/tests/` → **73 grün** (`pytest`).
+
+### Akzeptanzkriterien (4/4 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | Globale Konstitution wird bei jedem Session-Start injiziert | ✅ PASS | `test_session_injects_global_constitution` |
+| 2 | Inhalt erzwingt Knappheit (keine Vorreden/Wiederholung/„Soll ich…?") | ✅ PASS | `constitution/global.md` (Regeln vorhanden, injiziert) |
+| 3 | Pro Rolle ergänzbar **oder** überschreibbar | ✅ PASS | `test_role_append`, `test_role_replace`, `test_effective_constitution_visible_with_override` |
+| 4 | Effektive Konstitution einsehbar | ✅ PASS | `GET /sessions/{id}/constitution` + `GET /constitution[/{role}]` |
+
+### Security-Audit (Red-Team)
+- ✅ **Pfad-Traversal über Rollennamen** abgewehrt: `../etc/passwd`, `..`, `a/b`, `a b`, `a.md`, `""` → 422 (POST) bzw. 400/404 (Preview). Regex `^[A-Za-z0-9_-]{1,64}$` schützt den Dateinamen.
+- ✅ **Enforcement strukturell garantiert:** `extra_system_prompt` wird IMMER nach der Konstitution angehängt; ein „Ignoriere die Konstitution"-Zusatz entfernt sie nicht und steht nachweislich danach (`test_extra_cannot_remove_or_precede_constitution`).
+- ✅ Größenlimit auch auf `extra_system_prompt` (100k → 422). Edge-Cases (fehlende `global.md` → leer/kein Hard-Fail, replace-Marker, Rollen-Fallback) abgedeckt.
+- N/A: JWT/RLS/Mandant, Flutter/Responsive (MVP-Non-Goals bzw. UI in PROJ-3).
+
+### Findings (alle Low → nicht deploy-blockierend)
+| ID | Sev | Befund | Empfehlung |
+|----|-----|--------|------------|
+| QA-6.1 | Low | `extra_system_prompt` kann die Konstitution **semantisch** widersprechen (Prompt-Injektion durch den User selbst). Struktur bleibt erhalten, aber das Modell könnte dem Zusatz folgen. Single-User → Selbst-Risiko. | Für MVP akzeptiert; später optional Scan/Begrenzung. |
+| QA-6.2 | Low | Fehlende/leere `global.md` deaktiviert die Disziplin **stillschweigend** (kein Hinweis). | Beim Start/erster Session eine Warnung loggen, wenn `global.md` fehlt. |
+| QA-6.3 | Low | Unbekannte (aber gültige) Rolle fällt **unsichtbar** auf global zurück; `constitution_source` zeigt nur `global`. | `source` sprechend machen, z. B. `global (rolle:X ohne Datei)`. |
+
+### Produktionsreife-Entscheidung
+**READY / Approved** — alle 4 AC bestanden, keine Critical/High/Medium-Bugs, 73 Tests grün. QA-6.1–6.3 sind optionale Härtungen (kein Blocker).
 
 ## Deployment
 _To be added by /deploy_
