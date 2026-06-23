@@ -121,6 +121,25 @@ GET /md/file?path=<pfad>                      → liest EINE .md → {path, fron
 - **Wikilink-Auflösung, Rendering (react-markdown), Frontmatter-Panel, „fehlend"-Stil, Bild-Platzhalter** sind Frontend-Themen (PROJ-7-Frontend) — Backend liefert nur Index + Roh-MD + getrenntes Frontmatter.
 - **Streaming/Windowing** für sehr große MD nicht umgesetzt (ganze Datei im RAM); für MVP-Größen unkritisch, Seam offen (analog QA-2.2 PROJ-2).
 
+### Implementation Notes (Frontend Developer)
+**Datum:** 2026-06-23 · **Branch:** dev · **Stand:** Frontend fertig, QA ausstehend · **Stack:** Next.js 16 (App Router) · **Checks:** `vitest` → **30 grün** (8 neue), `eslint` sauber, `next build` grün, Live-Smoke gegen Backend ok.
+
+**Gebaute Teile:**
+- **Route `app/(cockpit)/doku/page.tsx`** (Client, in `<Suspense>` wegen `useSearchParams`): Quellen-Umschalter (shadcn `Tabs`), Datei-Baum links, Viewer rechts. Deep-linkbar via `?source=&path=` sowie `?source=vault&rel=…` (vault-relativer Handover-Pointer aus PROJ-5). Lädt beide Quell-Indizes einmal → Cross-Source-Wikilinks.
+- **`lib/md-tree.ts`** (rein, getestet): `buildTree` (flacher Index → Ordnerbaum, Ordner vor Dateien, alphabetisch), `buildWikilinkIndex` + `resolveWikilink` (Basename **und** rel-Pfad, case-insensitiv, `#anchor` ignoriert).
+- **`lib/remark-wikilink.ts`**: kleines remark-Plugin (ohne Zusatz-Dep) — `[[Ziel|Alias]]` → `wikilink:`-Link, `![[bild]]` → `wikiembed:`-Link. Fasst Code-/Inline-Code nie an, erzeugt keine verschachtelten Links.
+- **`components/cockpit/markdown-view.tsx`**: `react-markdown` + `remark-gfm`; Link-Renderer löst `wikilink:` gegen den Index auf → Navigation oder durchgestrichener „fehlend"-Stil; `wikiembed:`/`<img>` → Platzhalter-Badge. **Kein Roh-HTML** (XSS-Schutz, react-markdown-Default).
+- **`components/cockpit/frontmatter-panel.tsx`**: YAML-Frontmatter als Key/Value-`<dl>` (kein Rohtext).
+- **`components/cockpit/file-tree.tsx`**: ausklappbarer Baum; Default-Expand `features/` (Projekt) bzw. `Agentic OS/Jupiter/(Handovers)` (Vault).
+- **API/Typen**: `listMdSources`/`getMdIndex`/`readMdFile` in `lib/api.ts`, `MdSource`/`MdIndexEntry`/`MdIndexResult`/`MdFileRead` in `lib/types.ts`.
+- **Navigation**: „📄 Doku"-Link in der `SessionRail`; HandoverDialog verlinkt den gespeicherten Pfad mit „Im Reader öffnen →".
+- **Styling**: `.md-body`-Block in `globals.css` (Headings/Listen/Code/**Tabellen**/Blockquote/HR), da kein `@tailwindcss/typography` vorhanden.
+- **Deps (neu):** `react-markdown`, `remark-gfm`.
+
+**AC-Abdeckung:** Rendering inkl. Tabellen ✓ · klickbare Wikilinks + „fehlend"-Markierung ✓ · Datei-Baum ✓ · Frontmatter-Panel ✓ · read-only ✓ · Bild-Embeds → Platzhalter ✓ · Nicht-MD → erscheint nicht im Baum / Backend 400.
+
+**Offen für QA:** Code-Syntax-Highlighting (Plain-`<pre>`, kein Shiki — nice-to-have); Windowing für sehr große Dateien (Seam offen); Suche-UI nicht eingebaut (Backend `/vault/search` vorhanden, P1).
+
 ## QA Test Results
 _To be added by /qa_
 

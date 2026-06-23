@@ -89,6 +89,37 @@ export interface ThresholdSetting {
   max_pct: number;
 }
 
+// --- PROJ-7: MD-Reader (read-only) -----------------------------------------
+
+/** Lese-Quelle des MD-Readers — spiegelt backend/app/schemas/md.py MdSource. */
+export interface MdSource {
+  id: string; // "vault" | "project"
+  label: string;
+  root: string; // absoluter Wurzelpfad
+}
+
+/** Ein .md-Eintrag aus dem Index (MdIndexEntry). */
+export interface MdIndexEntry {
+  path: string; // absoluter Pfad (für GET /md/file)
+  rel: string; // relativ zur Quell-Wurzel (für den Baum)
+  name: string; // Basisname inkl. .md (für Wikilink-Auflösung)
+}
+
+/** Antwort von GET /md/index (MdIndexResult). */
+export interface MdIndexResult {
+  source: string;
+  root: string;
+  files: MdIndexEntry[];
+}
+
+/** Antwort von GET /md/file (MdFileRead) — Frontmatter getrennt vom Body. */
+export interface MdFileRead {
+  path: string;
+  frontmatter: Record<string, unknown>;
+  body: string;
+  content: string;
+}
+
 export interface TranscriptEntry {
   role: string;
   kind: string;

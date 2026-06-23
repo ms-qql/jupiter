@@ -133,3 +133,66 @@
     @apply font-sans;
   }
 }
+
+/* PROJ-7: MD-Reader — Markdown-Body-Styling (kein @tailwindcss/typography vorhanden). */
+.md-body {
+  @apply text-sm leading-relaxed text-foreground/90;
+}
+.md-body > :first-child {
+  margin-top: 0;
+}
+.md-body h1 {
+  @apply mb-3 mt-6 text-2xl font-semibold tracking-tight;
+}
+.md-body h2 {
+  @apply mb-2 mt-6 border-b border-border pb-1 text-xl font-semibold tracking-tight;
+}
+.md-body h3 {
+  @apply mb-2 mt-5 text-lg font-semibold;
+}
+.md-body h4 {
+  @apply mb-2 mt-4 font-semibold;
+}
+.md-body p {
+  @apply my-3;
+}
+.md-body ul {
+  @apply my-3 list-disc pl-6;
+}
+.md-body ol {
+  @apply my-3 list-decimal pl-6;
+}
+.md-body li {
+  @apply my-1;
+}
+.md-body li > input[type="checkbox"] {
+  @apply mr-1.5 align-middle;
+}
+.md-body blockquote {
+  @apply my-3 border-l-2 border-border pl-4 italic text-muted-foreground;
+}
+.md-body code {
+  @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em];
+}
+.md-body pre {
+  @apply my-3 overflow-x-auto rounded-lg border border-border bg-card/60 p-4;
+}
+.md-body pre code {
+  @apply bg-transparent p-0 text-xs;
+}
+.md-body table {
+  @apply my-3 w-full border-collapse text-sm;
+}
+.md-body th,
+.md-body td {
+  @apply border border-border px-3 py-1.5 text-left;
+}
+.md-body th {
+  @apply bg-muted/50 font-medium;
+}
+.md-body hr {
+  @apply my-6 border-border;
+}
+.md-body a {
+  @apply text-primary;
+}

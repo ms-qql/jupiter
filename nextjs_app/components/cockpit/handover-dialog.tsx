@@ -6,6 +6,7 @@
 // ein bewusst kuratiertes Dokument bleibt, kein Wegwerf-Log.
 
 import { useState } from "react";
+import Link from "next/link";
 import { FileTextIcon } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -116,6 +117,13 @@ export function HandoverDialog({
             {savedPath && (
               <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-500">
                 Gespeichert: <span className="font-mono">{savedPath}</span>
+                {" · "}
+                <Link
+                  href={`/doku?source=vault&rel=${encodeURIComponent(savedPath)}`}
+                  className="underline underline-offset-2 hover:no-underline"
+                >
+                  Im Reader öffnen →
+                </Link>
               </p>
             )}
           </div>

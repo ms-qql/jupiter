@@ -3,6 +3,9 @@
 
 import type {
   HandoverPreview,
+  MdFileRead,
+  MdIndexResult,
+  MdSource,
   Session,
   SessionCreate,
   SessionDetail,
@@ -144,6 +147,33 @@ export function setThreshold(thresholdPct: number): Promise<ThresholdSetting> {
     method: "PATCH",
     body: JSON.stringify({ threshold_pct: thresholdPct }),
   });
+}
+
+// --- PROJ-7: MD-Reader (read-only) -----------------------------------------
+
+/** Verfügbare Lese-Quellen (Vault + Projekt). */
+export function listMdSources(
+  project?: string,
+  signal?: AbortSignal,
+): Promise<MdSource[]> {
+  const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+  return request<MdSource[]>(`/md/sources${qs}`, { signal });
+}
+
+/** Flacher Index aller .md einer Quelle → Baum + Wikilink-Auflösung. */
+export function getMdIndex(
+  source: string,
+  project?: string,
+  signal?: AbortSignal,
+): Promise<MdIndexResult> {
+  const params = new URLSearchParams({ source });
+  if (project) params.set("project", project);
+  return request<MdIndexResult>(`/md/index?${params.toString()}`, { signal });
+}
+
+/** Eine .md lesen (absoluter Pfad, gegen allowed_roots validiert). */
+export function readMdFile(path: string, signal?: AbortSignal): Promise<MdFileRead> {
+  return request<MdFileRead>(`/md/file?path=${encodeURIComponent(path)}`, { signal });
 }
 
 /** ws(s)://…/sessions/{id}/stream — Live-Events nur für die Detailansicht. */
