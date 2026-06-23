@@ -600,8 +600,10 @@ class SessionRuntime:
         fut.set_result(outcome)
         self.pending.pop(decision_id, None)
         self._futures.pop(decision_id, None)
-        # Keine offene Card mehr → Session läuft weiter (Claude verarbeitet das Resultat).
-        if not self.pending and self.state.status == AWAITING_APPROVAL:
+        # Keine BLOCKIERENDE Card mehr → Session läuft weiter (Claude verarbeitet das
+        # Resultat). Nur Cards mit Future blockieren; nicht-blockierende deny-Notizen
+        # (QA-Bug C) dürfen den Status NICHT auf awaiting_approval festhalten.
+        if not self._futures and self.state.status == AWAITING_APPROVAL:
             self.state.status = RUNNING
         self.state.last_activity = _now()
         self._broadcast({"kind": "decision", "event": "resolved", "decision": card.to_read()})

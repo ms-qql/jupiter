@@ -148,10 +148,6 @@ async def test_approved_phase_gate_advances_phase(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=True, reason="QA-Bug C (Regression aus Fix A): eine liegengebliebene "
-                                       "deny-Notiz in self.pending verhindert die Rückkehr nach "
-                                       "RUNNING — die 'pending leer?'-Prüfung muss nur blockierende "
-                                       "Cards (self._futures) zählen.")
 async def test_lingering_deny_notice_does_not_freeze_status(tmp_path, monkeypatch):
     _point(tmp_path, monkeypatch,
            "phase_gate:\n  enabled: false\n  transitions: []\n"

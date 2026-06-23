@@ -229,9 +229,9 @@ Regression abgesichert in `tests/test_proj10_qa.py`: `test_denied_phase_gate_kee
 
 ### Re-QA (2026-06-23) — NEUER Befund aus Fix A
 - **Bug C — Status friert auf `awaiting_approval` ein (Medium, Regression aus Fix A).** Die nicht-blockierende deny-Notiz liegt in `self.pending`. Wird danach eine **echte** blockierende Card freigegeben, prüft `resolve_decision` `if not self.pending …` → die liegengebliebene Notiz hält `pending` nicht-leer → der Status kehrt **nicht** nach `RUNNING` zurück, sondern bleibt `awaiting_approval` (Cockpit/Kanban zeigen die Session fälschlich als „wartet auf Freigabe", obwohl der Treiber weiterläuft). *Repro:* deny-Regel (Bash) + card-Regel (Write) → Bash (deny-Notiz) → Write-Card freigeben → Status bleibt `awaiting_approval`. *Fix-Richtung:* Die „leer?"-Prüfung darf nur **blockierende** Cards zählen → `self._futures` statt `self.pending` verwenden (Notizen haben kein Future). Alternativ Notizen aus `pending` heraushalten und über eine separate `notices`-Liste in `to_read()` ausliefern.
-- Festgehalten als `xfail(strict=True)`: `test_lingering_deny_notice_does_not_freeze_status` (flippt auf PASS nach dem Fix).
+- **Bug C → BEHOBEN (Backend-Fix 2026-06-23):** Die „leer?"-Prüfung in `resolve_decision` zählt jetzt nur **blockierende** Cards (`if not self._futures` statt `self.pending`) — nicht-blockierende deny-Notizen halten den Status nicht mehr fest. Regression grün: `test_lingering_deny_notice_does_not_freeze_status` (xfail entfernt).
 
-**Re-QA-Verdict:** Bug A + B bestätigt behoben. **Ein neuer Medium-Bug (C)** durch Fix A → **Status bleibt In Review**, Bug C vor Deploy fixen. Suite: 348 passed + 1 xfail (Bug C).
+**Re-QA-Verdict:** Bug A + B + C alle behoben und per Regressionstest abgesichert. Keine offenen Bugs. Suite: **354 passed**. → Bereit für finale Abnahme.
 
 ### Security / Red-Team
 - ✅ **Bypass kann das harte Phasen-Gate nicht aushebeln** — die Gate-Prüfung steht **vor** dem Bypass-Auto-Allow.
