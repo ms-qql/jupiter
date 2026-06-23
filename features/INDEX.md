@@ -15,7 +15,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-5 | Context-Management & Handover | P0 | Deployed | PROJ-1, PROJ-2, PROJ-3 | [Spec](PROJ-5-context-management-handover.md) |
 | PROJ-6 | Knappheits-Konstitution | P0 | Approved | PROJ-1 | [Spec](PROJ-6-knappheits-konstitution.md) |
 | PROJ-7 | MD-Reader | P0 | Approved | PROJ-2 | [Spec](PROJ-7-md-reader.md) |
-| PROJ-8 | ABC-Workflow-Gantt (Phasen-Fortschritt je Session) | P0 | In Progress | PROJ-3, PROJ-1 | [Spec](PROJ-8-abc-workflow-gantt.md) |
+| PROJ-8 | ABC-Workflow-Gantt (Phasen-Fortschritt je Session) | P0 | Approved | PROJ-3, PROJ-1 | [Spec](PROJ-8-abc-workflow-gantt.md) |
 
 ## Phase 1 — Ausbau
 

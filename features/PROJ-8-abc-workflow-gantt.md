@@ -1,9 +1,9 @@
 # PROJ-8: ABC-Workflow-Gantt — Phasen-Fortschritt je Session/Projekt
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
-**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** ✅ implementiert (2026-06-23) · **QA:** offen (`/abc-qa`)
+**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** ✅ implementiert (2026-06-23) · **QA:** ✅ bestanden (2026-06-23, 0 Bugs) → Approved
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit) — der Gantt lebt **unter dem Kanban** in derselben Ansicht.
@@ -171,7 +171,56 @@ Next.js (Jupiter-Override), additive, gepollte Lese-Ansicht — kein Extra-Reque
 - **Tests:** `lib/status.test.ts` (ABC_PHASES/phaseIndex) + `components/cockpit/gantt-chart.test.tsx` (neu: Füllung, Hervorhebung, nicht-linear, neutrale/beendete Zeile, Empty-State, Basename-Fallback) — via `renderToStaticMarkup`. **47 Vitest grün, ESLint sauber, `next build` erfolgreich** (TS clean, Version ins Client-Bundle injiziert).
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-23 · **Branch:** dev · **Tester:** QA-Engineer (abc-qa)
+**Automatisiert:** Backend `pytest` 263 grün (davon 50 PROJ-8) · Frontend `vitest` 47 grün (davon 32 status + Gantt) · `next build` erfolgreich (TS clean) · ESLint sauber.
+
+### Akzeptanzkriterien (11/11 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | Gantt unter dem Kanban (eigener Abschnitt) | ✅ | `page.tsx` `<section> ABC-Fortschritt` direkt nach `<KanbanBoard/>` im Kanban-Tab |
+| 2 | Eine horizontale Bar pro Session | ✅ | `GanttRow` je Session; Render-Test |
+| 3 | Links Projektname + Feature-Indikation | ✅ | RowLabel `name` + „Feature N"; Test `Jupiter`/`Feature 8` |
+| 4 | 8 Phasen-Spalten in fester Reihenfolge | ✅ | `ABC_PHASES`-Header; Test prüft exakte Reihenfolge |
+| 5 | Bar bis zuletzt abgeschlossene Phase, aktuelle hervorgehoben | ✅ | Fill bis `abc_phase_reached`, `ring` auf `abc_phase`; Tests (linear + nicht-linear) |
+| 6 | Projektname aus Session-Erstellung, Dialog fragt zuerst Projekt | ✅ | „Projekt"-Feld als **erstes** im `NewSessionDialog` → `project_name` an `POST /sessions` |
+| 7 | Aktuelles Feature dynamisch aus der Session | ✅ | Detektor liest Skill-`args`/berührtes Spec-File; E2E-Test (Hook→`GET /sessions`) |
+| 8 | Live-Aktualisierung (gleiche Polling-Mechanik) | ✅ | Felder über `to_read()` in REST-Liste **und** WS-Broadcast; kein Extra-Request |
+| 9 | Phasen-Mapping konsistent mit Ampel/Kanban | ✅ | Phase aus `abc-*`-Skill abgeleitet (eigene Achse), `abc-qa`/`abc-qa-e2e → qa` |
+| 10 | Responsive (Desktop-first, horizontal scrollbar) | ✅ | `overflow-x-auto` + `min-w`, `sm:`-Breakpoints, `max-h` vertikal scrollbar |
+| 11 | Versions-Anzeige in der Sidebar neben „Jupiter" | ✅ | `v{version}` in Rail + Mobile-Topbar; ins Client-Bundle injiziert (verifiziert) |
+
+### Edge Cases (alle abgedeckt)
+- Session ohne ABC-Phase → neutrale Zeile, leerer Track (Test: 8 Zellen „offen", keine Hervorhebung).
+- Mehrere Sessions/Projekt → mehrere Zeilen, gleiches Label (eine Zeile/Session by design).
+- Feature unklar (Skill ohne Arg) → Projektname ohne Feature-Suffix, zuvor bekanntes Feature bleibt erhalten.
+- Phasen nicht-linear (Deploy↔Document, FE↔BE) → Bar füllt bis weiteste Phase, aktuelle separat markiert (Test).
+- Projekt ohne ABC-Struktur → Phase „none", neutrale Zeile.
+- 0 Sessions → eigener Empty-State („Noch keine Sessions mit ABC-Phase.").
+- Viele Sessions → vertikal scrollbarer Bereich (`max-h-[24rem]`).
+- Session beendet/Fehler → letzter Stand eingefroren + ausgegraut, „· beendet", keine aktuelle Markierung (Test).
+
+### Security-/Red-Team-Audit
+> Kontext: Jupiter ist Single-User-MVP — **kein JWT/RLS/Mandanten-Isolation** (bewusster Override, siehe `routes/sessions.py`). Tenant-Red-Team daher N/A.
+- **Neuer Code-Pfad (Detektor im Freigabe-Hook):** gegen feindliche/malformede `tool_input` geprobt (None, `skill` als int, `args` als dict/list, fehlende Keys) → **kein Crash**, fail-safe; ändert nie, OB eine Decision Card entsteht.
+- **Kein neuer Endpoint, keine neue Trust-Boundary:** Detektor liest nur bereits durch den Hook fließende Felder. `/internal/permission` bleibt token-/localhost-geschützt (Regression-Test 403 grün).
+- **XSS:** `project_name`/`abc_feature` werden als **Text** in JSX gerendert (React escaped; kein `dangerouslySetInnerHTML`) → sicher.
+- **DoS:** `project_name` serverseitig auf 120 Zeichen begrenzt (Pydantic).
+
+### Regression
+Backend 263 grün (PROJ-1/2/4/5/6/7 inkl. Decision-Card-Flow unverändert), Frontend 47 grün (status/Kanban-Mapping unverändert). Detektor-Hook stört den bestehenden PROJ-4-Freigabe-Flow nicht.
+
+### Hinzugefügte Tests (permanente Regression)
+- `backend/tests/test_proj8_gantt.py` — Mapping, max-Phase, Feature-Erkennung, Detektor (inkl. Rückwärtssprung/Nicht-Phasen-Skill), Hook-Verdrahtung, **E2E REST+Hook → `GET /sessions`**, `project_name`-Fallback, REST-Vertrag (50 Tests).
+- `nextjs_app/lib/status.test.ts` — `ABC_PHASES`/`phaseIndex`.
+- `nextjs_app/components/cockpit/gantt-chart.test.tsx` — Füllung, Hervorhebung, nicht-linear, neutrale/beendete Zeile, Empty-State, Basename-Fallback.
+
+### Bugs
+Keine. **0 Critical / 0 High / 0 Medium / 0 Low.**
+
+### Production-Ready: ✅ JA
+Keine Critical/High-Bugs. Alle 11 AC + alle dokumentierten Edge Cases bestanden. Empfehlung: **Approved**.
+
+> Hinweis (kein Bug): Eine vollständige visuelle Browser-Verifikation (Bars live wandern bei echtem `abc-*`-Skill-Lauf, 375/768/1440 px) wurde **nicht** in einem laufenden Full-Stack-Build durchgeführt — die Ansicht ist reines CSS-Grid (build-verifiziert) + Render-Tests. Empfohlen als kurzer Smoke beim `/abc-deploy`.
 
 ## Deployment
 _To be added by /abc-deploy_

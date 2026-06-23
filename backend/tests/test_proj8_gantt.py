@@ -250,3 +250,50 @@ def test_list_sessions_carries_abc_fields(client: TestClient):
     row = client.get("/sessions").json()[0]
     for key in ("project_name", "abc_phase", "abc_phase_reached", "abc_feature"):
         assert key in row
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_skill_hook_updates_gantt_fields():
+    """Echter REST+Hook-Pfad: ein abc-Skill-Aufruf des Permission-Hooks setzt die
+    Gantt-Felder, die ``GET /sessions`` live mitträgt (gleiche Polling-Mechanik wie
+    Board/Rail → Live-Aktualisierung gratis)."""
+    import httpx
+    from httpx import ASGITransport
+
+    from app.config import settings
+
+    app = create_app(driver_factory=lambda: FakeDriver())
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        sid = (
+            await ac.post(
+                "/sessions",
+                json={"project_path": PROJECT, "initial_prompt": "Hi", "model": "haiku",
+                      "project_name": "Jupiter"},
+            )
+        ).json()["session_id"]
+
+        # Hook meldet einen Skill-Aufruf (genehmigungspflichtig → blockiert).
+        hook = asyncio.create_task(
+            ac.post(
+                "/internal/permission",
+                json={"session_id": sid, "tool_name": "Skill",
+                      "tool_input": {"skill": "abc-backend", "args": "8"}, "tool_use_id": "tu1"},
+                headers={"X-Jupiter-Hook-Token": settings.hook_token},
+            )
+        )
+        # Warten, bis der Detektor die Phase über die Liste sichtbar macht.
+        row = {}
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            rows = (await ac.get("/sessions")).json()
+            if rows and rows[0]["abc_phase"]:
+                row = rows[0]
+                break
+        assert row["project_name"] == "Jupiter"
+        assert row["abc_phase"] == "backend"
+        assert row["abc_phase_reached"] == "backend"
+        assert row["abc_feature"] == "8"
+
+        # Card auflösen → Hook entsperren (sauberes Teardown).
+        await ac.post(f"/sessions/{sid}/decisions/tu1", json={"decision": "approve"})
+        await hook
