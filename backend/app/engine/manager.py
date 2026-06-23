@@ -285,7 +285,12 @@ class SessionRuntime:
             self.state.num_turns = int(event.raw.get("num_turns", self.state.num_turns) or 0)
             if is_error_result(event):
                 self.state.status = ERROR
-                self.state.error = event.raw.get("api_error_status") or extract_result_text(event)
+                # api_error_status kommt als int (z.B. 500) → in str casten,
+                # sonst scheitert die Response-Validierung (error: str | None).
+                api_status = event.raw.get("api_error_status")
+                self.state.error = (
+                    f"API-Fehler {api_status}" if api_status else extract_result_text(event)
+                )
             else:
                 # Turn fertig → wartet auf nächste Eingabe (bzw. done, falls Prozess endet).
                 self.state.status = WAITING if self.driver.is_alive else DONE
@@ -621,7 +626,7 @@ class SessionManager:
             last_activity=_dt(row.get("last_activity")),
             tokens_used=int(row.get("tokens_used") or 0),
             total_cost_usd=float(row.get("total_cost_usd") or 0.0),
-            error=row.get("error"),
+            error=(str(e) if (e := row.get("error")) is not None else None),
             parent_session_id=row.get("parent_session_id"),
             child_session_id=row.get("child_session_id"),
             project_name=row.get("project_name"),
