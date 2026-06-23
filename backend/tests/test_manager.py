@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.engine.events import StreamEvent
 from app.engine.manager import DONE, WAITING, SessionManager
 
 from .fakes import FakeDriver
@@ -13,6 +14,41 @@ PROJECT = "/home/dev/projects/jupiter"
 
 def _mgr() -> SessionManager:
     return SessionManager(driver_factory=lambda: FakeDriver())
+
+
+def _assistant(cache_read: int) -> StreamEvent:
+    return StreamEvent("assistant", None, {"message": {"usage": {
+        "input_tokens": 10, "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": 0, "output_tokens": 5}}})
+
+
+def _result(cum_cache_read: int, window: int = 200_000) -> StreamEvent:
+    return StreamEvent("result", "success", {"is_error": False, "num_turns": 3, "usage": {
+        "input_tokens": 30, "cache_read_input_tokens": cum_cache_read,
+        "cache_creation_input_tokens": 0, "output_tokens": 15},
+        "modelUsage": {"m": {"contextWindow": window}}})
+
+
+@pytest.mark.asyncio
+async def test_context_fill_uses_current_turn_not_cumulative():
+    """PROJ4-QA-3: Füllstand = Belegung des AKTUELLEN Turns, nicht die über alle Turns
+    kumulierte result-Usage (die sonst fälschlich Richtung 100 % wächst)."""
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")
+    # Aktueller Turn belegt 40k von 200k = 20 %. Das result-Event meldet kumuliert 120k.
+    await rt.handle_event(_assistant(40_000))
+    await rt.handle_event(_result(cum_cache_read=120_000))
+    assert rt.state.context_fill_pct == 20.0   # 40k/200k — NICHT 60 % (120k/200k)
+
+
+@pytest.mark.asyncio
+async def test_context_fill_uses_model_window_from_result():
+    """Das modellabhängige Kontextfenster (z. B. 1M) kommt aus dem result-Event."""
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="sonnet")
+    await rt.handle_event(_assistant(100_000))
+    await rt.handle_event(_result(cum_cache_read=500_000, window=1_000_000))
+    assert rt.state.context_fill_pct == 10.0   # 100k/1M
 
 
 @pytest.mark.asyncio

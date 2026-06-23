@@ -26,6 +26,7 @@ from .constitution import combine_with_extra, resolve_constitution
 from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
 from .handover import build_handover_md, build_title
 from .events import (
+    DEFAULT_CONTEXT_WINDOW,
     StreamEvent,
     extract_rate_limit,
     extract_result_text,
@@ -176,6 +177,10 @@ class SessionRuntime:
         self.pending: dict[str, PendingDecision] = {}
         self._futures: dict[str, asyncio.Future] = {}
         self._last_assistant_text: str = ""
+        # Kontext-Füllstand korrekt rechnen (PROJ4-QA-3): aktuelle Turn-Belegung aus
+        # assistant-Events, das (modellabhängige) Kontextfenster aus result-Events.
+        self._ctx_occupancy: int = 0
+        self._ctx_window: int = 0
 
     def to_read(self) -> dict:
         """Lese-Snapshot inkl. offener Decision Cards (für REST-Liste + WS-Broadcast)."""
@@ -271,11 +276,25 @@ class SessionRuntime:
         if usage is None:
             return
         self.state.context_known = True  # ab jetzt echte Daten → Gauge nicht mehr „unbekannt".
-        self.state.context_fill_pct = usage.context_fill_pct
+
+        # Füllstand = Größe des AKTUELLEN Turn-Prompts (assistant-Usage: input + cache_read
+        # + cache_creation), NICHT die über alle Turns kumulierte result-Usage — die wuchs
+        # sonst mit jeder Runde ins Absurde (z. B. 97 % bei real ~20 %) und löste die
+        # Handover-Schwelle fälschlich aus (PROJ4-QA-3).
+        if event.type == "assistant":
+            self._ctx_occupancy = usage.context_used_tokens
         if event.type == "result":
+            # Das modellabhängige Kontextfenster liefert nur das result-Event (modelUsage).
+            self._ctx_window = usage.context_window
             self.state.tokens_used += usage.billed_tokens
             if usage.total_cost_usd is not None:
                 self.state.total_cost_usd += float(usage.total_cost_usd)
+
+        window = self._ctx_window or DEFAULT_CONTEXT_WINDOW
+        if self._ctx_occupancy and window > 0:
+            self.state.context_fill_pct = min(
+                100.0, round(self._ctx_occupancy / window * 100, 1)
+            )
 
     def _maybe_warn_threshold(self) -> None:
         """One-shot Handover-Vorschlag, sobald der Füllstand die Schwelle erreicht.
