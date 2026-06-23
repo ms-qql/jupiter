@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-21
+**Next Available ID:** PROJ-22
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -33,6 +33,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-18 | Weitere Engines + iFrame/Launch | P1 | Planned | PROJ-1 | [Spec](PROJ-18-weitere-engines.md) |
 | PROJ-19 | Effizienz-Ausbau (RAG/Späher/Caching/Token-Dashboard) | P1 | Planned | PROJ-1, PROJ-2, PROJ-5 | [Spec](PROJ-19-effizienz-ausbau.md) |
 | PROJ-20 | Spracheingabe / Push-to-Talk (abo-frei) | P1 | Planned | PROJ-9, PROJ-4 | [Spec](PROJ-20-spracheingabe.md) |
+| PROJ-21 | Session-Löschen / Cockpit-Aufräumen | P1 | Planned | PROJ-1, PROJ-14, PROJ-3 | [Spec](PROJ-21-session-loeschen-cockpit-aufraeumen.md) |
 
 ## Empfohlene Bau-Reihenfolge (Phase 0)
 1. **PROJ-1** — Engine-Treiber (riskantester Unbekannter; Verifikations-Spike zuerst)

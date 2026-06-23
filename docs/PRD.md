@@ -55,6 +55,7 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-18 | Weitere Engines (Codex/Gemini/GLM/Ollama) + iFrame/Launch | P1 | #13 | Planned |
 | PROJ-19 | Effizienz-Ausbau: Pointer/RAG, Späher-Agenten, Prompt-Caching, Token-Dashboard | P1 | #23, #26, #27, #28 | Planned |
 | PROJ-20 | Spracheingabe / Push-to-Talk (abo-frei) | P1 | #29 | Planned |
+| PROJ-21 | Session-Löschen / Cockpit-Aufräumen (DELETE-Pfad + Bulk) | P1 | — | Planned |
 | — | Multi-Agent: Dispatch-Schicht + Vertrag-zuerst/Koordinator | P2 | #17, #18 | Roadmap |
 | — | Cross-Agent-Review / Challenge (engine-übergreifend) | P2 | #30 | Roadmap |
 | — | Vault als geteilter Dienst (auch für eingebettete Apps) | P2 | #14 | Roadmap |
