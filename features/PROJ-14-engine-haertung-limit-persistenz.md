@@ -1,6 +1,6 @@
 # PROJ-14: PROJ-1-Härtung — Limit paralleler Sessions + Persistenz
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** — (Härtung aus QA-3 von PROJ-1)
