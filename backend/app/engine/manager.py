@@ -137,6 +137,8 @@ class SessionState:
     abc_phase: str | None = None  # AKTUELLE Phase (hervorgehoben). None = „keine Phase".
     abc_phase_reached: str | None = None  # WEITESTE bisher erreichte Phase (Bar-Füllung).
     abc_feature: str | None = None  # Feature-Referenz, z. B. „8" (aus Skill-Arg/berührtem Spec).
+    # PROJ-10: zuletzt aufgerufener Skill (für Skill-Kontext der Trust-Policy).
+    current_skill: str | None = None
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -377,6 +379,11 @@ class SessionRuntime:
         gestreamt (Live-Aktualisierung der Bars, gratis über ``to_read``).
         """
         s = self.state
+        # PROJ-10: zuletzt genutzten Skill mitführen (Policy-Kontext „skill").
+        if tool_name == "Skill":
+            skill = str((tool_input or {}).get("skill", "")).strip()
+            if skill:
+                s.current_skill = skill
         before = (s.abc_phase, s.abc_phase_reached, s.abc_feature)
         s.abc_phase, s.abc_phase_reached, s.abc_feature = abc_phases.detect_phase_signal(
             tool_name,
@@ -393,41 +400,113 @@ class SessionRuntime:
     async def request_decision(
         self, decision_id: str, tool_name: str, tool_input: dict | None
     ) -> DecisionOutcome:
-        """Vom Freigabe-Hook aufgerufen, bevor ein Tool läuft.
+        """Vom Freigabe-Hook aufgerufen, bevor ein Tool läuft (PROJ-4/PROJ-10).
 
-        Lesezugriffe (``policy.requires_card`` = False) → sofortiges ``allow`` ohne Card.
-        Sonst: Card anlegen, Status auf ``awaiting_approval``, und **blockieren**, bis der
-        Nutzer entscheidet (``resolve_decision``) oder die Session stirbt (``abandon``).
+        Reihenfolge (eine Entscheidungsstelle, zwei Sorten Gate):
+        1. **Hartes Phasen-Gate** (bypass-fest): erkannter ABC-Phasenwechsel → Card,
+           pausiert die Session — **auch im Bypass**.
+        2. **Operativer Evaluator**: ``auto-allow`` → durch; ``deny`` → nie ausgeführt
+           (ablehnende Notiz); ``card`` → Freigabe nötig (im Bypass durchlässig).
         """
-        # PROJ-8: Phasen-/Feature-Detektor als reiner Seiteneffekt VOR der Card-Logik.
-        # Verändert nie, OB eine Card entsteht — beobachtet nur die ABC-Skill-Aufrufe.
+        # PROJ-8/PROJ-10: prospektive Phase/Feature OHNE Seiteneffekt berechnen — die
+        # Übernahme erfolgt erst NACH einem evtl. Phasen-Gate (QA-Bug B: ein abgelehnter
+        # Übergang darf die Phase NICHT vorrücken).
+        s = self.state
+        old_phase = s.abc_phase
+        prospective = abc_phases.detect_phase_signal(
+            tool_name, tool_input,
+            phase=s.abc_phase, reached=s.abc_phase_reached, feature=s.abc_feature,
+        )
+        new_phase = prospective[0]
+
+        # 1) Hartes, bypass-festes Phasen-Übergangs-Gate.
+        if self._should_gate_phase(old_phase, new_phase):
+            outcome = await self._open_card(
+                decision_id, tool_name, tool_input,
+                card_type="phase_transition",
+                triggering_rule=f"Phasen-Gate: {old_phase} → {new_phase}",
+                action=f"Phasenwechsel {old_phase} → {new_phase}",
+            )
+            if outcome.behavior == "allow":
+                self._apply_phase(tool_name, tool_input, prospective)  # erst bei Freigabe
+            return outcome
+
+        # Kein Gate → Phase/Skill/Feature regulär übernehmen (mutiert + broadcastet).
         self._detect_abc(tool_name, tool_input)
 
-        if not policy.requires_card(tool_name, tool_input):
+        # 2) Operative Auswertung der abgestuften Trust-Policy.
+        decision = policy.policy_store.evaluate(
+            tool_name,
+            role=self.state.role,
+            skill=self.state.current_skill,
+            project=self.state.project_name or self.state.project_path,
+        )
+
+        if decision.level == policy.AUTO_ALLOW:
             return DecisionOutcome(behavior="allow", auto=True)
 
-        # bypassPermissions (PROJ-1): operative Aktionen laufen OHNE Card durch.
-        # Der PreToolUse-Hook feuert in Claude Code auch im Bypass — ohne diese Ausnahme
-        # würde jede Schreib-/Exec-Aktion trotzdem blockieren (Bug: Bypass wirkte wie
-        # „Standard"). Künftige „harte" Gates (Phasen-Übergang, PROJ-10) werden hier gezielt
-        # AUSGENOMMEN, damit sie auch im Bypass weiterhin eine Card erzeugen.
+        if decision.level == policy.DENY:
+            # Hart verboten: Aktion wird NIE ausgeführt; Claude erhält die Begründung
+            # inline (deny), die Session blockiert NICHT. Eine ablehnende Notiz-Card wird
+            # in die offene Liste gehängt (QA-Bug A: im Cockpit sichtbar) — ohne Future,
+            # ohne awaiting_approval; der Nutzer quittiert sie mit „Zur Kenntnis".
+            reason = decision.reason or "Durch Trust-Policy verboten."
+            self._register_deny_notice(decision_id, tool_name, tool_input, decision, reason)
+            return DecisionOutcome(behavior="deny", reason=f"{reason} ({decision.rule})")
+
+        # decision.level == CARD
+        # bypassPermissions (PROJ-1): OPERATIVE Freigaben laufen OHNE Card durch
+        # (nur die harten Gates oben feuern auch im Bypass).
         if self.state.permission_mode == "bypassPermissions":
             return DecisionOutcome(behavior="allow", auto=True)
 
+        return await self._open_card(
+            decision_id, tool_name, tool_input,
+            card_type="normal", triggering_rule=decision.rule,
+        )
+
+    def _should_gate_phase(self, old_phase: str | None, new_phase: str | None) -> bool:
+        """Echter, zu gatender ABC-Phasenübergang? (Entprellung über old≠new.)
+
+        Gilt nur für Übergänge ZWISCHEN zwei erkannten Phasen (``old`` ≠ None) — der
+        allererste Phaseneintritt (None→X, Session-Start) ist kein Übergang. Welche
+        Ziel-Phasen gaten, kommt aus der Policy (leere Liste = jeder Wechsel).
+        """
+        if old_phase is None or new_phase is None or old_phase == new_phase:
+            return False
+        gate = policy.policy_store.phase_gate()
+        if not gate.get("enabled"):
+            return False
+        transitions = gate.get("transitions") or []
+        return not transitions or new_phase in transitions
+
+    async def _open_card(
+        self,
+        decision_id: str,
+        tool_name: str,
+        tool_input: dict | None,
+        *,
+        card_type: str,
+        triggering_rule: str,
+        action: str | None = None,
+    ) -> DecisionOutcome:
+        """Legt eine blockierende Decision Card an und wartet auf die Auflösung."""
         card = PendingDecision(
             decision_id=decision_id,
             session_id=self.state.session_id,
             tool_name=tool_name,
-            action=policy.summarize_action(tool_name, tool_input),
+            action=action or policy.summarize_action(tool_name, tool_input),
             excerpt=policy.extract_excerpt(tool_name, tool_input),
             rationale=policy.clip_rationale(self._last_assistant_text),
             context={
                 "project_path": self.state.project_path,
                 "role": self.state.role,
-                "phase": self.state.constitution_source,
+                "phase": self.state.abc_phase,  # PROJ-10-Fix: echte Phase (war constitution_source).
             },
             created_at=_now().isoformat(),
             tool_input=tool_input or {},
+            triggering_rule=triggering_rule,
+            card_type=card_type,
         )
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self.pending[decision_id] = card
@@ -439,6 +518,53 @@ class SessionRuntime:
         self._maybe_persist()  # PROJ-14: awaiting_approval spiegeln (zählt aktiv).
         return await fut
 
+    def _apply_phase(self, tool_name: str, tool_input: dict | None, prospective: tuple) -> None:
+        """Übernimmt die (zuvor seiteneffektfrei berechnete) Phase nach Gate-Freigabe.
+
+        Spiegelt den Skill-Kontext (``current_skill``) und das ABC-Tripel und streamt bei
+        Änderung einen State-Snapshot (Live-Gantt). Wird NUR im Gate-Approve-Pfad genutzt.
+        """
+        s = self.state
+        if tool_name == "Skill":
+            skill = str((tool_input or {}).get("skill", "")).strip()
+            if skill:
+                s.current_skill = skill
+        before = (s.abc_phase, s.abc_phase_reached, s.abc_feature)
+        s.abc_phase, s.abc_phase_reached, s.abc_feature = prospective
+        if before != (s.abc_phase, s.abc_phase_reached, s.abc_feature):
+            self._broadcast({"kind": "state", **self.to_read()})
+
+    def _register_deny_notice(
+        self, decision_id: str, tool_name: str, tool_input: dict | None, decision, reason: str
+    ) -> None:
+        """Hängt eine NICHT-blockierende Ablehnungs-Notiz in die offene Liste (QA-Bug A).
+
+        Bewusst ohne Future und ohne ``awaiting_approval`` — die Aktion ist bereits
+        verworfen, die Session läuft weiter; die Karte ist nur sichtbar/quittierbar
+        (``card_type='deny'`` → Frontend zeigt „Zur Kenntnis"). ``resolve_decision``
+        entfernt sie wieder.
+        """
+        card = PendingDecision(
+            decision_id=decision_id,
+            session_id=self.state.session_id,
+            tool_name=tool_name,
+            action=policy.summarize_action(tool_name, tool_input),
+            excerpt=policy.extract_excerpt(tool_name, tool_input),
+            rationale=reason,
+            context={"project_path": self.state.project_path, "role": self.state.role,
+                     "phase": self.state.abc_phase},
+            created_at=_now().isoformat(),
+            tool_input=tool_input or {},
+            triggering_rule=decision.rule,
+            card_type="deny",
+            state=RESOLVED,
+            resolution="deny",
+        )
+        self.pending[decision_id] = card  # KEIN Future, KEIN awaiting_approval.
+        self.state.last_activity = _now()
+        self._broadcast({"kind": "decision", "event": "denied", "decision": card.to_read()})
+        self._broadcast({"kind": "state", **self.to_read()})
+
     def resolve_decision(
         self, decision_id: str, approve: bool, comment: str | None = None
     ) -> PendingDecision:
@@ -449,9 +575,17 @@ class SessionRuntime:
         zurück („Mit Kommentar zurück" = natives Deny mit Begründung).
         """
         card = self.pending.get(decision_id)
-        fut = self._futures.get(decision_id)
-        if card is None or fut is None:
+        if card is None:
             raise KeyError(decision_id)
+        fut = self._futures.get(decision_id)
+        if fut is None:
+            # Future-lose Notiz (z. B. deny, QA-Bug A): nur quittieren/entfernen — die
+            # Aktion war nie blockierend, es gibt nichts zu entsperren.
+            self.pending.pop(decision_id, None)
+            self.state.last_activity = _now()
+            self._broadcast({"kind": "decision", "event": "resolved", "decision": card.to_read()})
+            self._broadcast({"kind": "state", **self.to_read()})
+            return card
         if card.state != OPEN or fut.done():
             raise ValueError("Diese Entscheidung wurde bereits getroffen.")
 
@@ -466,8 +600,10 @@ class SessionRuntime:
         fut.set_result(outcome)
         self.pending.pop(decision_id, None)
         self._futures.pop(decision_id, None)
-        # Keine offene Card mehr → Session läuft weiter (Claude verarbeitet das Resultat).
-        if not self.pending and self.state.status == AWAITING_APPROVAL:
+        # Keine BLOCKIERENDE Card mehr → Session läuft weiter (Claude verarbeitet das
+        # Resultat). Nur Cards mit Future blockieren; nicht-blockierende deny-Notizen
+        # (QA-Bug C) dürfen den Status NICHT auf awaiting_approval festhalten.
+        if not self._futures and self.state.status == AWAITING_APPROVAL:
             self.state.status = RUNNING
         self.state.last_activity = _now()
         self._broadcast({"kind": "decision", "event": "resolved", "decision": card.to_read()})

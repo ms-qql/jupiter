@@ -35,3 +35,6 @@ Thumbs.db
 
 # CodeGraph
 .codegraph/
+
+# PROJ-10: Laufzeit-Trust-Policy (nutzer-editiert, live) — nicht versionieren.
+backend/config/policy.yaml

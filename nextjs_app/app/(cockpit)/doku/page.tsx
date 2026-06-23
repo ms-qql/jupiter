@@ -5,16 +5,20 @@
 // MD mit klickbaren Wikilinks + Frontmatter-Panel. Deep-linkbar via ?source=&path=
 // (bzw. ?source=vault&rel=… für vault-relative Pointer aus PROJ-5-Handovers).
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Pencil } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { FileTree } from "@/components/cockpit/file-tree";
 import { FrontmatterPanel } from "@/components/cockpit/frontmatter-panel";
 import { MarkdownView } from "@/components/cockpit/markdown-view";
+import { MdEditorPanel } from "@/components/cockpit/md-editor";
+import { BacklinksPanel } from "@/components/cockpit/backlinks-panel";
 import { ApiError, getMdIndex, listMdSources, readMdFile } from "@/lib/api";
 import {
   buildTree,
@@ -48,6 +52,9 @@ function DocReader() {
   );
   const [fileError, setFileError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // PROJ-12: Lesen ⇄ Bearbeiten; dirtyRef speist die Verlassen-Warnung beim Navigieren.
+  const [editing, setEditing] = useState(false);
+  const dirtyRef = useRef(false);
 
   // 1) Quellen + Index beider Quellen laden (Cross-Source-Wikilinks). Löst auch
   //    einen vault-relativen Pointer (?rel=) auf einen absoluten Pfad auf.
@@ -127,6 +134,20 @@ function DocReader() {
     return buildWikilinkIndex(all);
   }, [indices, activeSource]);
 
+  // PROJ-12: flache Notiz-Liste aller Quellen fürs [[-Autocomplete (de-dupliziert).
+  const allNotes = useMemo(() => {
+    const seen = new Set<string>();
+    const out: MdIndexEntry[] = [];
+    for (const id of Object.keys(indices)) {
+      for (const f of indices[id].files) {
+        if (seen.has(f.path)) continue;
+        seen.add(f.path);
+        out.push(f);
+      }
+    }
+    return out;
+  }, [indices]);
+
   // Zu welcher Quelle gehört ein absoluter Pfad? (längster Root-Match)
   const sourceOf = useCallback(
     (absPath: string): string | null => {
@@ -153,6 +174,15 @@ function DocReader() {
   const selectPath = useCallback(
     (path: string) => {
       if (path === selectedPath) return;
+      // PROJ-12: ungespeicherte Änderungen → vor dem Wechsel nachfragen.
+      if (
+        dirtyRef.current &&
+        !window.confirm("Ungespeicherte Änderungen verwerfen und Datei wechseln?")
+      ) {
+        return;
+      }
+      dirtyRef.current = false;
+      setEditing(false);
       // Springt der Pfad in eine andere Quelle (Cross-Source-Wikilink), Tab mitschalten.
       const owner = sourceOf(path);
       const nextSource = owner ?? activeSource;
@@ -164,6 +194,17 @@ function DocReader() {
     },
     [sourceOf, activeSource, updateUrl, selectedPath],
   );
+
+  // PROJ-12: nach dem Speichern den geladenen Stand (inkl. mtime/Hash) auffrischen,
+  // damit die Lese-Ansicht konsistent bleibt.
+  const reloadFile = useCallback(() => {
+    if (!selectedPath) return;
+    readMdFile(selectedPath)
+      .then((f) => setFile(f))
+      .catch(() => {
+        /* Lese-Fehler hier ignorieren — Editor hat den Stand bereits */
+      });
+  }, [selectedPath]);
 
   const switchSource = useCallback(
     (source: string) => {
@@ -241,10 +282,31 @@ function DocReader() {
                 {fileError}
               </p>
             ) : file ? (
-              <article>
-                <FrontmatterPanel frontmatter={file.frontmatter} />
-                <MarkdownView body={file.body} index={wikiIndex} onNavigate={(f) => selectPath(f.path)} />
-              </article>
+              editing ? (
+                <div className="flex min-h-0 flex-col">
+                  <MdEditorPanel
+                    key={file.path}
+                    file={file}
+                    notes={allNotes}
+                    wikiIndex={wikiIndex}
+                    onNavigate={selectPath}
+                    onSaved={reloadFile}
+                    onDirtyChange={(d) => (dirtyRef.current = d)}
+                  />
+                  <BacklinksPanel path={file.path} onNavigate={selectPath} />
+                </div>
+              ) : (
+                <article>
+                  <div className="mb-3 flex justify-end">
+                    <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+                      <Pencil className="size-3.5" /> Bearbeiten
+                    </Button>
+                  </div>
+                  <FrontmatterPanel frontmatter={file.frontmatter} />
+                  <MarkdownView body={file.body} index={wikiIndex} onNavigate={(f) => selectPath(f.path)} />
+                  <BacklinksPanel path={file.path} onNavigate={selectPath} />
+                </article>
+              )
             ) : null}
           </div>
         </main>

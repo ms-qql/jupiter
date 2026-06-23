@@ -7,14 +7,22 @@ import type {
   DirListing,
   FileEntry,
   HandoverPreview,
+  LaunchSuggestion,
+  MdBacklinksResult,
   MdFileRead,
+  MdIndexEntry,
   MdIndexResult,
+  MdSaveResult,
   MdSource,
+  PhaseGateConfig,
+  PolicyPreview,
+  PolicyRule,
   RootEntry,
   Session,
   SessionCreate,
   SessionDetail,
   ThresholdSetting,
+  TrustPolicy,
   UploadResult,
   VaultWriteResult,
 } from "./types";
@@ -43,6 +51,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError("Backend nicht erreichbar", 0);
   }
   if (!resp.ok) {
+    redirectToLoginOn401(resp.status);
     let detail = `Fehler ${resp.status}`;
     try {
       const body = await resp.json();
@@ -54,6 +63,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
+}
+
+/** Bei 401 (Session fehlt/abgelaufen) den Browser auf die Forward-Auth-Login-Seite
+ *  leiten. Loop-Schutz: nicht, wenn wir schon auf /__auth/* sind. SSR-safe. */
+function redirectToLoginOn401(status: number): void {
+  if (status !== 401 || typeof window === "undefined") return;
+  if (window.location.pathname.startsWith("/__auth")) return;
+  const next = window.location.pathname + window.location.search;
+  window.location.assign(`/__auth/login?next=${encodeURIComponent(next)}`);
 }
 
 export function listSessions(signal?: AbortSignal): Promise<Session[]> {
@@ -155,6 +173,37 @@ export function setThreshold(thresholdPct: number): Promise<ThresholdSetting> {
   });
 }
 
+// --- PROJ-10: Trust-Policy -------------------------------------------------
+
+/** Aktuelle Trust-Policy lesen (Regeln + Phasen-Gate + Herkunft/Warnung). */
+export function getPolicy(signal?: AbortSignal): Promise<TrustPolicy> {
+  return request<TrustPolicy>("/settings/policy", { signal });
+}
+
+/** Trust-Policy ersetzen — wird serverseitig validiert und LIVE übernommen
+ *  (kein Neustart, laufende Sessions bleiben ununterbrochen). */
+export function setPolicy(
+  rules: PolicyRule[],
+  phaseGate: PhaseGateConfig,
+): Promise<TrustPolicy> {
+  return request<TrustPolicy>("/settings/policy", {
+    method: "PUT",
+    body: JSON.stringify({ rules, phase_gate: phaseGate }),
+  });
+}
+
+/** Trockenlauf: welche Stufe/Regel würde für einen Kontext greifen (Nachvollziehbarkeit). */
+export function previewPolicy(
+  match: { tool?: string; role?: string; skill?: string; project?: string },
+  signal?: AbortSignal,
+): Promise<PolicyPreview> {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(match)) if (v) params.set(k, v);
+  return request<PolicyPreview>(`/settings/policy/preview?${params.toString()}`, {
+    signal,
+  });
+}
+
 // --- PROJ-7: MD-Reader (read-only) -----------------------------------------
 
 /** Verfügbare Lese-Quellen (Vault + Projekt). */
@@ -182,9 +231,52 @@ export function readMdFile(path: string, signal?: AbortSignal): Promise<MdFileRe
   return request<MdFileRead>(`/md/file?path=${encodeURIComponent(path)}`, { signal });
 }
 
-/** ws(s)://…/sessions/{id}/stream — Live-Events nur für die Detailansicht. */
+/**
+ * PROJ-12: Eine .md atomar zurückschreiben. `content` ist der volle Rohtext
+ * (Frontmatter-Block + Body, 1:1). `expected_*` speisen die optimistische
+ * Konflikterkennung — weicht der Server-Stand ab und `force` ist nicht gesetzt,
+ * antwortet das Backend mit 409 (→ ApiError.status === 409).
+ */
+export function saveMdFile(
+  input: {
+    path: string;
+    content: string;
+    expected_mtime?: number;
+    expected_hash?: string;
+    force?: boolean;
+  },
+  signal?: AbortSignal,
+): Promise<MdSaveResult> {
+  return request<MdSaveResult>(`/md/file`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** PROJ-12: Notizen, die per [[…]] auf `path` verlinken (serverseitiger Reverse-Scan). */
+export function getMdBacklinks(
+  path: string,
+  signal?: AbortSignal,
+): Promise<MdIndexEntry[]> {
+  return request<MdBacklinksResult>(
+    `/md/backlinks?path=${encodeURIComponent(path)}`,
+    { signal },
+  ).then((r) => r.backlinks);
+}
+
+/** ws(s)://…/sessions/{id}/stream — Live-Events nur für die Detailansicht.
+ *  Robust für absolute (http→ws) UND relative API-Base (z. B. „/api"): bei einer
+ *  relativen Base wird die ws(s)-URL aus dem aktuellen Origin gebildet. */
 export function streamUrl(id: string): string {
-  const base = API_BASE.replace(/^http/, "ws");
+  let base: string;
+  if (/^https?:/.test(API_BASE)) {
+    base = API_BASE.replace(/^http/, "ws");
+  } else if (typeof window !== "undefined") {
+    base = window.location.origin.replace(/^http/, "ws") + API_BASE;
+  } else {
+    base = API_BASE; // SSR-Fallback (Browser nutzt den window-Pfad zur Laufzeit)
+  }
   return `${base}/sessions/${id}/stream`;
 }
 
@@ -222,6 +314,7 @@ export async function uploadFiles(
     throw new ApiError("Backend nicht erreichbar", 0);
   }
   if (!resp.ok) {
+    redirectToLoginOn401(resp.status);
     let detail = `Fehler ${resp.status}`;
     try {
       const body = await resp.json();
@@ -260,6 +353,17 @@ export function deleteFiles(paths: string[]): Promise<DeleteResult> {
     method: "POST",
     body: JSON.stringify({ paths }),
   });
+}
+
+/** PROJ-9: Smart-Launcher-Vorschlag aus features/INDEX.md des Projekts. */
+export function getLaunchSuggestion(
+  projectPath: string,
+  signal?: AbortSignal,
+): Promise<LaunchSuggestion> {
+  return request<LaunchSuggestion>(
+    `/projects/suggestion?project_path=${encodeURIComponent(projectPath)}`,
+    { signal },
+  );
 }
 
 /** Aktuellen Clipboard-Ordner lesen. */

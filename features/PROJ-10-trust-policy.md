@@ -1,6 +1,6 @@
 # PROJ-10: Trust-Policy — abgestuftes, konfigurierbares Vertrauen
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #5
@@ -70,10 +70,185 @@ Beim Wechsel der **ABC-Phase** (z. B. Architecture → Frontend, erkannt über P
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-23 · **Stack:** Next.js (Settings-UI) + FastAPI (Engine/Hook) + dateibasierte Config (kein DB, in-memory wie PROJ-1/2/5) · **Branch:** dev
 
-## QA Test Results
-_To be added by /abc-qa_
+### Leitidee
+Die heutige **eine** Trigger-Funktion (`policy.requires_card()`, binär: Lese-Tool → durch, sonst → Card) wird durch einen **gestuften Policy-Evaluator** ersetzt — **1:1 am selben Aufrufpunkt**, der Rest des Codes ändert sich nicht. Es entstehen **zwei Sorten Gate an derselben Stelle** (`request_decision` in `manager.py`): weiche **operative** Gates (im Bypass durchlässig) und **harte, bypass-feste** Gates (feuern auch im Bypass). Das erste harte Gate ist das **Phasen-Übergangs-Gate**.
+
+### A) Komponenten (was gebaut wird)
+
+```
+Policy-Engine (Backend, erweitert engine/policy.py)
+├── PolicyStore        → lädt config/policy.yaml (live, mtime-basiert; Fallback bei Defekt)
+├── Evaluator          → evaluate(tool, kontext) → {level: auto-allow|card|deny, rule}
+│   └── Matcher        → Spezifität: tool+rolle+skill+projekt > tool+rolle > tool > default
+└── PhaseGate          → erkennt abc_phase-Wechsel (PROJ-8) → hartes Gate
+
+request_decision (engine/manager.py, bestehender Hook — erweitert)
+├── Phasen-Wechsel?  → JA → harte Card (auch im Bypass), pausieren
+├── Evaluator-Level  → deny → ablehnende Card-Notiz (nie ausführen)
+│                      card → operative Card (im Bypass: auto-allow)
+│                      auto-allow → durch
+└── Pause→Card→Resume (vorhandene PROJ-4-Futures, unverändert)
+
+Settings-Tab „Trust-Policy" (Next.js)
+├── Regel-Liste (Tool-Klasse × Kontext × Stufe), bearbeitbar
+├── Phasen-Gate-Schalter (welche Übergänge gaten; Default: alle)
+└── „Live übernommen"-Hinweis (kein Neustart)
+```
+
+### B) Datenmodell (Klartext, keine DB)
+
+**Policy-Config** — eine versionierte Datei `config/policy.yaml` neben der Konstitution (gleiches Muster wie `global.md`/`roles/<rolle>.md`):
+- Eine Liste von **Regeln**. Jede Regel: *Match* (Tool-Klasse + optional Rolle/Skill/Projekt) → *Stufe* (`auto-allow` | `card` | `deny`) + optionaler Klartext-Grund.
+- Ein **Phasen-Gate-Block**: an/aus + Liste der zu gatenden Übergänge (leer = alle).
+- Fehlt die Datei oder ist sie kaputt → **konservativer eingebauter Default** (heutiges Verhalten: Lese-Tools auto-allow, Rest card) + sichtbare Warnung, kein Crash.
+
+**Decision Card** (erweitert `PendingDecision`, in-memory):
+- neu: `triggering_rule` (welche Regel/Stufe hat ausgelöst — Nachvollziehbarkeit, AC).
+- neu: `card_type` (`normal` | `phase_transition` | `deny`) — Frontend rendert Phasen-Gate & Ablehnung anders.
+- **Bugfix:** `context.phase` trägt künftig den echten `abc_phase` (heute fälschlich `constitution_source`) und die echte `role`.
+
+**SessionState** (erweitert): `abc_phase_previous` — um einen **Wechsel** beim Tool-Call zu erkennen und **Doppel-Feuern** desselben Übergangs zu entprellen.
+
+### C) Wo es greift (Verhalten, keine neuen Endpunkte für den Hook)
+
+Der PreToolUse-Hook `request_decision` bleibt der einzige Entscheidungspunkt. Neue Reihenfolge:
+1. **Phasen-Wechsel erkannt** (`abc_phase` ≠ `abc_phase_previous`, Übergang ist gegated) → **harte Card** (`phase_transition`), Session pausiert — **auch bei `bypassPermissions`** (von der Bypass-Auto-Allow-Ausnahme ausgenommen).
+2. Sonst Evaluator-Stufe:
+   - **deny** → Aktion wird **nie** ausgeführt; ablehnende Card-Notiz mit Grund (`behavior="deny"`).
+   - **card** → operative Card; **im Bypass** läuft sie weiterhin durch (auto-allow, PROJ-1-Verhalten).
+   - **auto-allow** → durch.
+3. Pause/Card/Resume nutzt die vorhandene PROJ-4-Future-Mechanik unverändert.
+
+### D) Neue/erweiterte HTTP-Endpunkte (Settings-UI, keine DB)
+
+```
+GET   /settings/policy        → aktuelle Policy + Phasen-Gate-Config + Quelle/Warnung
+PUT   /settings/policy        → Policy ersetzen (validiert; schreibt config/policy.yaml; live aktiv)
+GET   /settings/policy/preview?tool=Bash&role=…  → welche Stufe/Regel würde greifen (Nachvollziehbarkeit/Test)
+```
+Live-Reload: der Evaluator prüft die Datei-mtime pro Call (Auswertung < 5 ms, in-process) — Schreiben über das UI wirkt sofort, ohne Sessions zu unterbrechen. Single-User-MVP: kein JWT (konsistent mit PROJ-1/2/5); Pfade/Secrets nie aus Client-Payload.
+
+### E) Tech-Entscheidungen (Warum)
+- **Ein Gate-Punkt, zwei Sorten** statt zweiter Engine-Pfad: Der Hook feuert auch im Bypass (Prod-verifiziert 2026-06-23) → harte Gates brauchen nur eine **Ausnahme** von der Bypass-Auto-Allow, keinen Parallelpfad. Weniger Code, eine Quelle der Wahrheit.
+- **YAML-Datei statt DB-Tabelle**: deckt sich mit Jupiters No-DB-/In-memory-Ansatz und dem Konstitutions-Muster (Datei + Live-Reload). Editierbar per UI **oder** direkt im Dateisystem.
+- **Spezifischer schlägt allgemeiner; deny schlägt alles**: deterministisch und vorhersehbar; Konflikte werden geloggt. Unbekanntes Tool → `card` (nie versehentlich auto-allow).
+- **`triggering_rule` in der Card**: erfüllt die Nachvollziehbarkeits-AC ohne separates Audit-Log.
+- **Entprellung über `abc_phase_previous`**: verhindert Doppel-Cards bei nicht-linearen Sprüngen (Frontend ↔ Backend).
+
+### F) Abhängigkeiten
+- Backend: `PyYAML` (Policy-Datei lesen/schreiben) — neu, falls noch nicht vorhanden; sonst keine.
+- Frontend: bestehende shadcn/ui-Komponenten (Table, Switch, Select, Badge) — nichts Neues.
+
+### G) Abdeckung der Acceptance Criteria
+| AC | Umsetzung |
+|---|---|
+| 3 Stufen auto-allow/card/deny | Evaluator-`level` |
+| Match nach Tool-Klasse + Kontext, spezifisch > allgemein | Matcher-Spezifität |
+| deny verhindert + ablehnende Card | `behavior="deny"`, nie ausgeführt |
+| konservativer Default | eingebauter Default-Layer (= heute) |
+| Card nennt auslösende Regel | `triggering_rule` |
+| live editierbar, kein Neustart | mtime-Reload + PUT-Endpunkt |
+| Rückwärtskompatibel ohne Policy | fehlende Datei → Default |
+| bypass-feste Gates | Ausnahme von Bypass-Auto-Allow |
+| Phasen-Gate vor neuer Phase, auch im Bypass | PhaseGate in `request_decision` |
+| gatebare Übergänge konfigurierbar | Phasen-Gate-Block in Config |
+| operative Per-Tool-Freigaben im Bypass durchlässig | unveränderte PROJ-1-Logik |
+| Phasen-Signal liegt im Bypass an | `_detect_abc` läuft schon im Hook |
+| alles deutsch | UI + Card-Texte |
+
+## Frontend-Implementierung (2026-06-23)
+Stack: **Next.js** (nicht Flutter — Jupiter-Override). Branch `dev`. UI gegen den geplanten
+API-Kontrakt gebaut; Backend (Evaluator + Phasen-Gate + `/settings/policy`) folgt via `/abc-backend`.
+
+**Neu/geändert:**
+- `lib/types.ts` — `PolicyLevel`, `PolicyRuleMatch`, `PolicyRule`, `PhaseGateConfig`, `TrustPolicy`, `PolicyPreview`; `PendingDecision` um `triggering_rule` + `card_type` (`normal`/`phase_transition`/`deny`) erweitert.
+- `lib/api.ts` — `getPolicy` (GET), `setPolicy` (PUT, live), `previewPolicy` (GET Trockenlauf).
+- `components/cockpit/policy-control.tsx` (neu) — Regel-Editor (Tool-Klasse × Rolle/Skill/Projekt × Stufe + Grund), bypass-festes Phasen-Gate (an/aus + Ziel-Phasen, leer = alle), Defekt-/Quelle-Banner, Regel-Test (Preview). „Speichern (live)".
+- `components/cockpit/settings-dialog.tsx` — auf Tabs umgestellt: „Allgemein" (Schwelle) + „Trust-Policy".
+- `components/cockpit/decision-card.tsx` — zeigt auslösende Regel; eigenes Styling/Badge für `phase_transition` (violett, „Phase freigeben") und `deny` (rot, nur „Zur Kenntnis", da nie ausgeführt).
+
+**Verifikation:** `tsc --noEmit` + `eslint` ohne Befunde in den PROJ-10-Dateien (vorbestehender `md-tree.test.ts`-Fehler unberührt). Backend-Endpunkte fehlen noch → Controls fangen Offline/404 ab (Banner „Backend offline?").
+
+**Offene Designwahl (für Backend):** Config-Format **YAML** angenommen (PyYAML); Match-Spezifität tool+rolle+skill+projekt > … > default, deny gewinnt; `transitions` = Ziel-Phasen, leer = jeder Wechsel.
+
+## Backend-Implementierung (2026-06-23)
+Stack: FastAPI + **dateibasierte Policy** (YAML, kein DB). Branch `dev`. In-memory/Datei-Ansatz wie PROJ-6.
+
+**Neu/geändert:**
+- `engine/policy.py` — gestufter Evaluator: `PolicyStore` (YAML, **mtime-Live-Reload**, Fallback bei Defekt), `evaluate(tool, role, skill, project) → PolicyDecision(level, rule, reason)`. Stufen `auto-allow`/`card`/`deny`; Spezifität tool+rolle+skill+projekt > … > Default; bei Gleichstand deny>card>auto (Konflikt geloggt). `project` matcht per Teilstring. Default ohne Datei/Regel = konservativ (Lesen auto, Rest card; unbekanntes Tool → card). `snapshot()`/`save()` für die API. Modul-Singleton `policy_store`.
+- `engine/manager.py` — `request_decision` neu: **(1)** hartes, bypass-festes **Phasen-Gate** (`_should_gate_phase`, Entprellung via old≠new, nur echte Übergänge old≠None), **(2)** Evaluator (auto/deny/card). `deny` blockiert die Session **nicht** (Aktion nie ausgeführt, Claude erhält Grund inline + transiente `deny`-Notiz). `card` im Bypass durchlässig. Neuer `_open_card`-Helfer. `SessionState.current_skill` (Skill-Kontext), `_detect_abc` führt ihn mit. **Bugfix:** Card-`context.phase` trägt jetzt `abc_phase` statt `constitution_source`.
+- `engine/decisions.py` — `PendingDecision` um `triggering_rule` + `card_type` (`normal`/`phase_transition`/`deny`).
+- `schemas/sessions.py` — `PendingDecisionRead` um dieselben Felder.
+- `schemas/settings.py` + `routes/settings.py` — `GET /settings/policy`, `PUT /settings/policy` (validiert Stufen + Phasen-Namen → 400/422, schreibt YAML, live), `GET /settings/policy/preview`.
+- `config.py` — `policy_config_path` (Default `backend/config/policy.yaml`, muss nicht existieren).
+- `config/policy.example.yaml` (dokumentierte Vorlage, nicht geladen); Laufzeit-`policy.yaml` in `.gitignore`.
+
+**Tests:** `tests/test_proj10_trust_policy.py` — 18 Tests (Stufen/Spezifität/Konflikt/Default/Defekt-Fallback/Live-Reload, Phasen-Gate feuert im Bypass, operative Card im Bypass durchlässig, deny ohne Pending-Card, Card trägt Regel+echte Phase, REST GET/PUT/preview inkl. 400/422). **Gesamtsuite: 322 passed.**
+
+## QA Test Results (2026-06-23)
+**Tester:** QA/Red-Team · **Branch:** dev · **Stand:** Backend 325 passed + 2 xfail; Frontend 47 passed; TS/Lint sauber.
+**Hinweis Jupiter-Override:** kein JWT/RLS/MinIO/Multi-Tenancy → Tenant-Isolations-Audit entfällt; geprüft wurden Bypass-Festigkeit, deny-Enforcement, Injection/Traversal über Policy-Felder, Config-Robustheit.
+
+### Acceptance Criteria
+| # | Kriterium | Ergebnis |
+|---|-----------|----------|
+| 1 | 3 Stufen auto-allow/card/deny | ✅ PASS |
+| 2 | Match Tool+Kontext, spezifisch > allgemein | ✅ PASS |
+| 3 | deny verhindert Aktion **+ ablehnende Card-Notiz** | ⚠️ TEILWEISE — Aktion wird nie ausgeführt ✅, aber die Notiz ist **im UI nicht sichtbar** (→ Bug A) |
+| 4 | Konservativer Default | ✅ PASS |
+| 5 | Card nennt auslösende Regel | ✅ PASS (`triggering_rule`, Frontend rendert sie) |
+| 6 | Live editierbar, kein Neustart | ✅ PASS (mtime-Reload + PUT) |
+| 7 | Rückwärtskompatibel ohne Policy | ✅ PASS |
+| 8 | Bypass-feste Gates | ✅ PASS |
+| 9 | Phasen-Gate vor neuer Phase, auch im Bypass | ✅ PASS (feuert); **Ablehnungs-Edge → Bug B** |
+| 10 | Gatebare Übergänge konfigurierbar | ✅ PASS |
+| 11 | Operative Per-Tool-Freigaben im Bypass durchlässig | ✅ PASS |
+| 12 | Phasen-Signal liegt im Bypass an | ✅ PASS |
+| 13 | Alles deutsch | ✅ PASS |
+
+### Edge Cases
+| Edge Case | Ergebnis |
+|-----------|----------|
+| Widersprüchliche Regeln → deny gewinnt + Konflikt geloggt | ✅ PASS |
+| Policy-Datei kaputt → Fallback + Warnung, kein Crash | ✅ PASS |
+| Unbekannte Tool-Klasse → card | ✅ PASS |
+| Rolle ohne Policy → Default | ✅ PASS |
+| Phasenwechsel im Bypass → Gate feuert | ✅ PASS |
+| Nicht-linearer Sprung (frontend↔backend) → Gate je Wechsel, Entprellung | ✅ PASS |
+| Phase nicht erkennbar / None→erste Phase → kein Gate | ✅ PASS |
+| Auto-allow trotz Watchdog (PROJ-16) | ⏭️ N/A (PROJ-16 nicht gebaut) |
+| **Nutzer lehnt Phasenübergang ab → bleibt in alter Phase** | ❌ FAIL (→ Bug B) |
+
+### Bugs — beide BEHOBEN (Backend-Fix 2026-06-23)
+- **Bug A — deny-Notiz im UI unsichtbar (Medium) → BEHOBEN.** `deny` legt jetzt eine **nicht-blockierende, bereits aufgelöste** Notiz-Card in `pending_decisions` (kein Future, kein `awaiting_approval`). Sie erscheint im Cockpit (Polling) **und** auf der Detailseite (State-Snapshot) und wird mit „Zur Kenntnis" quittiert (`resolve_decision` entfernt future-lose Notizen). Das Frontend-Deny-Rendering ist damit aktiv. (`manager._register_deny_notice` + `resolve_decision`-Zweig.)
+- **Bug B — Phase rückt bei abgelehntem Phasen-Gate vor (Medium) → BEHOBEN.** Die Phase wird jetzt **seiteneffektfrei** vorausberechnet (`abc_phases.detect_phase_signal`) und erst **nach Freigabe** übernommen (`manager._apply_phase`). Bei Ablehnung bleibt die alte Phase; bei Freigabe springt sie. (`request_decision` deferred-apply.)
+
+Regression abgesichert in `tests/test_proj10_qa.py`: `test_denied_phase_gate_keeps_old_phase`, `test_approved_phase_gate_advances_phase`, `test_deny_surfaces_a_dismissable_notice`.
+
+### Re-QA (2026-06-23) — NEUER Befund aus Fix A
+- **Bug C — Status friert auf `awaiting_approval` ein (Medium, Regression aus Fix A).** Die nicht-blockierende deny-Notiz liegt in `self.pending`. Wird danach eine **echte** blockierende Card freigegeben, prüft `resolve_decision` `if not self.pending …` → die liegengebliebene Notiz hält `pending` nicht-leer → der Status kehrt **nicht** nach `RUNNING` zurück, sondern bleibt `awaiting_approval` (Cockpit/Kanban zeigen die Session fälschlich als „wartet auf Freigabe", obwohl der Treiber weiterläuft). *Repro:* deny-Regel (Bash) + card-Regel (Write) → Bash (deny-Notiz) → Write-Card freigeben → Status bleibt `awaiting_approval`. *Fix-Richtung:* Die „leer?"-Prüfung darf nur **blockierende** Cards zählen → `self._futures` statt `self.pending` verwenden (Notizen haben kein Future). Alternativ Notizen aus `pending` heraushalten und über eine separate `notices`-Liste in `to_read()` ausliefern.
+- **Bug C → BEHOBEN (Backend-Fix 2026-06-23):** Die „leer?"-Prüfung in `resolve_decision` zählt jetzt nur **blockierende** Cards (`if not self._futures` statt `self.pending`) — nicht-blockierende deny-Notizen halten den Status nicht mehr fest. Regression grün: `test_lingering_deny_notice_does_not_freeze_status` (xfail entfernt).
+
+**Re-QA-Verdict:** Bug A + B + C alle behoben und per Regressionstest abgesichert. Keine offenen Bugs. Suite: **354 passed**.
+
+### Finale Abnahme (2026-06-23) — APPROVED
+Alle Acceptance Criteria erfüllt, alle Edge-Cases abgedeckt, alle drei QA-Bugs behoben + Regression grün. Red-Team bestätigt: Bypass hebelt weder das harte Phasen-Gate noch `deny` aus; kein Injection/Path-Traversal über die Policy. Verhaltens-Check final: nach Freigabe einer echten Card kehrt der Status auf `running` zurück, die deny-Notiz bleibt sichtbar & nicht-blockierend.
+**Tests:** Backend **354 passed**, Frontend **47 passed**, TS/Lint sauber. **Keine Critical/High/Medium offen → production-ready.**
+
+### Security / Red-Team
+- ✅ **Bypass kann das harte Phasen-Gate nicht aushebeln** — die Gate-Prüfung steht **vor** dem Bypass-Auto-Allow.
+- ✅ **Kein Code-/Injection-Risiko über die Policy:** `yaml.safe_load` (kein Exec); PUT validiert Stufen (Pydantic-`Literal` → 422) und Phasen-Namen (→ 400). Match-Felder werden nur für Gleichheit/Teilstring genutzt (kein SQL/eval/Pfad).
+- ✅ **Kein Path-Traversal:** `save()` schreibt auf den fixen Serverpfad (`settings.policy_config_path`), nie aus Client-Payload.
+- ⚠️ **Betriebs-Caveat (kein Bug):** eine Catch-all-`deny`-Regel (leeres `tool`) sperrt auch Lese-Tools und kann eine Session lahmlegen — bewusste Konfig-Macht; in der UI/Doku als Warnung sinnvoll.
+
+### Tests hinzugefügt
+- `tests/test_proj10_trust_policy.py` (18) + `tests/test_proj10_qa.py` (3 Edge-Cases + 2 xfail-Bugs).
+
+### Verdict
+Erst-QA fand zwei **Medium**-Bugs (A: deny unsichtbar; B: Phase rückt bei Ablehnung vor). **Beide sind jetzt backend-seitig behoben** und per Regressionstest abgesichert; AC #3 und der Ablehnungs-Edge-Case von #9/#10 sind damit erfüllt. Keine offenen Critical/High/Medium. Gesamtsuite **348 passed**. → **Bereit für erneute QA-Abnahme** (`/abc-qa 10`), danach `/abc-deploy`.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-23 · **Version:** 0.4.0 · **URL:** https://jupiter.auxevo.tech
+**Host:** Dev-VPS host-native (systemd + Caddy), Promotion `dev → main` → Webhook-Rebuild. Sammel-Deploy mit PROJ-9 + PROJ-12 (Bump 0.3.1 → 0.4.0). Gates grün: Backend 375/375, Next.js-Prod-Build, Secret-Scan.

@@ -8,6 +8,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Standard-Ort der Konstitutions-MD-Dateien: backend/constitution/.
 _DEFAULT_CONSTITUTION_DIR = str(Path(__file__).resolve().parent.parent / "constitution")
 
+# Standard-Ort der Trust-Policy (PROJ-10): backend/config/policy.yaml. Muss NICHT
+# existieren — fehlt sie, gilt der konservative Default (rückwärtskompatibel zu PROJ-4).
+_DEFAULT_POLICY_PATH = str(Path(__file__).resolve().parent.parent / "config" / "policy.yaml")
+
 # Im MVP unterstützte Modell-Aliase (werden 1:1 an `claude --model` durchgereicht).
 VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
 
@@ -98,6 +102,11 @@ class Settings(BaseSettings):
 
     # Verzeichnis der Knappheits-Konstitution (PROJ-6): global.md + roles/<rolle>.md.
     constitution_dir: str = _DEFAULT_CONSTITUTION_DIR
+
+    # Trust-Policy-Datei (PROJ-10): abgestufte Freigabe-Regeln + Phasen-Gate. Wird
+    # bei JEDER Auswertung mtime-geprüft (live editierbar ohne Neustart). Fehlt/kaputt
+    # → konservativer Default + sichtbare Warnung.
+    policy_config_path: str = _DEFAULT_POLICY_PATH
 
     # Hal-Vault (PROJ-2): Lese-/Such-Wurzel = GANZER Vault; geschrieben wird NUR im
     # Jupiter-Unterbaum (Agentic OS/Jupiter), ohne die PARA-Struktur zu verändern.

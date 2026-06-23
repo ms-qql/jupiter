@@ -67,9 +67,16 @@ def test_ac3_tree_navigation_index(client):
     assert any(f["name"] == "PROJ-7-md-reader.md" for f in r.json()["files"])
 
 def test_ac5_read_only_no_write_route(client):
-    """AC5: read-only — der Reader hat keinen Schreib-Endpoint (POST → 405)."""
-    assert client.post("/md/file", json={}).status_code == 405
+    """AC5 (durch PROJ-12 abgelöst): /md/index bleibt rein lesend (POST → 405).
+
+    Der Schreib-Endpoint POST /md/file kam mit PROJ-12 (MD-Editor) bewusst hinzu;
+    die ursprüngliche read-only-Invariante für /md/file gilt daher nicht mehr —
+    ein leerer POST liefert jetzt 422 (Validierung), keine 405. Die Lese-Pfade
+    (/md/index) bleiben unverändert ohne Schreibmethode.
+    """
     assert client.post("/md/index", json={}).status_code == 405
+    # /md/file akzeptiert jetzt POST (PROJ-12) → leerer Body = 422, nicht 405.
+    assert client.post("/md/file", json={}).status_code == 422
 
 
 # --- Red-Team ---------------------------------------------------------------

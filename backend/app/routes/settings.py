@@ -1,20 +1,25 @@
-"""Settings-API — globale Kontext-Schwelle lesen/setzen (PROJ-5).
+"""Settings-API — globale Kontext-Schwelle (PROJ-5) + Trust-Policy (PROJ-10).
 
-Single-User-MVP: kein JWT, keine DB. Der Schwellenwert lebt in-memory in
-``settings`` (konsistent mit dem No-DB-Ansatz von PROJ-1/2). Jeder Wert wird
-auf ``[THRESHOLD_MIN_PCT, THRESHOLD_MAX_PCT]`` geklemmt (Edge-Case: 0/100/Unsinn).
+Single-User-MVP: kein JWT, keine DB. Die Schwelle lebt in-memory in ``settings``;
+die Trust-Policy in einer YAML-Datei (live editierbar, ``policy_store``), konsistent
+mit dem No-DB-/Datei-Ansatz von PROJ-1/2/6.
 """
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
 from ..config import THRESHOLD_MAX_PCT, THRESHOLD_MIN_PCT, clamp_threshold, settings
+from ..engine import policy
+from ..engine.abc_phases import ABC_PHASES
 from ..engine.files import FileService
 from ..schemas.settings import (
     ClipboardDirPatch,
     ClipboardDirRead,
+    PolicyPreviewRead,
     ThresholdSettingPatch,
     ThresholdSettingRead,
+    TrustPolicyPut,
+    TrustPolicyRead,
 )
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -56,3 +61,41 @@ async def set_clipboard_dir(request: Request, payload: ClipboardDirPatch) -> dic
         return {"path": _files(request).set_clipboard_dir(payload.path)}
     except ValueError as exc:  # außerhalb der erlaubten Roots
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Trust-Policy (PROJ-10) ------------------------------------------------
+
+@router.get("/policy", response_model=TrustPolicyRead)
+async def get_policy() -> dict:
+    """Aktuelle Trust-Policy + Herkunft/Warnung (live aus der Datei)."""
+    return policy.policy_store.snapshot()
+
+
+@router.put("/policy", response_model=TrustPolicyRead)
+async def put_policy(payload: TrustPolicyPut) -> dict:
+    """Policy ersetzen — validiert, in YAML geschrieben, **live** übernommen."""
+    unknown = [t for t in payload.phase_gate.transitions if t not in ABC_PHASES]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unbekannte Phase(n) im Phasen-Gate: {', '.join(unknown)}.",
+        )
+    try:
+        return policy.policy_store.save(
+            [r.model_dump() for r in payload.rules],
+            payload.phase_gate.model_dump(),
+        )
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/policy/preview", response_model=PolicyPreviewRead)
+async def preview_policy(
+    tool: str,
+    role: str | None = None,
+    skill: str | None = None,
+    project: str | None = None,
+) -> dict:
+    """Trockenlauf: welche Stufe + Regel würde für den Kontext greifen (Nachvollziehbarkeit)."""
+    d = policy.policy_store.evaluate(tool, role=role, skill=skill, project=project)
+    return {"level": d.level, "rule": d.rule}

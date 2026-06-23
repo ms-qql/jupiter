@@ -27,6 +27,12 @@ export interface PendingDecision {
   /** Roh-Input des Tools; bei Frage-Tools (AskUserQuestion) rendert die Card daraus
    *  eine Auswahlliste statt eines JSON-Blobs. */
   tool_input?: AskUserQuestionInput | Record<string, unknown>;
+  /** PROJ-10: Klartext der Policy-Regel, die diese Card ausgelöst hat
+   *  (z. B. „card · Bash @ Rolle architect"). null = konservativer Default. */
+  triggering_rule?: string | null;
+  /** PROJ-10: Card-Typ — „normal" (operative Freigabe), „phase_transition"
+   *  (bypass-festes Phasen-Gate) oder „deny" (hart verboten, nur Info). */
+  card_type?: "normal" | "phase_transition" | "deny";
 }
 
 /** Struktur des AskUserQuestion-Tool-Inputs (für die Frage-Karte, PROJ-4). */
@@ -108,6 +114,49 @@ export interface ThresholdSetting {
   max_pct: number;
 }
 
+// --- PROJ-10: Trust-Policy (abgestuftes, konfigurierbares Vertrauen) --------
+
+/** Vertrauensstufe einer Regel. */
+export type PolicyLevel = "auto-allow" | "card" | "deny";
+
+/** Wonach eine Regel matcht — leere Felder = „beliebig" (allgemeiner). */
+export interface PolicyRuleMatch {
+  tool?: string | null; // Tool-Klasse, z. B. „Bash" (leer = alle Tools)
+  role?: string | null;
+  skill?: string | null;
+  project?: string | null;
+}
+
+/** Eine Policy-Regel: Match → Stufe (+ optionaler Klartext-Grund, v. a. bei deny). */
+export interface PolicyRule {
+  match: PolicyRuleMatch;
+  level: PolicyLevel;
+  reason?: string | null;
+}
+
+/** Phasen-Übergangs-Gate (bypass-fest). transitions = Ziel-Phasen, deren Eintritt
+ *  eine Freigabe verlangt; leere Liste = JEDER Phasenwechsel gated. */
+export interface PhaseGateConfig {
+  enabled: boolean;
+  transitions: AbcPhase[];
+}
+
+/** Gesamte Trust-Policy (GET/PUT /settings/policy). */
+export interface TrustPolicy {
+  rules: PolicyRule[];
+  phase_gate: PhaseGateConfig;
+  /** Herkunft: z. B. „config/policy.yaml" oder „default" (keine Datei gepflegt). */
+  source: string;
+  /** Warnung bei kaputter/ungültiger Config (sonst null) — UI zeigt Fallback-Hinweis. */
+  warning: string | null;
+}
+
+/** Antwort von GET /settings/policy/preview — welche Stufe/Regel würde greifen. */
+export interface PolicyPreview {
+  level: PolicyLevel;
+  rule: string; // Klartext der greifenden Regel (oder „Default")
+}
+
 // --- PROJ-7: MD-Reader (read-only) -----------------------------------------
 
 /** Lese-Quelle des MD-Readers — spiegelt backend/app/schemas/md.py MdSource. */
@@ -137,6 +186,23 @@ export interface MdFileRead {
   frontmatter: Record<string, unknown>;
   body: string;
   content: string;
+  // PROJ-12: Basis für die optimistische Konflikterkennung beim Speichern.
+  // Optional, weil ältere Backend-Stände (nur PROJ-7) sie nicht liefern.
+  mtime?: number;
+  hash?: string;
+}
+
+/** Antwort von POST /md/file (MdSaveResult) — neue mtime + Hash nach dem Schreiben. */
+export interface MdSaveResult {
+  path: string;
+  mtime: number;
+  hash: string;
+}
+
+/** Antwort von GET /md/backlinks (MdBacklinksResult) — wer verlinkt auf diese Notiz. */
+export interface MdBacklinksResult {
+  path: string;
+  backlinks: MdIndexEntry[];
 }
 
 export interface TranscriptEntry {
@@ -158,6 +224,38 @@ export interface SessionCreate {
   role?: string | null;
   /** PROJ-8: sprechendes Projekt-Label; ohne Angabe nutzt das Backend den Basename. */
   project_name?: string | null;
+}
+
+// --- PROJ-9: Smart Launcher -------------------------------------------------
+
+/** Ein offenes Feature aus features/INDEX.md + die abgeleitete nächste Arbeit.
+ *  Spiegelt backend/app/schemas/projects.py FeatureSuggestion. */
+export interface FeatureSuggestion {
+  id: string;
+  number: string;
+  title: string;
+  status: string;
+  prio: string | null;
+  phase: AbcPhase | null;
+  skill: string | null;
+  modell: ModelName | null;
+  initial_prompt: string;
+}
+
+/** Mitdenkender Session-Start-Vorschlag aus GET /projects/suggestion.
+ *  Spiegelt backend/app/schemas/projects.py LaunchSuggestion. */
+export interface LaunchSuggestion {
+  project_path: string;
+  abc_erkannt: boolean;
+  hinweis: string | null;
+  empfehlung: FeatureSuggestion | null;
+  alternativen: FeatureSuggestion[];
+  /** Default, den „Vorschlag übernehmen" anwendet (spiegelt die Empfehlung;
+   *  im Sonderfall „alle deployed" der /abc-requirements-Vorschlag). */
+  naechste_phase: AbcPhase | null;
+  skill: string | null;
+  modell: ModelName | null;
+  initial_prompt: string | null;
 }
 
 // --- PROJ-11: Fileexplorer + Clipboard -------------------------------------

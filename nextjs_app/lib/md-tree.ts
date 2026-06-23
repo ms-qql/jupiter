@@ -83,6 +83,49 @@ export function buildWikilinkIndex(
 }
 
 /**
+ * PROJ-12: Trennt einen führenden YAML-Frontmatter-Block (``---\n…\n---``) vom
+ * Body — fürs Live-Rendern des Editor-Entwurfs. Spiegelt die Backend-Logik
+ * (``_parse_frontmatter``), ohne YAML zu parsen: gibt nur den Body zurück.
+ */
+export function splitFrontmatter(content: string): { body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content);
+  return { body: match ? content.slice(match[0].length) : content };
+}
+
+/**
+ * PROJ-12: Notiz-Suche fürs ``[[``-Autocomplete. Filtert die Index-Einträge
+ * gegen `query` (Teilstring in Name oder rel-Pfad, case-insensitive). Exakte
+ * Namens-Präfixe ranken vor reinen Teiltreffern; gekappt auf `limit`.
+ */
+export function searchNotes(
+  entries: MdIndexEntry[],
+  query: string,
+  limit = 8,
+): MdIndexEntry[] {
+  const q = query.trim().toLowerCase();
+  const scored: { entry: MdIndexEntry; score: number }[] = [];
+  for (const e of entries) {
+    const name = normalizeKey(e.name);
+    const rel = e.rel.toLowerCase();
+    if (!q) {
+      scored.push({ entry: e, score: 0 });
+    } else if (name.startsWith(q)) {
+      scored.push({ entry: e, score: 3 });
+    } else if (name.includes(q)) {
+      scored.push({ entry: e, score: 2 });
+    } else if (rel.includes(q)) {
+      scored.push({ entry: e, score: 1 });
+    }
+  }
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      a.entry.name.localeCompare(b.entry.name, "de", { sensitivity: "base" }),
+  );
+  return scored.slice(0, limit).map((s) => s.entry);
+}
+
+/**
  * Löst ein Wikilink-Ziel gegen den Index auf. Unterstützt ``[[Name]]``,
  * ``[[Ordner/Name]]`` und ``[[Name#Überschrift]]`` (Anker wird ignoriert).
  * Gibt den Eintrag zurück oder ``null`` (→ „fehlend").
