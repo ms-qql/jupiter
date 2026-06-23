@@ -1,6 +1,6 @@
 # PROJ-14: PROJ-1-Härtung — Limit paralleler Sessions + Persistenz
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** — (Härtung aus QA-3 von PROJ-1)
@@ -204,4 +204,14 @@ Limit (Ablehnung, nur aktive zählen, Race-Atomarität, 429 + `/limits`), Clamp,
 **READY** — keine Critical/High-Bugs. 1× Medium + 2× Low als empfohlene Follow-ups (nicht-blockierend; Medium betrifft den Schutzzweck, im single-user-MVP nutzer-selbstverschuldet).
 
 ## Deployment
-_To be added by /abc-deploy_
+**Production-URL:** https://jupiter.auxevo.tech · **Deployed:** 2026-06-23 · **Version:** 0.3.0 · **Host:** Dev-VPS host-native (systemd: jupiter-backend/-frontend, Caddy TLS, GitHub-Webhook auf `main`).
+
+**Geshipped:** Limit gleichzeitig aktiver Sessions (`JUPITER_MAX_PARALLEL_SESSIONS`, Default 12, HTTP 429) + SQLite-Live-Index (`~/jupiter-data/session_index.db`, auto-angelegt, Rehydrierung verwaister Sessions nach Restart) + `GET /sessions/limits`. Keine neuen Python-Deps, keine Infra-Änderung. Mit-promotet: bypassPermissions-Permission-Mode (PROJ-1) + PROJ-10-Trust-Policy-Spec (Doku).
+
+**Betriebshinweis:** Default-Limit 12 ist für den Dev-VPS gewählt; bei RAM-Druck via `JUPITER_MAX_PARALLEL_SESSIONS` (systemd-Env von jupiter-backend) senken. Persistenz abschaltbar via `JUPITER_SESSION_INDEX_ENABLED=false`.
+
+**Smoke-Test (Prod, vom Nutzer zu prüfen):**
+- [ ] `https://jupiter.auxevo.tech/api/sessions` erreichbar (Basic-Auth), Cockpit lädt, Versionsanzeige `v0.3.0`
+- [ ] `GET /api/sessions/limits` liefert `{max_parallel_sessions, active}`
+- [ ] Session anlegen, am Limit (testweise niedrig) → 429 mit deutscher Meldung
+- [ ] Backend-Restart (`systemctl restart jupiter-backend`) → Session-Liste weiter sichtbar, vormals aktive als „verwaist"
