@@ -78,6 +78,12 @@ class ClaudeCodeDriver(EngineDriver):
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
+    @property
+    def pid(self) -> int | None:
+        """OS-PID des laufenden Subprozesses (PROJ-14): für die Persistenz des
+        Live-Index und den Verwaist-Check nach einem Backend-Neustart."""
+        return self._proc.pid if self._proc is not None else None
+
     async def start(self, spec: LaunchSpec, on_event: EventHandler) -> None:
         self._on_event = on_event
         argv = build_argv(spec, settings.claude_bin)

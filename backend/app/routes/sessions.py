@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from ..config import clamp_threshold
-from ..engine.manager import SessionManager
+from ..engine.manager import SessionLimitError, SessionManager
 from ..schemas.sessions import (
     ConstitutionRead,
     DecisionResolve,
@@ -41,6 +41,8 @@ async def create_session(payload: SessionCreate, request: Request) -> dict:
             extra_system_prompt=payload.extra_system_prompt,
             project_name=payload.project_name,
         )
+    except SessionLimitError as exc:  # PROJ-14: Limit aktiver Sessions erreicht.
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ValueError as exc:  # ungültiger Pfad / Modell
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:  # claude-Binary nicht gefunden
@@ -53,6 +55,13 @@ async def create_session(payload: SessionCreate, request: Request) -> dict:
 @router.get("", response_model=list[SessionRead])
 async def list_sessions(request: Request) -> list[dict]:
     return [r.to_read() for r in _manager(request).list()]
+
+
+@router.get("/limits")
+async def session_limits(request: Request) -> dict:
+    """PROJ-14: Limit-Status für das Cockpit (max + aktuell aktive Sessions)."""
+    manager = _manager(request)
+    return {"max_parallel_sessions": manager.max_parallel_sessions, "active": manager.active_count()}
 
 
 @router.get("/{session_id}", response_model=SessionDetail)

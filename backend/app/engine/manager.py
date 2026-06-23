@@ -7,6 +7,7 @@ PROJ-2) wird über das hier offen gehaltene Repository-Seam nachgerüstet.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
 from collections.abc import Callable
@@ -16,11 +17,13 @@ from datetime import datetime, timezone
 from ..config import (
     MVP_ALLOWED_PERMISSION_MODES,
     VALID_MODELS,
+    clamp_session_limit,
     clamp_threshold,
     settings,
 )
+from ..db import NullSessionIndexRepository, SessionIndexRepository
 from . import abc_phases, policy
-from .base import EngineDriver, LaunchSpec
+from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .constitution import combine_with_extra, resolve_constitution
 from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
@@ -42,7 +45,20 @@ from .hooks import build_hook_settings
 STARTING, RUNNING, WAITING, DONE, ERROR = "starting", "running", "waiting", "done", "error"
 AWAITING_APPROVAL = "awaiting_approval"
 
+# PROJ-14: nur diese Zustände zählen gegen das Limit paralleler Sessions
+# (done/error sind terminal und blockieren keine Slots).
+ACTIVE_STATES: frozenset[str] = frozenset({STARTING, RUNNING, WAITING, AWAITING_APPROVAL})
+
 DriverFactory = Callable[[], EngineDriver]
+
+logger = logging.getLogger(__name__)
+
+
+class SessionLimitError(RuntimeError):
+    """PROJ-14: Erstellung abgelehnt, weil das Limit aktiver Sessions erreicht ist.
+
+    Die Route übersetzt das in HTTP 429 mit deutscher Meldung.
+    """
 
 # Default-Auftakt der Reset-Kind-Session, wenn der Nutzer keinen eigenen Prompt gibt.
 # Der verdichtete Handover liegt als System-Kontext (Seed) bereits an.
@@ -173,6 +189,7 @@ class SessionRuntime:
         state: SessionState,
         driver: EngineDriver,
         on_done: Callable[["SessionRuntime"], None] | None = None,
+        on_persist: Callable[["SessionRuntime"], None] | None = None,
     ) -> None:
         self.state = state
         self.driver = driver
@@ -181,6 +198,9 @@ class SessionRuntime:
         # Hook: wird genau EINMAL gefeuert, wenn die Session DONE erreicht (PROJ-2-Autolog).
         self.on_done = on_done
         self._done_fired = False
+        # PROJ-14: Persistenz-Hook (best-effort), gefeuert bei Zustandswechseln.
+        self.on_persist = on_persist
+        self._last_persisted_status: str | None = None
         # PROJ-4 — offene Decision Cards (key = decision_id = tool_use_id) + die Futures,
         # auf die der wartende Hook-Aufruf blockiert. „Warum" = letzter Assistenten-Text.
         self.pending: dict[str, PendingDecision] = {}
@@ -196,6 +216,16 @@ class SessionRuntime:
         data = self.state.to_read()
         data["pending_decisions"] = [c.to_read() for c in self.pending.values()]
         return data
+
+    def _maybe_persist(self) -> None:
+        """PROJ-14: bei Zustandswechsel den Live-Index spiegeln (best-effort).
+
+        Feuert nur, wenn sich der Status seit dem letzten Spiegeln geändert hat —
+        so bleibt der hochfrequente Event-Loop unbelastet (kein Write pro Event).
+        ``on_persist`` aktualisiert ``_last_persisted_status``.
+        """
+        if self.on_persist is not None and self.state.status != self._last_persisted_status:
+            self.on_persist(self)
 
     # --- WebSocket-Fan-out -------------------------------------------------
 
@@ -279,6 +309,9 @@ class SessionRuntime:
             self._done_fired = True
             if self.on_done is not None:
                 self.on_done(self)
+
+        # PROJ-14: Zustandswechsel in den persistenten Live-Index spiegeln.
+        self._maybe_persist()
 
     def _apply_usage(self, event: StreamEvent) -> None:
         usage = extract_usage(event)
@@ -390,6 +423,7 @@ class SessionRuntime:
         self.state.last_activity = _now()
         self._broadcast({"kind": "decision", "event": "opened", "decision": card.to_read()})
         self._broadcast({"kind": "state", **self.to_read()})
+        self._maybe_persist()  # PROJ-14: awaiting_approval spiegeln (zählt aktiv).
         return await fut
 
     def resolve_decision(
@@ -425,6 +459,7 @@ class SessionRuntime:
         self.state.last_activity = _now()
         self._broadcast({"kind": "decision", "event": "resolved", "decision": card.to_read()})
         self._broadcast({"kind": "state", **self.to_read()})
+        self._maybe_persist()  # PROJ-14: Rückkehr nach running spiegeln.
         return card
 
     def abandon_decisions(
@@ -445,11 +480,155 @@ class SessionRuntime:
 
 
 class SessionManager:
-    def __init__(self, driver_factory: DriverFactory | None = None, vault=None) -> None:
+    def __init__(
+        self,
+        driver_factory: DriverFactory | None = None,
+        vault=None,
+        repo: SessionIndexRepository | None = None,
+    ) -> None:
         self._driver_factory: DriverFactory = driver_factory or (lambda: ClaudeCodeDriver())
         self._sessions: dict[str, SessionRuntime] = {}
         # Optionaler VaultService (PROJ-2): rohe Session-Logs am Ende persistieren.
         self._vault = vault
+        # PROJ-14: Persistenz-Seam (Live-Index). None → reines In-Memory (wie Tests/MVP).
+        self._repo: SessionIndexRepository = repo or NullSessionIndexRepository()
+        # Atomare Limit-Prüfung: ``create`` hat await-Punkte → ohne Lock wäre
+        # „zählen → prüfen → reservieren" nicht atomar (Edge-Case Limit-Race).
+        self._create_lock = asyncio.Lock()
+        # Referenzen auf laufende best-effort-Persist-Tasks (gegen vorzeitiges GC).
+        self._persist_tasks: set[asyncio.Task] = set()
+
+    # --- PROJ-14: Limit + Persistenz --------------------------------------
+
+    def active_count(self) -> int:
+        """Anzahl aktuell aktiver Sessions (zählt gegen das Limit)."""
+        return sum(1 for r in self._sessions.values() if r.state.status in ACTIVE_STATES)
+
+    @property
+    def max_parallel_sessions(self) -> int:
+        return clamp_session_limit(settings.max_parallel_sessions)
+
+    def _row(self, runtime: SessionRuntime) -> dict:
+        """Persistierbarer Snapshot (Metadaten + PID) für den Live-Index."""
+        s = runtime.state
+        return {
+            "session_id": s.session_id,
+            "owner": s.owner,
+            "project_path": s.project_path,
+            "project_name": s.project_name,
+            "model": s.model,
+            "permission_mode": s.permission_mode,
+            "role": s.role,
+            "status": s.status,
+            "pid": runtime.driver.pid,
+            "error": s.error,
+            "created_at": s.created_at.isoformat(),
+            "last_activity": s.last_activity.isoformat(),
+            "tokens_used": s.tokens_used,
+            "total_cost_usd": float(s.total_cost_usd),
+            "parent_session_id": s.parent_session_id,
+            "child_session_id": s.child_session_id,
+            "abc_phase": s.abc_phase,
+            "abc_phase_reached": s.abc_phase_reached,
+            "abc_feature": s.abc_feature,
+        }
+
+    def _persist(self, runtime: SessionRuntime) -> None:
+        """Best-effort: Live-Index-Zeile schreiben (off-thread, nie blockierend).
+
+        Wird als ``on_persist``-Hook bei Zustandswechseln gefeuert. Fehler degradieren
+        zu einer Warnung — der In-Memory-Pfad bleibt führend (AC „DB nicht erreichbar")."""
+        runtime._last_persisted_status = runtime.state.status
+        if isinstance(self._repo, NullSessionIndexRepository):
+            return
+        row = self._row(runtime)
+        task = asyncio.create_task(self._safe_upsert(row))
+        self._persist_tasks.add(task)
+        task.add_done_callback(self._persist_tasks.discard)
+
+    async def _safe_upsert(self, row: dict) -> None:
+        try:
+            await self._repo.upsert(row)
+        except Exception as exc:  # noqa: BLE001 — Persistenz ist best-effort.
+            logger.warning("Session-Live-Index konnte nicht geschrieben werden: %s", exc)
+
+    async def rehydrate(self) -> None:
+        """PROJ-14: beim Startup den Live-Index laden und verwaiste Sessions markieren.
+
+        Nach einem Backend-Neustart ist KEINE persistierte Session mehr steuerbar
+        (der ``asyncio.subprocess``-Handle/Stream ist weg). Aktive Sessions werden
+        daher als **verwaist** markiert (raus aus der Aktiv-Zählung), terminale
+        bleiben als Historie sichtbar — die Übersicht überlebt den Restart.
+        In-Memory/Prozess-Realität gewinnt bei Inkonsistenz.
+        """
+        try:
+            rows = await self._repo.list_all()
+        except Exception as exc:  # noqa: BLE001 — DB nicht erreichbar → ohne Rehydrierung starten.
+            logger.warning("Live-Index nicht lesbar — starte ohne Rehydrierung: %s", exc)
+            return
+        for row in rows:
+            sid = row.get("session_id")
+            if not sid or sid in self._sessions:  # In-Memory gewinnt.
+                continue
+            state = self._state_from_row(row)
+            runtime = SessionRuntime(
+                state, DeadDriver(), on_done=self._write_session_log, on_persist=self._persist
+            )
+            runtime._last_persisted_status = state.status
+            if row.get("status") in ACTIVE_STATES:
+                alive = self._pid_alive(row.get("pid"))
+                note = "Prozess läuft evtl. noch, ist aber nicht steuerbar" if alive else "Prozess beendet"
+                state.status = ERROR
+                state.error = f"Verwaist nach Backend-Neustart ({note})."
+            self._sessions[sid] = runtime
+            if state.status != row.get("status"):  # verwaist → korrigierten Status spiegeln.
+                self._persist(runtime)
+        if rows:
+            logger.info("Live-Index rehydriert: %d Session(s).", len(rows))
+
+    @staticmethod
+    def _pid_alive(pid) -> bool:
+        """Best-effort-Lebendigkeitscheck eines Prozesses (Signal 0)."""
+        if not pid:
+            return False
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:  # existiert, gehört aber anderem User → lebt.
+            return True
+        except (OSError, ValueError):
+            return False
+        return True
+
+    def _state_from_row(self, row: dict) -> SessionState:
+        """Rekonstruiert den Übersichts-``SessionState`` aus einer Index-Zeile."""
+        def _dt(value) -> datetime:
+            try:
+                return datetime.fromisoformat(value) if value else _now()
+            except (TypeError, ValueError):
+                return _now()
+
+        return SessionState(
+            session_id=row["session_id"],
+            owner=row.get("owner") or settings.default_owner,
+            project_path=row.get("project_path") or "",
+            model=row.get("model") or settings.default_model,
+            permission_mode=row.get("permission_mode") or settings.default_permission_mode,
+            role=row.get("role"),
+            status=row.get("status") or DONE,
+            created_at=_dt(row.get("created_at")),
+            last_activity=_dt(row.get("last_activity")),
+            tokens_used=int(row.get("tokens_used") or 0),
+            total_cost_usd=float(row.get("total_cost_usd") or 0.0),
+            error=row.get("error"),
+            parent_session_id=row.get("parent_session_id"),
+            child_session_id=row.get("child_session_id"),
+            project_name=row.get("project_name"),
+            abc_phase=row.get("abc_phase"),
+            abc_phase_reached=row.get("abc_phase_reached"),
+            abc_feature=row.get("abc_feature"),
+        )
 
     async def create(
         self,
@@ -495,8 +674,20 @@ class SessionManager:
             project_name=(project_name or "").strip() or os.path.basename(real_path) or real_path,
         )
         driver = self._driver_factory()
-        runtime = SessionRuntime(state, driver, on_done=self._write_session_log)
-        self._sessions[session_id] = runtime
+        runtime = SessionRuntime(
+            state, driver, on_done=self._write_session_log, on_persist=self._persist
+        )
+
+        # PROJ-14: Limit atomar prüfen und Slot reservieren (Insert in die Registry,
+        # solange der Lock hält → konkurrierende Creates sehen den belegten Slot).
+        async with self._create_lock:
+            limit = self.max_parallel_sessions
+            if self.active_count() >= limit:
+                raise SessionLimitError(
+                    f"Limit erreicht: maximal {limit} gleichzeitige Sessions. "
+                    "Bitte eine laufende Session beenden, bevor eine neue startet."
+                )
+            self._sessions[session_id] = runtime
 
         spec = LaunchSpec(
             session_id=session_id,
@@ -512,7 +703,10 @@ class SessionManager:
         except Exception as exc:  # Start fehlgeschlagen → Zustand markieren, Fehler weiterreichen.
             state.status = ERROR
             state.error = str(exc)
+            self._persist(runtime)  # PROJ-14: Fehlversuch spiegeln (zählt nicht aktiv).
             raise
+        # PROJ-14: initialen Zustand spiegeln (falls noch kein Event den Status wechselte).
+        self._persist(runtime)
         return runtime
 
     def _hook_settings(self) -> str | None:
@@ -552,6 +746,7 @@ class SessionManager:
         runtime.transcript.append(TranscriptEntry("user", "text", text, _now().isoformat()))
         runtime.state.status = RUNNING
         runtime.state.last_activity = _now()
+        self._persist(runtime)  # PROJ-14: running (inkl. evtl. neuer PID nach resume) spiegeln.
 
     async def resume(self, session_id: str) -> None:
         """Setzt eine beendete Session fort (ohne sofortige Eingabe)."""
@@ -588,6 +783,7 @@ class SessionManager:
         state.status = RUNNING
         state.error = None
         state.last_activity = _now()
+        self._persist(runtime)  # PROJ-14: rehydrierte/fortgesetzte Session läuft wieder.
 
     async def pause(self, session_id: str) -> None:
         await self._require(session_id).driver.pause()
@@ -597,6 +793,7 @@ class SessionManager:
         await runtime.driver.stop()
         # Sicherheitsnetz: offene Cards auflösen (der closed-Event tut das i. d. R. schon).
         runtime.abandon_decisions("Session gestoppt — Freigabe hinfällig.")
+        self._persist(runtime)  # PROJ-14: terminalen Zustand (PID weg) spiegeln.
 
     # --- Decision Cards / Freigabe (PROJ-4) --------------------------------
 

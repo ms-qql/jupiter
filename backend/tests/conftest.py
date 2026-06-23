@@ -14,3 +14,8 @@ from app.config import settings
 @pytest.fixture(autouse=True)
 def _isolate_vault(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "vault_root", str(tmp_path / "vault"))
+    # PROJ-14: Persistenz im Test standardmäßig AUS (kein Schreiben in den echten
+    # Home-SQLite-Pfad, keine Fremd-Rehydrierung). Tests, die den Live-Index prüfen,
+    # injizieren ein eigenes Repository explizit.
+    monkeypatch.setattr(settings, "session_index_enabled", False)
+    monkeypatch.setattr(settings, "session_index_db_path", str(tmp_path / "session_index.db"))

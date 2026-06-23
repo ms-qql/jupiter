@@ -1,7 +1,7 @@
 // Spiegelt backend/app/schemas/sessions.py (SessionRead / SessionCreate).
 
 export type ModelName = "haiku" | "sonnet" | "opus";
-export type PermissionMode = "default" | "acceptEdits";
+export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions";
 
 /** Roher Session-Status aus dem Backend (engine/manager.py). */
 export type SessionStatus =
