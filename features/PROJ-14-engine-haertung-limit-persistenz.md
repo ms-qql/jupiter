@@ -1,6 +1,6 @@
 # PROJ-14: PROJ-1-Härtung — Limit paralleler Sessions + Persistenz
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** — (Härtung aus QA-3 von PROJ-1)
@@ -43,7 +43,104 @@ PROJ-1 hält den Session-Zustand heute rein **in-memory** und kennt **kein Limit
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-23 · **Stack:** Backend-only (FastAPI + SQLite-Live-Index, host-nativ; kein Frontend-Change zwingend) · **Branch:** dev
+
+### Kernentscheidung: Persistenz-Store = SQLite (host-nativ), nicht Postgres/Neon
+Der Live-Index ist laut PRD **nicht die Wahrheit** (das ist der Vault), wird vom **einen** uvicorn-Worker
+geschrieben (single-writer) und soll nur einen Backend-Restart auf **demselben Host** überstehen. Genau
+SQLites Stärke. Neon (DE) wurde verworfen: Remote-Round-Trip pro Status-/last_activity-Write verletzt das
+AC „kein Performance-Regress im Hot-Path", erzeugt Netzabhängigkeit (häufiger Best-Effort-Fallback) und
+trägt Session-Metadaten (Projektpfade/Prompts) vom Host weg — gegen die bewusst host-native Deploy-Philosophie.
+Neon bleibt die richtige Wahl **später** als *geteilter, autoritativer* Store (Phase 2 / echtes Auth / Multi-User).
+Das Repository-Seam wird abstrakt geschnitten, damit dieser Wechsel (auch für **PROJ-17**) ohne Bruch geht.
+
+Heutiger Stand (Befund): Das Backend ist **komplett in-memory** (`SessionManager._sessions: dict`), es gibt
+**keine DB-Schicht** (kein asyncpg/psycopg/DATABASE_URL), und `create_app()` hat **keinen lifespan-Hook**.
+PROJ-14 führt beides erstmals ein.
+
+### A) Was gebaut wird (zwei unabhängige Bausteine)
+
+**1. Limit gleichzeitiger Sessions**
+```
+SessionManager.create()
+├── (NEU) asyncio.Lock  ── atomares "zählen → prüfen → reservieren"
+├── (NEU) aktive Sessions zählen: status ∈ {starting, running, waiting, awaiting_approval}
+│         done/error zählen NICHT
+└── Limit überschritten? → SessionLimitError → Route: HTTP 429 + deutsche Meldung
+```
+
+**2. Persistenz-Seam (Live-Index-Spiegel)**
+```
+backend/app/db/                      (NEU)
+├── session_index_repo.py  ── SessionIndexRepository (abstraktes Seam, Protocol)
+│                             + SqliteSessionIndexRepository (stdlib sqlite3 in asyncio.to_thread)
+│                             + NullRepository (DB aus / nicht erreichbar → Best-Effort)
+└── schema.sql             ── CREATE TABLE session_index (+ Index auf status)
+
+create_app()  ── (NEU) lifespan: Repo öffnen, Datei/Schema anlegen, Reconcile, sauber schließen
+SessionManager  ── spiegelt auf: create / Status-Wechsel / Terminierung (NICHT auf jedem Event)
+```
+
+### B) Datenmodell — `session_index` (SQLite)
+Spiegelt die persistierbaren Metadaten von `SessionState` (Manager-`dataclass`). **Kein** Transkript,
+keine Subscriber, keine Live-Prozess-Handles — nur der wiederherstellbare Übersichts-Zustand:
+```
+session_id (PK) · owner · project_path · project_name · model · permission_mode · role
+status · pid (OS-PID des claude-Subprozesses, für Verwaist-Check) · error
+created_at · last_activity · tokens_used · total_cost_usd
+parent_session_id · abc_phase · abc_phase_reached
+Index: (status)   — schnelle Aktiv-Zählung & Reconcile
+```
+Datei-Pfad konfigurierbar (`session_index_db_path`, Default unter einem beschreibbaren Daten-Verzeichnis,
+z. B. `/home/dev/jupiter-data/session_index.db`), wird bei Bedarf automatisch angelegt.
+
+### C) Schreibstrategie (Hot-Path-Schonung)
+- Spiegelung **nur bei Zustandsänderungen** (create, jeder `status`-Übergang, Terminierung), nicht bei
+  jedem Stream-Event → der hochfrequente Event-Loop (`handle_event`) bleibt unbelastet.
+- Schreiben über `asyncio.to_thread` (stdlib `sqlite3`, WAL-Modus) → kein Blockieren der Event-Loop.
+- Alle DB-Operationen **best-effort**: `try/except` → bei Fehler nur sichtbare Warnung; der In-Memory-Pfad
+  bleibt führend (MVP-Prinzip, AC „DB nicht erreichbar").
+
+### D) Restart-Verhalten / Reconcile (beim Startup-lifespan)
+1. Persistierte Sessions laden, die in einem **aktiven** Status standen.
+2. Keiner ist nach Restart in-memory steuerbar (der stream-json-Pipe/`asyncio.subprocess`-Handle ist weg;
+   bei systemd-Restart sterben Kind-Prozesse i. d. R. mit dem Parent-cgroup).
+3. PID-Lebendigkeit best-effort prüfen (`os.kill(pid, 0)`):
+   - Prozess tot → Session als **`verwaist`/beendet** markieren, aus der Aktiv-Zählung nehmen.
+   - Prozess lebt noch, aber nicht steuerbar → ebenfalls **`verwaist`** (ehrlich: kein Re-Attach des
+     Live-Streams über den Restart möglich), Hinweis im `error`/Status.
+4. **In-Memory/Prozess-Realität gewinnt** bei Inkonsistenz Speicher↔DB.
+5. Ergebnis: Die Session-**Liste** (Metadaten + letzter Status) ist nach Restart wieder sichtbar (kein
+   Totalverlust der Übersicht) — genau das AC.
+
+### E) API-Form (minimal)
+- **Kein** neuer Endpoint nötig. `POST /sessions` bekommt den 429-Pfad bei Limit-Überschreitung.
+- `GET /sessions` listet nach Restart auch die aus dem Index rehydrierten (verwaisten) Sessions.
+- Optional (klein, empfohlen): `GET /sessions` / ein Settings-Feld macht `max_parallel_sessions` + aktuelle
+  Aktiv-Zahl sichtbar, damit das Cockpit (PROJ-3) den Limit-Status anzeigen kann.
+
+### F) Tech-Entscheidungen (Begründung)
+- **SQLite statt Postgres** — siehe Kernentscheidung oben (Hot-Path, Host-Nativität, „nicht die Wahrheit").
+- **stdlib `sqlite3` + `asyncio.to_thread`** statt neuer Abhängigkeit (`aiosqlite`): null neue Deps,
+  lokale Writes sind sub-ms, `to_thread` hält die Event-Loop frei. (`aiosqlite` bleibt drop-in-Alternative.)
+- **Repository-Protocol** statt direkter SQL-Aufrufe im Manager: PROJ-17 (Recovery) und ein späterer
+  Neon/Postgres-Tausch setzen ohne Bruch darauf auf.
+- **`asyncio.Lock` für die Limit-Prüfung**: `create()` hat `await`-Punkte → ohne Lock wäre die
+  „zählen-dann-reservieren"-Sequenz nicht atomar (Edge-Case Limit-Race).
+- **Limit-Default & Klemmung**: Default sinnvoll (z. B. CPU-bezogen), `≤ 0`/Fehlkonfiguration auf
+  Minimum 1 geklemmt (Edge-Case „Limit = 0").
+
+### G) Neue Settings (`config.py`, Prefix `JUPITER_`)
+- `max_parallel_sessions: int` — Obergrenze aktiver Sessions (Default sinnvoll, geklemmt auf ≥ 1).
+- `session_index_db_path: str` — Pfad der SQLite-Datei (auto-angelegt).
+- `session_index_enabled: bool = True` — Persistenz global abschaltbar (→ `NullRepository`, reines In-Memory).
+
+### H) Abhängigkeiten
+- **Keine neuen Python-Pakete** (stdlib `sqlite3`, `asyncio`, `os`). Optional später `aiosqlite`.
+
+### I) Verhaltenswahrung
+- Bestehende PROJ-1-Tests bleiben grün: Limit greift erst beim Überschreiten; Persistenz ist additiv und
+  best-effort. Tests können den Manager mit `NullRepository` / hohem Limit fahren (kein Default-Bruch).
 
 ## QA Test Results
 _To be added by /abc-qa_
