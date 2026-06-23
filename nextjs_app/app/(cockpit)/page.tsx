@@ -5,6 +5,7 @@ import { GlobalStatusBar } from "@/components/cockpit/global-status-bar";
 import { SessionGrid } from "@/components/cockpit/session-grid";
 import { KanbanBoard } from "@/components/cockpit/kanban-board";
 import { NewSessionDialog } from "@/components/cockpit/new-session-dialog";
+import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import {
   BoardSkeleton,
   EmptyState,
@@ -30,11 +31,14 @@ export default function CockpitPage() {
             Lagebild aller Sessions
           </p>
         </div>
-        <NewSessionDialog>
-          <button className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
-            + Neue Session
-          </button>
-        </NewSessionDialog>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <NewSessionDialog>
+            <button className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+              + Neue Session
+            </button>
+          </NewSessionDialog>
+        </div>
       </header>
 
       {!initialLoading && sessions.length > 0 && (

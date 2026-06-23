@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { MenuIcon, XIcon } from "lucide-react";
 import { SessionRail } from "./session-rail";
+import { ThemeToggle } from "./theme-toggle";
 
 export function CockpitShell({ children }: { children: React.ReactNode }) {
   const [railOpen, setRailOpen] = useState(false);
@@ -39,7 +40,7 @@ export function CockpitShell({ children }: { children: React.ReactNode }) {
       )}
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Mobile-Topbar mit Menü-Button */}
+        {/* Mobile-Topbar mit Menü-Button + Theme-Toggle */}
         <div className="flex items-center gap-2 border-b border-border px-3 py-2 md:hidden">
           <button
             onClick={() => setRailOpen(true)}
@@ -51,6 +52,9 @@ export function CockpitShell({ children }: { children: React.ReactNode }) {
           <span className="text-sm font-semibold tracking-tight">
             🛰️ Jupiter
           </span>
+          <div className="ml-auto">
+            <ThemeToggle />
+          </div>
         </div>
 
         <main className="flex-1 overflow-y-auto">{children}</main>

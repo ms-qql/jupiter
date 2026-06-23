@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Ampel } from "@/components/cockpit/ampel";
+import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { useNow } from "@/components/cockpit/sessions-provider";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { ApiError, getSession, sendInput, stopSession } from "@/lib/api";
@@ -111,6 +112,7 @@ export default function SessionDetailPage({
             </span>
           </>
         )}
+        <ThemeToggle />
       </header>
 
       {head && (
@@ -159,28 +161,39 @@ export default function SessionDetailPage({
         )}
       </div>
 
-      {!ended && (
-        <form onSubmit={handleSend} className="flex items-end gap-2">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Nachricht an die Session…"
-            rows={2}
-            className="flex-1"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSend(e);
-            }}
-          />
-          <div className="flex flex-col gap-2">
-            <Button type="submit" disabled={!input.trim() || busy}>
-              Senden
-            </Button>
+      {/* Eingabe IMMER zeigen — an beendeten Sessions setzt eine Nachricht sie fort. */}
+      {ended && (
+        <p className="mb-2 text-xs text-muted-foreground">
+          {head?.status === "error"
+            ? "Session mit Fehler beendet"
+            : "Session beendet"}{" "}
+          — eine Nachricht setzt sie fort.
+        </p>
+      )}
+      <form onSubmit={handleSend} className="flex items-end gap-2">
+        <Textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder={
+            ended ? "Nachricht senden, um fortzusetzen…" : "Nachricht an die Session…"
+          }
+          rows={2}
+          className="flex-1"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSend(e);
+          }}
+        />
+        <div className="flex flex-col gap-2">
+          <Button type="submit" disabled={!input.trim() || busy}>
+            {ended ? "Fortsetzen" : "Senden"}
+          </Button>
+          {!ended && (
             <Button type="button" variant="outline" onClick={handleStop}>
               Stop
             </Button>
-          </div>
-        </form>
-      )}
+          )}
+        </div>
+      </form>
     </div>
   );
 }
