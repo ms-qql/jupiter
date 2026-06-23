@@ -66,8 +66,27 @@ export interface Session {
   parent_session_id: string | null;
   /** PROJ-5: Vorgänger → Reset-Nachfolger (1 Strang = 1 Nachfolger). */
   child_session_id: string | null;
+  /** PROJ-8: sprechendes Projekt-Label (Fallback Basename) — Gantt-Zeilen-Titel. */
+  project_name: string | null;
+  /** PROJ-8: AKTUELLE ABC-Phase (hervorgehoben). null = keine Phase. */
+  abc_phase: AbcPhase | null;
+  /** PROJ-8: WEITESTE bisher erreichte Phase (Bar-Füllung). */
+  abc_phase_reached: AbcPhase | null;
+  /** PROJ-8: Feature-Referenz, z. B. „8" (aus Skill-Arg/berührtem Spec). */
+  abc_feature: string | null;
   pending_decisions: PendingDecision[];
 }
+
+/** PROJ-8: kanonische ABC-Workflow-Phasen (spiegelt backend/app/engine/abc_phases.py). */
+export type AbcPhase =
+  | "brainstorm"
+  | "requirements"
+  | "architecture"
+  | "frontend"
+  | "backend"
+  | "qa"
+  | "deploy"
+  | "document";
 
 /** Vorschau von POST /sessions/{id}/handover/generate (PROJ-5). */
 export interface HandoverPreview {
@@ -89,6 +108,37 @@ export interface ThresholdSetting {
   max_pct: number;
 }
 
+// --- PROJ-7: MD-Reader (read-only) -----------------------------------------
+
+/** Lese-Quelle des MD-Readers — spiegelt backend/app/schemas/md.py MdSource. */
+export interface MdSource {
+  id: string; // "vault" | "project"
+  label: string;
+  root: string; // absoluter Wurzelpfad
+}
+
+/** Ein .md-Eintrag aus dem Index (MdIndexEntry). */
+export interface MdIndexEntry {
+  path: string; // absoluter Pfad (für GET /md/file)
+  rel: string; // relativ zur Quell-Wurzel (für den Baum)
+  name: string; // Basisname inkl. .md (für Wikilink-Auflösung)
+}
+
+/** Antwort von GET /md/index (MdIndexResult). */
+export interface MdIndexResult {
+  source: string;
+  root: string;
+  files: MdIndexEntry[];
+}
+
+/** Antwort von GET /md/file (MdFileRead) — Frontmatter getrennt vom Body. */
+export interface MdFileRead {
+  path: string;
+  frontmatter: Record<string, unknown>;
+  body: string;
+  content: string;
+}
+
 export interface TranscriptEntry {
   role: string;
   kind: string;
@@ -106,4 +156,45 @@ export interface SessionCreate {
   model: ModelName;
   permission_mode?: PermissionMode;
   role?: string | null;
+  /** PROJ-8: sprechendes Projekt-Label; ohne Angabe nutzt das Backend den Basename. */
+  project_name?: string | null;
+}
+
+// --- PROJ-11: Fileexplorer + Clipboard -------------------------------------
+
+/** Eine Datei oder ein Ordner — spiegelt backend/app/schemas/files.py FileEntry. */
+export interface FileEntry {
+  name: string;
+  kind: "file" | "dir";
+  size: number;
+  mtime: string; // ISO
+  path: string; // absoluter Pfad (für „Pfad kopieren" / In-Session-Referenz)
+}
+
+/** Erlaubter Wurzel-Ordner (RootSelector). */
+export interface RootEntry {
+  label: string;
+  path: string;
+}
+
+/** Antwort von GET /files/list. */
+export interface DirListing {
+  path: string;
+  entries: FileEntry[];
+}
+
+/** Antwort von POST /files/upload. */
+export interface UploadResult {
+  files: FileEntry[];
+}
+
+/** Antwort von POST /files/delete. */
+export interface DeleteResult {
+  deleted: string[];
+  failed: string[];
+}
+
+/** Clipboard-Ordner (GET/PATCH /settings/clipboard-dir). */
+export interface ClipboardDir {
+  path: string;
 }

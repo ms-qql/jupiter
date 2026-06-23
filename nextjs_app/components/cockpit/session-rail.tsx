@@ -6,7 +6,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FolderIcon } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
@@ -16,6 +16,7 @@ import {
   statusMeta,
 } from "@/lib/status";
 import type { Session } from "@/lib/types";
+import { APP_VERSION } from "@/lib/version";
 import { Ampel } from "./ampel";
 import { NewSessionDialog } from "./new-session-dialog";
 import { useNow, useSessions } from "./sessions-provider";
@@ -51,12 +52,44 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
           className="text-sm font-semibold tracking-tight"
         >
           🛰️ Jupiter
+          <span className="ml-1.5 align-middle text-[0.65rem] font-normal tabular-nums text-muted-foreground">
+            v{APP_VERSION}
+          </span>
         </Link>
         <NewSessionDialog>
           <button className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
             + Neu
           </button>
         </NewSessionDialog>
+      </div>
+
+      <div className="px-2 pb-1">
+        <Link
+          href="/doku"
+          onClick={onItemClick}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+            pathname.startsWith("/doku")
+              ? "bg-accent text-accent-foreground"
+              : "text-foreground/90 hover:bg-accent/50",
+          )}
+        >
+          <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
+          Doku
+        </Link>
+        <Link
+          href="/dateien"
+          onClick={onItemClick}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+            pathname.startsWith("/dateien")
+              ? "bg-accent text-accent-foreground"
+              : "text-foreground/90 hover:bg-accent/50",
+          )}
+        >
+          <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
+          Dateien
+        </Link>
       </div>
 
       <div className="px-4 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">

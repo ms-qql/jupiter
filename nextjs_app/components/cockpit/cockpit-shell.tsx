@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { MenuIcon, XIcon } from "lucide-react";
+import { APP_VERSION } from "@/lib/version";
 import { SessionRail } from "./session-rail";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -51,6 +52,9 @@ export function CockpitShell({ children }: { children: React.ReactNode }) {
           </button>
           <span className="text-sm font-semibold tracking-tight">
             🛰️ Jupiter
+            <span className="ml-1.5 align-middle text-[0.65rem] font-normal tabular-nums text-muted-foreground">
+              v{APP_VERSION}
+            </span>
           </span>
           <div className="ml-auto">
             <ThemeToggle />

@@ -1,6 +1,6 @@
 // Verbindliches Mapping Status → Ampel → Kanban-Spalte (siehe PROJ-3 Tech-Design).
 
-import type { Session, SessionStatus } from "./types";
+import type { AbcPhase, Session, SessionStatus } from "./types";
 
 export type Ampel = "green" | "amber" | "orange" | "red" | "gray";
 
@@ -95,6 +95,35 @@ export function railRank(status: SessionStatus): number {
     case "done":
       return 4;
   }
+}
+
+// ABC-Workflow-Gantt (PROJ-8) -------------------------------------------------
+
+export interface AbcPhaseMeta {
+  key: AbcPhase;
+  label: string; // volle Spaltenüberschrift
+  short: string; // Kürzel für schmale Spalten (mobile/horizontal scroll)
+}
+
+/**
+ * Kanonische ABC-Phasen in fester Reihenfolge — spiegelt backend
+ * `app/engine/abc_phases.py` (ABC_PHASES). EINE Quelle der Wahrheit fürs Frontend.
+ */
+export const ABC_PHASES: AbcPhaseMeta[] = [
+  { key: "brainstorm", label: "Brainstorm", short: "BS" },
+  { key: "requirements", label: "Requirements", short: "Req" },
+  { key: "architecture", label: "Architecture", short: "Arch" },
+  { key: "frontend", label: "Frontend", short: "FE" },
+  { key: "backend", label: "Backend", short: "BE" },
+  { key: "qa", label: "QA", short: "QA" },
+  { key: "deploy", label: "Deploy", short: "Dep" },
+  { key: "document", label: "Document", short: "Doc" },
+];
+
+/** Position einer Phase in der kanonischen Reihenfolge; -1 für null/unbekannt. */
+export function phaseIndex(phase: string | null | undefined): number {
+  if (!phase) return -1;
+  return ABC_PHASES.findIndex((p) => p.key === phase);
 }
 
 // Hilfen ----------------------------------------------------------------------

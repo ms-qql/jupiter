@@ -27,6 +27,11 @@ class SessionCreate(BaseModel):
         default=None, max_length=MAX_INPUT_CHARS,
         description="Optionaler Zusatz NACH der Konstitution (kann diese nicht entfernen).",
     )
+    project_name: str | None = Field(
+        default=None, max_length=120,
+        description="Sprechendes Projekt-Label für die Gantt-Zeile (PROJ-8); "
+        "ohne Angabe wird der Verzeichnis-Basename genutzt.",
+    )
 
 
 class SessionInput(BaseModel):
@@ -90,6 +95,11 @@ class SessionRead(BaseModel):
     rate_limit: dict | None = None
     parent_session_id: str | None = None
     child_session_id: str | None = None
+    # PROJ-8 — ABC-Workflow-Gantt.
+    project_name: str | None = None
+    abc_phase: str | None = None
+    abc_phase_reached: str | None = None
+    abc_feature: str | None = None
     pending_decisions: list[PendingDecisionRead] = []
 
 

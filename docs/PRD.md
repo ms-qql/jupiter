@@ -42,18 +42,19 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-5 | Context-Management & Handover | P0 | #7, #8, #25 | Planned |
 | PROJ-6 | Knappheits-Konstitution | P0 | #24 | Planned |
 | PROJ-7 | MD-Reader | P0 | #16 | Planned |
-| — | Smart Launcher (liest features/INDEX.md) | P1 | #12 | Roadmap |
-| — | Trust-Policy / Konstitution (konfigurierbar) | P1 | #5 | Roadmap |
-| — | Fileexplorer + Drag-and-Drop | P1 | #15 | Roadmap |
-| — | MD-Editor mit Obsidian-Features (voll) | P1 | #16 | Roadmap |
-| — | Git-Branch-Handling (in-App, abc-konform: main ↔ dev, Feature-Branches, Promote) | P1 | #31 | Roadmap |
-| — | PROJ-1-Härtung: Limit paralleler Sessions + Persistenz (QA-3) | P1 | — | Roadmap |
-| — | Vault Stufe 3: lebendes Gehirn + roh↔kuratiert + Kuratierung | P1 | #9, #10, #11 | Roadmap |
-| — | Amok-Watchdog + Limits | P1 | #19 | Roadmap |
-| — | Recovery über den Vault | P1 | #20 | Roadmap |
-| — | Weitere Engines (Codex/Gemini/GLM/Ollama) + iFrame/Launch | P1 | #13 | Roadmap |
-| — | Effizienz-Ausbau: Pointer/RAG, Späher-Agenten, Prompt-Caching, Token-Dashboard | P1 | #23, #26, #27, #28 | Roadmap |
-| — | Spracheingabe / Push-to-Talk (abo-frei) | P1 | #29 | Roadmap |
+| PROJ-8 | ABC-Workflow-Gantt (Phasen-Fortschritt je Session) | P0 | Cockpit-Ausbau | In Progress |
+| PROJ-9 | Smart Launcher (liest features/INDEX.md) | P1 | #12 | Planned |
+| PROJ-10 | Trust-Policy / Konstitution (konfigurierbar) | P1 | #5 | Planned |
+| PROJ-11 | Fileexplorer + Drag-and-Drop | P1 | #15 | Planned |
+| PROJ-12 | MD-Editor mit Obsidian-Features (voll) | P1 | #16 | Planned |
+| PROJ-13 | Git-Branch-Handling (in-App, abc-konform: main ↔ dev, Feature-Branches, Promote) | P1 | #31 | Planned |
+| PROJ-14 | PROJ-1-Härtung: Limit paralleler Sessions + Persistenz (QA-3) | P1 | — | Planned |
+| PROJ-15 | Vault Stufe 3: lebendes Gehirn + roh↔kuratiert + Kuratierung | P1 | #9, #10, #11 | Planned |
+| PROJ-16 | Amok-Watchdog + Limits | P1 | #19 | Planned |
+| PROJ-17 | Recovery über den Vault | P1 | #20 | Planned |
+| PROJ-18 | Weitere Engines (Codex/Gemini/GLM/Ollama) + iFrame/Launch | P1 | #13 | Planned |
+| PROJ-19 | Effizienz-Ausbau: Pointer/RAG, Späher-Agenten, Prompt-Caching, Token-Dashboard | P1 | #23, #26, #27, #28 | Planned |
+| PROJ-20 | Spracheingabe / Push-to-Talk (abo-frei) | P1 | #29 | Planned |
 | — | Multi-Agent: Dispatch-Schicht + Vertrag-zuerst/Koordinator | P2 | #17, #18 | Roadmap |
 | — | Cross-Agent-Review / Challenge (engine-übergreifend) | P2 | #30 | Roadmap |
 | — | Vault als geteilter Dienst (auch für eingebettete Apps) | P2 | #14 | Roadmap |

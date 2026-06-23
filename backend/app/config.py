@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     # Roh-Session-Logs beim Session-Ende automatisch in den Vault schreiben (Grundlage #8/#9).
     vault_autolog: bool = True
 
+    # --- MD-Reader (PROJ-7) ----------------------------------------------
+    # Standard-„Projekt"-Quelle des read-only MD-Readers (Feature-Specs unter
+    # features/, Doku unter docs/). Muss innerhalb von allowed_roots liegen.
+    # Pro Request via ?project=<pfad> überschreibbar (z. B. project_path der Session).
+    reader_default_project: str = "/home/dev/projects/jupiter"
+
     # --- Kontext-Management & Handover (PROJ-5) ---------------------------
     # Schwelle (%) für Kontext-Warnung + Handover-Vorschlag. Global; pro Session
     # überschreibbar. Beim Lesen/Setzen auf [THRESHOLD_MIN_PCT, THRESHOLD_MAX_PCT]
@@ -88,6 +94,28 @@ class Settings(BaseSettings):
     # AUS: das mechanische Gerüst ist der garantierte, deterministische Pfad;
     # die Anreicherung ist ein optionaler Aufsatz (Tech-Design PROJ-5).
     handover_llm_enrich: bool = False
+
+    # --- Fileexplorer + Clipboard (PROJ-11) ------------------------------
+    # Globaler, kurzer Clipboard-Ordner: Pastes/Drops landen hier, der Pfad ist
+    # aus jeder Session/jedem Terminal kurz referenzierbar. MUSS innerhalb von
+    # allowed_roots liegen (sonst weder im Explorer browsbar noch sicher). Wird
+    # bei Bedarf automatisch angelegt. Pro Lauf via JUPITER_CLIPBOARD_DIR / PATCH
+    # /settings/clipboard-dir überschreibbar.
+    clipboard_dir: str = "/home/dev/projects/clipboard"
+    # Obergrenze pro hochgeladener Datei (Streaming-Abbruch bei Überschreitung).
+    upload_max_file_bytes: int = 50 * 1024 * 1024  # 50 MB
+    # Erlaubte Datei-Endungen (lowercase, ohne Punkt) für Uploads. LEERE Menge =
+    # alle erlauben (Escape-Hatch). Default deckt Bilder + gängige Dokumente ab.
+    upload_allowed_extensions: set[str] = {
+        # Bilder
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "heic",
+        # Dokumente / Text / Daten
+        "pdf", "txt", "md", "markdown", "rtf", "csv", "tsv", "json", "yaml",
+        "yml", "log", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt",
+        "ods", "odp",
+        # Archive
+        "zip", "tar", "gz", "tgz",
+    }
 
 
 settings = Settings()

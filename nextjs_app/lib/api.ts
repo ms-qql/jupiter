@@ -2,11 +2,20 @@
 // Basis-URL via NEXT_PUBLIC_API_BASE; Default = lokaler uvicorn auf :8000.
 
 import type {
+  ClipboardDir,
+  DeleteResult,
+  DirListing,
+  FileEntry,
   HandoverPreview,
+  MdFileRead,
+  MdIndexResult,
+  MdSource,
+  RootEntry,
   Session,
   SessionCreate,
   SessionDetail,
   ThresholdSetting,
+  UploadResult,
   VaultWriteResult,
 } from "./types";
 
@@ -146,8 +155,122 @@ export function setThreshold(thresholdPct: number): Promise<ThresholdSetting> {
   });
 }
 
+// --- PROJ-7: MD-Reader (read-only) -----------------------------------------
+
+/** Verfügbare Lese-Quellen (Vault + Projekt). */
+export function listMdSources(
+  project?: string,
+  signal?: AbortSignal,
+): Promise<MdSource[]> {
+  const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+  return request<MdSource[]>(`/md/sources${qs}`, { signal });
+}
+
+/** Flacher Index aller .md einer Quelle → Baum + Wikilink-Auflösung. */
+export function getMdIndex(
+  source: string,
+  project?: string,
+  signal?: AbortSignal,
+): Promise<MdIndexResult> {
+  const params = new URLSearchParams({ source });
+  if (project) params.set("project", project);
+  return request<MdIndexResult>(`/md/index?${params.toString()}`, { signal });
+}
+
+/** Eine .md lesen (absoluter Pfad, gegen allowed_roots validiert). */
+export function readMdFile(path: string, signal?: AbortSignal): Promise<MdFileRead> {
+  return request<MdFileRead>(`/md/file?path=${encodeURIComponent(path)}`, { signal });
+}
+
 /** ws(s)://…/sessions/{id}/stream — Live-Events nur für die Detailansicht. */
 export function streamUrl(id: string): string {
   const base = API_BASE.replace(/^http/, "ws");
   return `${base}/sessions/${id}/stream`;
+}
+
+// --- PROJ-11: Fileexplorer + Clipboard -------------------------------------
+
+/** Erlaubte Wurzel-Ordner (RootSelector). */
+export function listFileRoots(signal?: AbortSignal): Promise<RootEntry[]> {
+  return request<RootEntry[]>("/files/roots", { signal });
+}
+
+/** Verzeichnis-Inhalt (Default = erste erlaubte Wurzel). */
+export function listDir(path?: string, signal?: AbortSignal): Promise<DirListing> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : "";
+  return request<DirListing>(`/files/list${qs}`, { signal });
+}
+
+/** Direkter Download-Link einer Datei (für <a href> / neues Tab). */
+export function fileDownloadUrl(path: string): string {
+  return `${API_BASE}/files/download?path=${encodeURIComponent(path)}`;
+}
+
+/** Datei(en) hochladen — Default-Ziel = Clipboard-Ordner. Multipart, daher
+ *  eigenes fetch (kein JSON-Content-Type wie bei `request`). */
+export async function uploadFiles(
+  files: File[],
+  targetDir?: string,
+): Promise<UploadResult> {
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f);
+  if (targetDir) fd.append("target_dir", targetDir);
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}/files/upload`, { method: "POST", body: fd });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (!resp.ok) {
+    let detail = `Fehler ${resp.status}`;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(detail, resp.status);
+  }
+  return (await resp.json()) as UploadResult;
+}
+
+export function makeDir(parent: string, name: string): Promise<FileEntry> {
+  return request<FileEntry>("/files/mkdir", {
+    method: "POST",
+    body: JSON.stringify({ parent, name }),
+  });
+}
+
+export function renameFile(path: string, newName: string): Promise<FileEntry> {
+  return request<FileEntry>("/files/rename", {
+    method: "POST",
+    body: JSON.stringify({ path, new_name: newName }),
+  });
+}
+
+export function moveFile(path: string, destDir: string): Promise<FileEntry> {
+  return request<FileEntry>("/files/move", {
+    method: "POST",
+    body: JSON.stringify({ path, dest_dir: destDir }),
+  });
+}
+
+export function deleteFiles(paths: string[]): Promise<DeleteResult> {
+  return request<DeleteResult>("/files/delete", {
+    method: "POST",
+    body: JSON.stringify({ paths }),
+  });
+}
+
+/** Aktuellen Clipboard-Ordner lesen. */
+export function getClipboardDir(signal?: AbortSignal): Promise<ClipboardDir> {
+  return request<ClipboardDir>("/settings/clipboard-dir", { signal });
+}
+
+/** Clipboard-Ordner setzen (innerhalb der erlaubten Roots). */
+export function setClipboardDir(path: string): Promise<ClipboardDir> {
+  return request<ClipboardDir>("/settings/clipboard-dir", {
+    method: "PATCH",
+    body: JSON.stringify({ path }),
+  });
 }

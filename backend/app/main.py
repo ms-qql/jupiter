@@ -12,9 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .engine.base import EngineDriver
+from .engine.files import FileService
 from .engine.manager import SessionManager
+from .engine.md_reader import MdReaderService
 from .engine.vault import VaultService
-from .routes import constitution, permission, sessions, settings as settings_routes, vault
+from .routes import constitution, files, md, permission, sessions, settings as settings_routes, vault
 
 
 def create_app(
@@ -33,12 +35,16 @@ def create_app(
     )
     vault_service = vault_service or VaultService()
     app.state.vault = vault_service
+    app.state.md_reader = MdReaderService()
+    app.state.files = FileService()
     app.state.manager = SessionManager(driver_factory=driver_factory, vault=vault_service)
     app.include_router(sessions.router)
     app.include_router(constitution.router)
     app.include_router(vault.router)
+    app.include_router(md.router)
     app.include_router(permission.router)
     app.include_router(settings_routes.router)
+    app.include_router(files.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

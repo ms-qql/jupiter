@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ApiError, createSession } from "@/lib/api";
+import { projectName } from "@/lib/status";
 import type { ModelName, PermissionMode } from "@/lib/types";
 import { useSessions } from "./sessions-provider";
 
@@ -36,11 +37,15 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  const [project, setProject] = useState("");
   const [projectPath, setProjectPath] = useState("/home/dev/projects/");
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState<ModelName>("sonnet");
   const [mode, setMode] = useState<PermissionMode>("default");
 
+  // PROJ-8: Projekt-Label. Leer → Backend nutzt den Pfad-Basename; Placeholder
+  // zeigt diesen Vorschlag live an, damit die Gantt-Zeile sprechend bleibt.
+  const suggestedName = projectName(projectPath.trim()) || "jupiter";
   const valid = projectPath.trim().length > 0 && prompt.trim().length > 0;
 
   async function handleSubmit(e: React.FormEvent) {
@@ -53,10 +58,12 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
         initial_prompt: prompt.trim(),
         model,
         permission_mode: mode,
+        project_name: project.trim() || undefined,
       });
       toast.success("Session gestartet");
       setOpen(false);
       setPrompt("");
+      setProject("");
       refresh();
       router.push(`/sessions/${session.session_id}`);
     } catch (err) {
@@ -82,6 +89,18 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
           </DialogHeader>
 
           <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="project_name">Projekt</Label>
+              <Input
+                id="project_name"
+                value={project}
+                onChange={(e) => setProject(e.target.value)}
+                placeholder={suggestedName}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+
             <div className="grid gap-2">
               <Label htmlFor="project_path">Projekt-Pfad</Label>
               <Input

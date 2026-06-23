@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  ABC_PHASES,
   columnFor,
   contextLabel,
   countStatuses,
   formatDuration,
   gaugeColor,
   modelLabel,
+  phaseIndex,
   projectName,
   railRank,
   statusMeta,
@@ -35,6 +37,10 @@ function session(overrides: Partial<Session> = {}): Session {
     rate_limit: null,
     parent_session_id: null,
     child_session_id: null,
+    project_name: null,
+    abc_phase: null,
+    abc_phase_reached: null,
+    abc_feature: null,
     pending_decisions: [],
     ...overrides,
   };
@@ -165,6 +171,35 @@ describe("contextLabel — PROJ-5", () => {
   it("zeigt unbekannt ohne Treiber-Daten (kein irreführendes 0 Prozent)", () => {
     expect(contextLabel(0, false)).toBe("unbekannt");
     expect(contextLabel(90, false)).toBe("unbekannt");
+  });
+});
+
+describe("ABC_PHASES + phaseIndex — PROJ-8 Gantt", () => {
+  it("acht Phasen in fester kanonischer Reihenfolge", () => {
+    expect(ABC_PHASES.map((p) => p.key)).toEqual([
+      "brainstorm",
+      "requirements",
+      "architecture",
+      "frontend",
+      "backend",
+      "qa",
+      "deploy",
+      "document",
+    ]);
+  });
+  it("jede Phase hat ein volles Label + Kürzel", () => {
+    for (const p of ABC_PHASES) {
+      expect(p.label.length).toBeGreaterThan(0);
+      expect(p.short.length).toBeGreaterThan(0);
+    }
+  });
+  it("phaseIndex liefert die Position; null/unbekannt → -1", () => {
+    expect(phaseIndex("brainstorm")).toBe(0);
+    expect(phaseIndex("backend")).toBe(4);
+    expect(phaseIndex("document")).toBe(7);
+    expect(phaseIndex(null)).toBe(-1);
+    expect(phaseIndex(undefined)).toBe(-1);
+    expect(phaseIndex("quatsch")).toBe(-1);
   });
 });
 
