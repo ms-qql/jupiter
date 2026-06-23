@@ -15,10 +15,20 @@ from .config import settings
 from .db import SessionIndexRepository, build_session_index_repo
 from .engine.base import EngineDriver
 from .engine.files import FileService
+from .engine.launcher import LauncherService
 from .engine.manager import SessionManager
 from .engine.md_reader import MdReaderService
 from .engine.vault import VaultService
-from .routes import constitution, files, md, permission, sessions, settings as settings_routes, vault
+from .routes import (
+    constitution,
+    files,
+    md,
+    permission,
+    projects,
+    sessions,
+    settings as settings_routes,
+    vault,
+)
 
 
 def create_app(
@@ -55,6 +65,7 @@ def create_app(
     vault_service = vault_service or VaultService()
     app.state.vault = vault_service
     app.state.md_reader = MdReaderService()
+    app.state.launcher = LauncherService()
     app.state.files = FileService()
     app.state.session_index_repo = repo
     app.state.manager = SessionManager(
@@ -67,6 +78,7 @@ def create_app(
     app.include_router(permission.router)
     app.include_router(settings_routes.router)
     app.include_router(files.router)
+    app.include_router(projects.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

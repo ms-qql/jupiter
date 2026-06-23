@@ -44,6 +44,89 @@ SKILL_TO_PHASE: dict[str, str] = {
 _PROJ_RE = re.compile(r"PROJ-(\d+)", re.IGNORECASE)
 _NUM_RE = re.compile(r"\d{1,4}")
 
+# --- Smart Launcher (PROJ-9) -----------------------------------------------
+# Kanonischer Workflow-Skill je Phase (Umkehrung von SKILL_TO_PHASE). qa → abc-qa
+# (nicht abc-qa-e2e); pro Phase genau ein vorgeschlagener Skill.
+PHASE_TO_SKILL: dict[str, str] = {p: f"abc-{p}" for p in ABC_PHASES}
+
+# Empfohlenes Modell je Phase (überschreibbar). Denk-/Design-Phasen → Opus
+# (Qualität), Bau/QA → Sonnet (Balance), mechanische Phasen → Haiku (günstig).
+PHASE_TO_MODEL: dict[str, str] = {
+    "brainstorm": "opus",
+    "requirements": "opus",
+    "architecture": "opus",
+    "frontend": "sonnet",
+    "backend": "sonnet",
+    "qa": "sonnet",
+    "deploy": "haiku",
+    "document": "haiku",
+}
+
+# INDEX.md-Status spiegelt die ZULETZT abgeschlossene Stufe → nächste sinnvolle
+# abc-Phase. „Deployed" → None (fertig). Status-Werte case-/whitespace-normalisiert.
+STATUS_TO_NEXT_PHASE: dict[str, str | None] = {
+    "planned": "architecture",
+    "architected": "frontend",
+    "in progress": "backend",
+    "in review": "qa",
+    "approved": "deploy",
+    "deployed": None,
+}
+
+# Reifegrad-Reihenfolge der INDEX-Status (klein = unreif). Für die Auswahl des
+# „nächsten" Features bei mehreren offenen: kleinster Reifegrad zuerst.
+STATUS_ORDER: tuple[str, ...] = (
+    "planned", "architected", "in progress", "in review", "approved", "deployed",
+)
+_STATUS_INDEX: dict[str, int] = {s: i for i, s in enumerate(STATUS_ORDER)}
+
+
+def normalize_status(status: str | None) -> str:
+    """Normalisiert einen INDEX-Status (lowercase, Whitespace kollabiert)."""
+    if not status:
+        return ""
+    return " ".join(status.strip().lower().split())
+
+
+def status_maturity(status: str | None) -> int | None:
+    """Reifegrad-Index eines Status entlang ``STATUS_ORDER``, oder ``None`` (unbekannt)."""
+    return _STATUS_INDEX.get(normalize_status(status))
+
+
+# „Fortsetzen-First"-Rang (PROJ-9 / BUG-1): angefangene Dev-Arbeit zuerst, reifster
+# OFFENER Stand oben (In Review → In Progress → Architected → Planned). ``Approved``
+# wird ans Ende gestellt — dessen einzige offene Stufe ist der human-gated Deploy, den
+# der Launcher nicht als Top-Vorschlag drängen soll (bleibt aber als Alternative
+# wählbar). ``Deployed`` kommt hier nie vor (vorab herausgefiltert). Kleiner Rang =
+# höhere Empfehlung; unbekannt → ans Ende.
+_SELECTION_RANK: dict[str, int] = {
+    "in review": 0,
+    "in progress": 1,
+    "architected": 2,
+    "planned": 3,
+    "approved": 4,
+}
+
+
+def selection_rank(status: str | None) -> int:
+    """Sortier-Rang für die „Fortsetzen-First"-Auswahl (kleiner = höher empfohlen)."""
+    return _SELECTION_RANK.get(normalize_status(status), 99)
+
+
+def next_phase_for_status(status: str | None) -> str | None:
+    """Nächste abc-Phase für einen INDEX-Status (None bei deployed/unbekannt)."""
+    return STATUS_TO_NEXT_PHASE.get(normalize_status(status))
+
+
+def skill_for_phase(phase: str | None) -> str | None:
+    """Vorgeschlagener abc-Skill für eine Phase (None bei None/unbekannt)."""
+    return PHASE_TO_SKILL.get(phase) if phase else None
+
+
+def model_for_phase(phase: str | None) -> str | None:
+    """Empfohlenes Modell für eine Phase (None bei None/unbekannt)."""
+    return PHASE_TO_MODEL.get(phase) if phase else None
+
 
 def phase_for_skill(skill: str | None) -> str | None:
     """Phase für einen abc-Skill-Namen, oder ``None`` für Nicht-Phasen-Skills."""

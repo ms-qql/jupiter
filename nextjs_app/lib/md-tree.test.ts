@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildTree, buildWikilinkIndex, resolveWikilink } from "./md-tree";
+import {
+  buildTree,
+  buildWikilinkIndex,
+  resolveWikilink,
+  searchNotes,
+  splitFrontmatter,
+} from "./md-tree";
 import { remarkWikilink } from "./remark-wikilink";
 import type { MdIndexEntry } from "./types";
 
@@ -49,6 +55,48 @@ describe("wikilink resolution", () => {
 
   it("returns null for missing targets", () => {
     expect(resolveWikilink("does-not-exist", idx)).toBeNull();
+  });
+});
+
+describe("splitFrontmatter (PROJ-12)", () => {
+  it("strips a leading YAML block and keeps the body", () => {
+    const { body } = splitFrontmatter("---\ntitle: X\ntags: [a]\n---\n# H\nText");
+    expect(body).toBe("# H\nText");
+  });
+
+  it("returns content unchanged when there is no frontmatter", () => {
+    expect(splitFrontmatter("# H\nText").body).toBe("# H\nText");
+  });
+
+  it("does not strip a non-leading --- separator", () => {
+    const md = "# H\n\n---\n\nmehr";
+    expect(splitFrontmatter(md).body).toBe(md);
+  });
+});
+
+describe("searchNotes (PROJ-12 [[-autocomplete)", () => {
+  const notes = [
+    entry("features/PROJ-7-md-reader.md"),
+    entry("features/PROJ-12-md-editor.md"),
+    entry("docs/architektur.md"),
+  ];
+
+  it("ranks name-prefix matches above substring/path matches", () => {
+    const res = searchNotes(notes, "proj-12");
+    expect(res[0].name).toBe("PROJ-12-md-editor.md");
+  });
+
+  it("matches against the rel path too", () => {
+    const res = searchNotes(notes, "docs/");
+    expect(res.map((e) => e.name)).toContain("architektur.md");
+  });
+
+  it("returns all entries (capped) for an empty query", () => {
+    expect(searchNotes(notes, "", 2)).toHaveLength(2);
+  });
+
+  it("returns nothing for a non-match", () => {
+    expect(searchNotes(notes, "zzz")).toHaveLength(0);
   });
 });
 

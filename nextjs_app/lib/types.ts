@@ -186,6 +186,23 @@ export interface MdFileRead {
   frontmatter: Record<string, unknown>;
   body: string;
   content: string;
+  // PROJ-12: Basis für die optimistische Konflikterkennung beim Speichern.
+  // Optional, weil ältere Backend-Stände (nur PROJ-7) sie nicht liefern.
+  mtime?: number;
+  hash?: string;
+}
+
+/** Antwort von POST /md/file (MdSaveResult) — neue mtime + Hash nach dem Schreiben. */
+export interface MdSaveResult {
+  path: string;
+  mtime: number;
+  hash: string;
+}
+
+/** Antwort von GET /md/backlinks (MdBacklinksResult) — wer verlinkt auf diese Notiz. */
+export interface MdBacklinksResult {
+  path: string;
+  backlinks: MdIndexEntry[];
 }
 
 export interface TranscriptEntry {
@@ -207,6 +224,38 @@ export interface SessionCreate {
   role?: string | null;
   /** PROJ-8: sprechendes Projekt-Label; ohne Angabe nutzt das Backend den Basename. */
   project_name?: string | null;
+}
+
+// --- PROJ-9: Smart Launcher -------------------------------------------------
+
+/** Ein offenes Feature aus features/INDEX.md + die abgeleitete nächste Arbeit.
+ *  Spiegelt backend/app/schemas/projects.py FeatureSuggestion. */
+export interface FeatureSuggestion {
+  id: string;
+  number: string;
+  title: string;
+  status: string;
+  prio: string | null;
+  phase: AbcPhase | null;
+  skill: string | null;
+  modell: ModelName | null;
+  initial_prompt: string;
+}
+
+/** Mitdenkender Session-Start-Vorschlag aus GET /projects/suggestion.
+ *  Spiegelt backend/app/schemas/projects.py LaunchSuggestion. */
+export interface LaunchSuggestion {
+  project_path: string;
+  abc_erkannt: boolean;
+  hinweis: string | null;
+  empfehlung: FeatureSuggestion | null;
+  alternativen: FeatureSuggestion[];
+  /** Default, den „Vorschlag übernehmen" anwendet (spiegelt die Empfehlung;
+   *  im Sonderfall „alle deployed" der /abc-requirements-Vorschlag). */
+  naechste_phase: AbcPhase | null;
+  skill: string | null;
+  modell: ModelName | null;
+  initial_prompt: string | null;
 }
 
 // --- PROJ-11: Fileexplorer + Clipboard -------------------------------------
