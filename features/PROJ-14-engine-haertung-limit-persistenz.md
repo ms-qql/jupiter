@@ -1,6 +1,6 @@
 # PROJ-14: PROJ-1-Härtung — Limit paralleler Sessions + Persistenz
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** — (Härtung aus QA-3 von PROJ-1)
@@ -167,7 +167,41 @@ Limit (Ablehnung, nur aktive zählen, Race-Atomarität, 429 + `/limits`), Clamp,
 **Offen für QA / PROJ-17:** Re-Attach an einen den Restart *überlebenden* Prozess ist bewusst nicht implementiert (Stream nicht wieder ankoppelbar) — solche Sessions werden als verwaist geführt; das Repository-Seam ist die Basis für PROJ-17 (Recovery über Vault).
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-23 · **Branch:** dev · **Suite:** 303 grün (12 PROJ-14-spezifisch) · **Methode:** pytest + manuelle Reanimations-/Restart-Probes + Code-Red-Team.
+
+### Acceptance Criteria
+| # | Kriterium | Ergebnis |
+|---|-----------|----------|
+| 1 | Konfigurierbares `max_parallel_sessions` aus zentralen Settings | ✅ PASS (`config.py`, Env `JUPITER_MAX_PARALLEL_SESSIONS`, Default 12) |
+| 2 | Überschreiten → Ablehnung mit deutscher Meldung (429), kein Crash | ✅ PASS (`SessionLimitError`→HTTP 429, Test `test_api_limit_liefert_429`) |
+| 3 | Nur aktive Zustände zählen (done/error nicht) | ✅ PASS (`ACTIVE_STATES`, Tests `test_nur_aktive_zustaende_zaehlen`, `test_active_states_konstante`) |
+| 4 | Persistenz-Seam spiegelt Live-Index, ohne Hot-Path zu bremsen | ✅ PASS (Spiegelung nur bei Statuswechsel via `_maybe_persist`; I/O off-thread; Test `test_create_spiegelt_in_live_index`) |
+| 5 | Nach Restart Liste sichtbar; Prozesse re-attacht oder „verwaist" | ✅ PASS (Re-Attach bewusst nicht möglich → verwaist; `rehydrate`, Test `test_rehydrate_markiert_aktive_als_verwaist`) |
+| 6 | Repository-Seam für PROJ-17 nutzbar | ✅ PASS (`SessionIndexRepository`-Protocol, austauschbar) |
+| 7 | Bestehende PROJ-1-Tests grün (verhaltenswahrend) | ✅ PASS (303/303, keine Regression) |
+
+### Edge Cases
+| Edge Case | Ergebnis |
+|-----------|----------|
+| Limit-Race (2 gleichzeitige Creates am Limit) | ✅ atomar, genau 1 zugelassen (`test_limit_race_atomar`) |
+| Prozess überlebt Restart nicht | ✅ als verwaist markiert, aus Aktiv-Zählung genommen |
+| DB nicht erreichbar | ✅ best-effort, In-Memory führt, kein Hard-Fail (`test_db_ausfall_ist_best_effort`) |
+| Inkonsistenz Speicher↔DB | ✅ In-Memory gewinnt (`test_rehydrate_in_memory_gewinnt`) |
+| Limit = 0 / Fehlkonfiguration | ✅ auf 1 geklemmt (`test_clamp_session_limit_klemmt_auf_minimum`) |
+
+### Bugs / Findings
+- **[Medium] Limit-Bypass über Reanimation.** Das Limit greift nur in `create()`. `POST /sessions/{id}/input` (→ `_resume`) und der Reset-Pfad reaktivieren eine beendete Session nach `running` **ohne** Limit-Prüfung. Verifiziert: bei `max=2` führten 2 weitere Creates (nach Stop) + 2× `send_input`-Resume zu `active_count()=4`. Literales AC #2 spricht von „Erstellung" (erfüllt), aber der Schutzzweck (VPS-Überlast) ist umgehbar. *Repro:* Limit füllen, Sessions beenden, neue erstellen, alte per `send_input` reaktivieren. *Fix-Vorschlag:* Limit-Check zentral in `_resume`/`send_input`-Reaktivierung mitziehen (`SessionLimitError` → in `send_input`-Route auf 429 mappen).
+- **[Low] Reset am Limit liefert 409 statt 429.** `SessionLimitError` ist `RuntimeError`-Subklasse → in `reset_session` vom `except RuntimeError` als 409 gefangen (Meldung stimmt inhaltlich). Zudem ist die alte Session zu dem Zeitpunkt bereits gestoppt. *Fix-Vorschlag:* in `reset_session` `SessionLimitError` vor `RuntimeError` fangen → 429; ggf. Limit vor dem Stop der alten Session prüfen.
+- **[Low] Verwaiste Session verliert beim Resume die Konstitution.** `effective_constitution` wird nicht persistiert → ein rehydrierter Orphan resumed ohne `--append-system-prompt`. Bewusst akzeptiert (im Tech-Design notiert); `claude --resume` lädt den Original-Kontext ohnehin.
+- **[Info] Persist-Reihenfolge.** Schnell aufeinanderfolgende Statuswechsel planen mehrere unabhängige `to_thread`-Writes ohne Ordnungsgarantie → der Index kann kurz einen veralteten Status zeigen. Eventual-konsistent; ohne funktionalen Schaden (Rehydrierung markiert aktive Stände ohnehin als verwaist). Best-effort-Design.
+
+### Security (Red-Team)
+- Single-User-MVP, kein JWT/RLS (bewusster Jupiter-Override) → kein Tenant-/Cross-Mandant-Vektor.
+- SQLite-Repo nutzt ausschließlich parametrisierte Statements über eine **feste** Spaltenliste (keine User-Strings in SQL) → keine SQL-Injection.
+- Index speichert nur Metadaten (Pfade/Status/Modell), **keine** Prompt-/Transkript-Inhalte, keine Secrets. DB-Datei host-lokal.
+
+### Produktionsreife
+**READY** — keine Critical/High-Bugs. 1× Medium + 2× Low als empfohlene Follow-ups (nicht-blockierend; Medium betrifft den Schutzzweck, im single-user-MVP nutzer-selbstverschuldet).
 
 ## Deployment
 _To be added by /abc-deploy_
