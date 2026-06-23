@@ -1,6 +1,6 @@
 # PROJ-10: Trust-Policy — abgestuftes, konfigurierbares Vertrauen
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #5
@@ -231,7 +231,11 @@ Regression abgesichert in `tests/test_proj10_qa.py`: `test_denied_phase_gate_kee
 - **Bug C — Status friert auf `awaiting_approval` ein (Medium, Regression aus Fix A).** Die nicht-blockierende deny-Notiz liegt in `self.pending`. Wird danach eine **echte** blockierende Card freigegeben, prüft `resolve_decision` `if not self.pending …` → die liegengebliebene Notiz hält `pending` nicht-leer → der Status kehrt **nicht** nach `RUNNING` zurück, sondern bleibt `awaiting_approval` (Cockpit/Kanban zeigen die Session fälschlich als „wartet auf Freigabe", obwohl der Treiber weiterläuft). *Repro:* deny-Regel (Bash) + card-Regel (Write) → Bash (deny-Notiz) → Write-Card freigeben → Status bleibt `awaiting_approval`. *Fix-Richtung:* Die „leer?"-Prüfung darf nur **blockierende** Cards zählen → `self._futures` statt `self.pending` verwenden (Notizen haben kein Future). Alternativ Notizen aus `pending` heraushalten und über eine separate `notices`-Liste in `to_read()` ausliefern.
 - **Bug C → BEHOBEN (Backend-Fix 2026-06-23):** Die „leer?"-Prüfung in `resolve_decision` zählt jetzt nur **blockierende** Cards (`if not self._futures` statt `self.pending`) — nicht-blockierende deny-Notizen halten den Status nicht mehr fest. Regression grün: `test_lingering_deny_notice_does_not_freeze_status` (xfail entfernt).
 
-**Re-QA-Verdict:** Bug A + B + C alle behoben und per Regressionstest abgesichert. Keine offenen Bugs. Suite: **354 passed**. → Bereit für finale Abnahme.
+**Re-QA-Verdict:** Bug A + B + C alle behoben und per Regressionstest abgesichert. Keine offenen Bugs. Suite: **354 passed**.
+
+### Finale Abnahme (2026-06-23) — APPROVED
+Alle Acceptance Criteria erfüllt, alle Edge-Cases abgedeckt, alle drei QA-Bugs behoben + Regression grün. Red-Team bestätigt: Bypass hebelt weder das harte Phasen-Gate noch `deny` aus; kein Injection/Path-Traversal über die Policy. Verhaltens-Check final: nach Freigabe einer echten Card kehrt der Status auf `running` zurück, die deny-Notiz bleibt sichtbar & nicht-blockierend.
+**Tests:** Backend **354 passed**, Frontend **47 passed**, TS/Lint sauber. **Keine Critical/High/Medium offen → production-ready.**
 
 ### Security / Red-Team
 - ✅ **Bypass kann das harte Phasen-Gate nicht aushebeln** — die Gate-Prüfung steht **vor** dem Bypass-Auto-Allow.
