@@ -179,6 +179,13 @@ Eine selbst beendete Session (`done`/`error`) ließ sich nicht fortsetzen — di
 - **Tests:** Backend `test_send_input_resumes_done_session`, `test_build_argv_resume_vs_new`, `test_input_after_stop_resumes` (alter 409-Test auf neues Soll umgestellt) → **124 passed**.
 - **Live verifiziert:** beendete Haiku-Session per `POST /input` fortgesetzt → sie **erinnerte den Kontext** (zuvor gemerkte Zahl „42") + UI-End-to-End („Fortsetzen" → „Arbeitet ● live").
 
+### 3. Beendete Sessions archivieren (Board entrümpeln)
+Auf Nutzerwunsch werden **beendete (`done`) Sessions standardmäßig aus dem aktiven Board ausgeblendet** — ohne Löschen, weiterhin fortsetzbar (`error` bleibt aktiv sichtbar = Handlungsbedarf).
+- **Rail** + **Kacheln** zeigen nur aktive Sessions; ein einklappbares **„Archiv (N)"** (`components/cockpit/archived-section.tsx` + Rail-Expander) listet die beendeten auf Abruf (anklickbar → Detail → „Fortsetzen").
+- **Kanban** bleibt der volle Pipeline-View inkl. „Fertig"-Spalte (AC unverändert).
+- Mission-Control-Zähler „Fertig: N" zeigt weiterhin die Anzahl archivierter Sessions.
+- Rein Frontend (kein Backend/DELETE) — `GET /sessions` liefert ohnehin alle; gefiltert wird client-seitig. Verifiziert: aktive Kachel sichtbar, 2 `done` im Archiv ein-/ausklappbar.
+
 ## QA Test Results
 **Getestet:** 2026-06-22 · **Branch:** dev · **Methode:** Vitest-Unit (lib/status.ts) + Playwright-E2E gegen laufendes Backend (uvicorn, 1 Worker) + visuelle Screenshots (Empty/Board/Kanban/Detail/Responsive/Error).
 

@@ -3,8 +3,10 @@
 // Persistente „Recents"-Liste aktiver Sessions (Vorbild: Referenz-Sidebar).
 // Klickbare Zeilen → Session-Detailroute. Speist sich aus dem geteilten Poll.
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
@@ -32,10 +34,13 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
   const { sessions, initialLoading, error } = useSessions();
   const pathname = usePathname();
   const now = useNow();
+  const [showArchived, setShowArchived] = useState(false);
 
-  const sorted = sortForRail(sessions);
-  const shown = sorted.slice(0, RAIL_LIMIT);
-  const hiddenCount = sorted.length - shown.length;
+  // Aktive Sessions in der Rail; beendete (done) wandern ins ausklappbare Archiv.
+  const activeSorted = sortForRail(sessions.filter((s) => s.status !== "done"));
+  const archived = sortForRail(sessions.filter((s) => s.status === "done"));
+  const shown = activeSorted.slice(0, RAIL_LIMIT);
+  const hiddenCount = activeSorted.length - shown.length;
 
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-card/40">
@@ -62,9 +67,9 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
         <div className="flex flex-col gap-0.5 px-2 py-1">
           {initialLoading ? (
             <RailSkeleton />
-          ) : sessions.length === 0 ? (
+          ) : activeSorted.length === 0 ? (
             <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-              {error ? error : "Keine aktiven Sessions."}
+              {error && sessions.length === 0 ? error : "Keine aktiven Sessions."}
             </p>
           ) : (
             shown.map((s) => (
@@ -76,6 +81,35 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
                 onNavigate={onItemClick}
               />
             ))
+          )}
+
+          {/* Archiv: beendete Sessions, einklappbar, weiterhin fortsetzbar. */}
+          {archived.length > 0 && (
+            <div className="mt-1">
+              <button
+                type="button"
+                onClick={() => setShowArchived((v) => !v)}
+                className="flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              >
+                {showArchived ? (
+                  <ChevronDownIcon className="size-3.5" />
+                ) : (
+                  <ChevronRightIcon className="size-3.5" />
+                )}
+                <ArchiveIcon className="size-3.5" />
+                Archiv ({archived.length})
+              </button>
+              {showArchived &&
+                archived.map((s) => (
+                  <RailItem
+                    key={s.session_id}
+                    session={s}
+                    now={now}
+                    active={pathname === `/sessions/${s.session_id}`}
+                    onNavigate={onItemClick}
+                  />
+                ))}
+            </div>
           )}
         </div>
       </ScrollArea>

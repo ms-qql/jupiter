@@ -4,6 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { GlobalStatusBar } from "@/components/cockpit/global-status-bar";
 import { SessionGrid } from "@/components/cockpit/session-grid";
 import { KanbanBoard } from "@/components/cockpit/kanban-board";
+import { ArchivedSection } from "@/components/cockpit/archived-section";
 import { NewSessionDialog } from "@/components/cockpit/new-session-dialog";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import {
@@ -21,6 +22,10 @@ export default function CockpitPage() {
   const now = useNow();
 
   const showError = error && sessions.length === 0;
+  // Beendete Sessions standardmäßig aus dem aktiven Board ausblenden (→ Archiv).
+  // `error` bleibt aktiv sichtbar (Handlungsbedarf).
+  const active = sessions.filter((s) => s.status !== "done");
+  const archived = sessions.filter((s) => s.status === "done");
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6">
@@ -58,9 +63,17 @@ export default function CockpitPage() {
             <TabsTrigger value="kanban">Kanban</TabsTrigger>
           </TabsList>
           <TabsContent value="kacheln" className="mt-4">
-            <SessionGrid sessions={sessions} now={now} />
+            {active.length > 0 ? (
+              <SessionGrid sessions={active} now={now} />
+            ) : (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Keine aktiven Sessions.
+              </p>
+            )}
+            <ArchivedSection sessions={archived} now={now} />
           </TabsContent>
           <TabsContent value="kanban" className="mt-4">
+            {/* Kanban = voller Pipeline-View inkl. „Fertig"-Spalte. */}
             <KanbanBoard sessions={sessions} now={now} />
           </TabsContent>
         </Tabs>
