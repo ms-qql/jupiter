@@ -236,8 +236,8 @@ Next.js 16 + shadcn/ui, Branch `dev`. Beide Oberflächen über den geteilten Hoo
 **Getestet:** 2026-06-23 · **Branch:** dev · **Stack-Hinweis:** Jupiter ohne JWT/RLS → Security-Fokus = Pfad-Härtung, nicht Tenant-Isolation.
 
 ### Automatisierte Tests
-- **Backend:** `tests/test_proj11_files.py` — **28 Tests grün** (21 Funktion + 7 Red-Team).
-- **Regression:** gesamte Backend-Suite **291 grün, 0 Regressionen**.
+- **Backend:** `tests/test_proj11_files.py` — **29 Tests grün** (21 Funktion + 7 Red-Team + 1 Permission-Fix).
+- **Regression:** gesamte Backend-Suite **292 grün, 0 Regressionen**.
 - **Frontend:** ESLint sauber · `next build` **erfolgreich** (Routen `/dateien` + `/sessions/[id]` kompiliert, TS-Check grün).
 - **Hinweis:** Interaktive Browser-Flows (Drag-and-Drop/Paste-Gesten) sind statisch + per Build verifiziert; ein **manueller Browser-Smoke** vor Deploy wird empfohlen.
 
@@ -266,7 +266,7 @@ Next.js 16 + shadcn/ui, Branch `dev`. Beide Oberflächen über den geteilten Hoo
 
 ### Befunde (alle Low — kein Critical/High)
 - **Low-1:** Explorer-Upload-Kollision → Auto-Rename statt Nachfrage-Dialog (Abweichung; sicher).
-- **Low-2:** OS-/Permission-Fehler bei upload/mkdir/rename/move ergeben **500** statt freundlicher 4xx-Meldung (Route fängt nur `ValueError`/`FileExistsError`).
+- **Low-2:** ✅ **GEFIXT (2026-06-23):** OS-/Permission-Fehler bei upload/mkdir/rename/move werden jetzt sauber gemappt (`PermissionError`→403, sonstige `OSError`→400) statt 500. Regressionstest `test_upload_no_write_permission_returns_403`.
 - **Low-3:** Löschbestätigung nennt keine Datei-Anzahl bei nicht-leerem Ordner.
 - **Low-4:** Pfad-Einfügen in die Session-Textarea hängt **am Ende** an (nicht an Cursor-Position).
 - **Low-5:** **Move** ohne Explorer-UI (Backend vorhanden).

@@ -257,3 +257,19 @@ def test_rename_traversal_name_rejected(client, root):
     res = client.post("/files/rename",
                       json={"path": up.json()["files"][0]["path"], "new_name": "../escaped.txt"})
     assert res.status_code == 400
+
+
+def test_upload_no_write_permission_returns_403(client, root):
+    # Low-2-Fix: kein 500 bei fehlender Schreibberechtigung, sondern 403.
+    ro = os.path.join(root, "readonly")
+    os.makedirs(ro)
+    os.chmod(ro, 0o555)  # r-x: kein Schreiben
+    try:
+        res = client.post(
+            "/files/upload",
+            files={"files": ("x.png", PNG, "image/png")},
+            data={"target_dir": ro},
+        )
+        assert res.status_code == 403
+    finally:
+        os.chmod(ro, 0o755)  # für tmp-Cleanup wiederherstellen
