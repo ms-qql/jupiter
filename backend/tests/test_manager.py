@@ -45,6 +45,41 @@ async def test_stop_sets_done():
 
 
 @pytest.mark.asyncio
+async def test_send_input_resumes_done_session():
+    """An einer beendeten Session weiterarbeiten: send_input setzt sie fort."""
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Start", model="haiku")
+    sid = rt.state.session_id
+    await mgr.stop(sid)
+    assert rt.state.status == DONE
+    old_driver = rt.driver
+
+    await mgr.send_input(sid, "Mach weiter")
+
+    assert rt.state.status != DONE          # wieder aktiv
+    assert rt.driver is not old_driver       # frischer Treiber (Resume)
+    assert rt.driver.is_alive
+    text = mgr.transcript_text(sid)
+    assert "Du: Mach weiter" in text
+    assert "Echo: Mach weiter" in text
+
+
+def test_build_argv_resume_vs_new():
+    """resume=True nutzt --resume statt --session-id."""
+    from app.engine.base import LaunchSpec
+    from app.engine.claude_driver import build_argv
+
+    base = dict(session_id="abc", project_path=PROJECT, model="haiku", permission_mode="default")
+    new_argv = build_argv(LaunchSpec(initial_prompt="x", **base))
+    assert "--session-id" in new_argv and "--resume" not in new_argv
+
+    res_argv = build_argv(LaunchSpec(initial_prompt="", resume=True, **base))
+    assert "--resume" in res_argv
+    assert res_argv[res_argv.index("--resume") + 1] == "abc"
+    assert "--session-id" not in res_argv
+
+
+@pytest.mark.asyncio
 async def test_pause_blocks_input():
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Start")

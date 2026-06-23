@@ -27,6 +27,9 @@ class LaunchSpec:
     initial_prompt: str
     # Hook für die Knappheits-Konstitution (#24, PROJ-6) — heute meist None.
     system_prompt_append: str | None = None
+    # Fortsetzen einer bereits beendeten Session: statt `--session-id` (neu anlegen)
+    # wird `--resume <session_id>` genutzt — Claude Code lädt die Konversation.
+    resume: bool = False
 
 
 class EngineDriver(ABC):

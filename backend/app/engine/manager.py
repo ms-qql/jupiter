@@ -37,6 +37,16 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _model_alias(model: str) -> str:
+    """Mappt eine ggf. aufgelöste Modell-ID (z. B. ``claude-haiku-4-5-…``) zurück
+    auf den kurzen, garantiert von ``--model`` akzeptierten Alias."""
+    m = model.lower()
+    for alias in ("haiku", "sonnet", "opus"):
+        if alias in m:
+            return alias
+    return model
+
+
 def validate_project_path(path: str) -> str:
     """Prüft, ob ``path` innerhalb der erlaubten Roots liegt und ein Verzeichnis ist.
 
@@ -274,10 +284,49 @@ class SessionManager:
 
     async def send_input(self, session_id: str, text: str) -> None:
         runtime = self._require(session_id)
+        # Beendete Session (Prozess ist weg) → vor der Eingabe per `claude --resume`
+        # fortsetzen, damit der User auch an fertigen Sessions weiterarbeiten kann.
+        if not runtime.driver.is_alive:
+            await self._resume(runtime)
         await runtime.driver.send_input(text)
         runtime.transcript.append(TranscriptEntry("user", "text", text, _now().isoformat()))
         runtime.state.status = RUNNING
         runtime.state.last_activity = _now()
+
+    async def resume(self, session_id: str) -> None:
+        """Setzt eine beendete Session fort (ohne sofortige Eingabe)."""
+        runtime = self._require(session_id)
+        if not runtime.driver.is_alive:
+            await self._resume(runtime)
+
+    async def _resume(self, runtime: SessionRuntime) -> None:
+        """Frischer Treiber mit `claude --resume` — lädt die bestehende Konversation.
+
+        Der alte Subprozess ist beendet; ein neuer übernimmt dieselbe Session-ID
+        und denselben Konstitutions-Kontext. Eingaben folgen via ``send_input``.
+        """
+        state = runtime.state
+        driver = self._driver_factory()
+        runtime.driver = driver
+        runtime._done_fired = False  # erlaubt erneutes Vault-Log beim nächsten DONE
+        spec = LaunchSpec(
+            session_id=state.session_id,
+            project_path=state.project_path,
+            model=_model_alias(state.model),
+            permission_mode=state.permission_mode,
+            initial_prompt="",  # Eingabe kommt direkt danach via send_input
+            system_prompt_append=state.effective_constitution,
+            resume=True,
+        )
+        try:
+            await driver.start(spec, runtime.handle_event)
+        except Exception as exc:  # Resume fehlgeschlagen → Zustand markieren, weiterreichen.
+            state.status = ERROR
+            state.error = f"Fortsetzen fehlgeschlagen: {exc}"
+            raise
+        state.status = RUNNING
+        state.error = None
+        state.last_activity = _now()
 
     async def pause(self, session_id: str) -> None:
         await self._require(session_id).driver.pause()

@@ -31,7 +31,9 @@ def build_argv(spec: LaunchSpec, claude_bin: str = "claude") -> list[str]:
         "--input-format", "stream-json",
         "--verbose",
         "--model", spec.model,
-        "--session-id", spec.session_id,
+        # Resume lädt die bestehende Konversation (Fortsetzen einer beendeten Session);
+        # sonst legt --session-id eine neue Session mit fester ID an.
+        *(["--resume", spec.session_id] if spec.resume else ["--session-id", spec.session_id]),
         "--permission-mode", spec.permission_mode,
     ]
     if spec.system_prompt_append:

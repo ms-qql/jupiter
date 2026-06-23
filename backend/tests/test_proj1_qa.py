@@ -122,11 +122,14 @@ def test_sessions_are_isolated(client: TestClient):
     assert len(client.get("/sessions").json()) == 2
 
 
-def test_input_after_stop_conflict(client: TestClient):
+def test_input_after_stop_resumes(client: TestClient):
+    """Eingabe an eine beendete Session setzt sie fort (PROJ-3-Fix), statt 409."""
     sid = client.post("/sessions", json={"project_path": PROJECT, "initial_prompt": "x"}).json()["session_id"]
     client.post(f"/sessions/{sid}/stop")
+    assert client.get(f"/sessions/{sid}").json()["status"] == "done"
     r = client.post(f"/sessions/{sid}/input", json={"text": "noch was"})
-    assert r.status_code == 409
+    assert r.status_code == 202
+    assert client.get(f"/sessions/{sid}").json()["status"] != "done"  # wieder aktiv
 
 
 def test_websocket_unknown_session_closed(client: TestClient):
