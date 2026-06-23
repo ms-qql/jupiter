@@ -14,9 +14,11 @@ VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
 # Alle Headless-Permission-Modi, die Claude Code kennt.
 VALID_PERMISSION_MODES: set[str] = {"default", "acceptEdits", "plan", "bypassPermissions"}
 
-# Im MVP erlaubte Modi (QA-1): `bypassPermissions`/`plan` sind gesperrt, bis
-# PROJ-4 (Decision Cards) + #19 (Watchdog) ein Safety-Net liefern.
-MVP_ALLOWED_PERMISSION_MODES: set[str] = {"default", "acceptEdits"}
+# Erlaubte Modi: `plan` bleibt gesperrt. `bypassPermissions` ist auf ausdrücklichen
+# Nutzerwunsch wählbar (Vollautonomie). ACHTUNG: bypassPermissions umgeht in Claude
+# Code die Permission-Prüfung → die PROJ-4-Decision-Cards greifen dann NICHT (kein
+# Freigabe-Gate, kein Watchdog #19 vorhanden). Bewusste Nutzerentscheidung pro Session.
+MVP_ALLOWED_PERMISSION_MODES: set[str] = {"default", "acceptEdits", "bypassPermissions"}
 
 # Obergrenze für Prompt-/Eingabe-Länge in Zeichen (QA-2) — verhindert blindes
 # Fluten des Kontextfensters.
@@ -32,6 +34,16 @@ THRESHOLD_MAX_PCT: int = 98
 def clamp_threshold(value: int) -> int:
     """Klemmt die Kontext-Schwelle auf ``[THRESHOLD_MIN_PCT, THRESHOLD_MAX_PCT]``."""
     return max(THRESHOLD_MIN_PCT, min(THRESHOLD_MAX_PCT, int(value)))
+
+
+# PROJ-14 — Limit paralleler Sessions: Untergrenze. Eine Fehlkonfiguration
+# (0/negativ) würde jede Session-Erstellung blockieren → auf mind. 1 klemmen.
+SESSION_LIMIT_MIN: int = 1
+
+
+def clamp_session_limit(value: int) -> int:
+    """Klemmt das Limit gleichzeitiger Sessions auf ``>= SESSION_LIMIT_MIN`` (Edge-Case ``Limit = 0``)."""
+    return max(SESSION_LIMIT_MIN, int(value))
 
 
 class Settings(BaseSettings):
@@ -56,6 +68,21 @@ class Settings(BaseSettings):
 
     # Sekunden Kulanz zwischen SIGTERM und SIGKILL beim Stoppen.
     process_stop_grace_seconds: float = 5.0
+
+    # --- PROJ-14: Härtung (Limit + Persistenz) ---------------------------
+    # Obergrenze gleichzeitig AKTIVER Sessions (starting/running/waiting/
+    # awaiting_approval). Schützt den Single-Worker-VPS vor Ressourcen-Überlast
+    # (jede Session ist ein headless-claude-Subprozess mit eigenem RAM-/CPU-Bedarf).
+    # Default bewusst großzügig für einen Dev-VPS; in Prod via
+    # JUPITER_MAX_PARALLEL_SESSIONS an CPU/RAM anpassen. Wird auf >= 1 geklemmt.
+    max_parallel_sessions: int = 12
+    # Persistenz-Seam: Live-Index der Sessions in SQLite spiegeln, damit die
+    # Übersicht einen Backend-Neustart übersteht. False → reines In-Memory
+    # (NullRepository), wie vor PROJ-14.
+    session_index_enabled: bool = True
+    # Pfad der SQLite-Datei (Live-Index, NICHT die Wahrheit — die bleibt der Vault).
+    # Wird inkl. Elternverzeichnis bei Bedarf automatisch angelegt.
+    session_index_db_path: str = str(Path.home() / "jupiter-data" / "session_index.db")
 
     # --- Decision Cards / Freigabe-Hook (PROJ-4) ---------------------------
     # Freigabe-Flow aktivieren: Sessions starten mit dem PreToolUse-Hook.

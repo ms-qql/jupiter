@@ -147,10 +147,18 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
                   <SelectContent>
                     <SelectItem value="default">Standard</SelectItem>
                     <SelectItem value="acceptEdits">Edits automatisch</SelectItem>
+                    <SelectItem value="bypassPermissions">Ohne Rückfragen (Bypass)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
+
+            {mode === "bypassPermissions" && (
+              <p className="text-xs text-amber-500">
+                ⚠️ Vollautonom: Diese Session führt alles ohne Freigabe aus — die
+                Decision Cards greifen nicht.
+              </p>
+            )}
           </div>
 
           <DialogFooter>

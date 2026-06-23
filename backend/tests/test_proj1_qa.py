@@ -80,9 +80,9 @@ def test_empty_input_422(client: TestClient):
     assert client.post(f"/sessions/{sid}/input", json={"text": ""}).status_code == 422
 
 
-# --- QA-1 (behoben): bypassPermissions im MVP gesperrt ----------------------
+# --- Permission-Modi: `plan` gesperrt; bypassPermissions auf Nutzerwunsch frei ----
 
-@pytest.mark.parametrize("mode", ["bypassPermissions", "plan"])
+@pytest.mark.parametrize("mode", ["plan"])
 def test_unsafe_permission_modes_rejected(client: TestClient, mode: str):
     r = client.post(
         "/sessions",
@@ -92,7 +92,8 @@ def test_unsafe_permission_modes_rejected(client: TestClient, mode: str):
 
 
 def test_safe_permission_modes_accepted(client: TestClient):
-    for mode in ("default", "acceptEdits"):
+    # bypassPermissions ist bewusst freigeschaltet (Vollautonomie, ohne Decision Cards).
+    for mode in ("default", "acceptEdits", "bypassPermissions"):
         r = client.post(
             "/sessions",
             json={"project_path": PROJECT, "initial_prompt": "x", "permission_mode": mode},

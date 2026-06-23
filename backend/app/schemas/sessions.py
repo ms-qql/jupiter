@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 from ..config import MAX_INPUT_CHARS
 
 ModelName = Literal["haiku", "sonnet", "opus"]
-# QA-1: Im MVP nur die sicheren Modi (bypassPermissions/plan gesperrt).
-PermissionMode = Literal["default", "acceptEdits"]
+# QA-1: `plan` bleibt gesperrt. `bypassPermissions` ist auf Nutzerwunsch wählbar
+# (Vollautonomie) — ACHTUNG: umgeht die Decision-Card-Freigaben (siehe config.py).
+PermissionMode = Literal["default", "acceptEdits", "bypassPermissions"]
 
 
 class SessionCreate(BaseModel):
