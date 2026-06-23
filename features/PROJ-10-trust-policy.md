@@ -221,11 +221,11 @@ Stack: FastAPI + **dateibasierte Policy** (YAML, kein DB). Branch `dev`. In-memo
 | Auto-allow trotz Watchdog (PROJ-16) | ⏭️ N/A (PROJ-16 nicht gebaut) |
 | **Nutzer lehnt Phasenübergang ab → bleibt in alter Phase** | ❌ FAIL (→ Bug B) |
 
-### Bugs
-- **Bug A — deny-Notiz im UI unsichtbar (Medium).** `deny` setzt Claude die Begründung inline und die Aktion läuft nie — korrekt. Die „ablehnende Card-Notiz" wird aber nur als transientes `kind:"decision"/event:"denied"` gebroadcastet; der WS-Hook (`use-session-stream.ts`) verarbeitet nur `state`/`message`/`notice`, und das Cockpit rendert ausschließlich `state.pending_decisions`. → Die Ablehnung erscheint **nirgends** in der UI; das Frontend-Deny-Rendering (`card_type:"deny"`, „Zur Kenntnis") ist derzeit toter Code. *Repro:* deny-Regel für Bash setzen → Bash-Aufruf wird geblockt, aber keine Card/Notiz im Cockpit. *Fix-Richtung:* deny entweder als kurzlebige resolved-Card in `pending_decisions`/State aufnehmen ODER ein `notice`-Event ergänzen, das der WS-Hook + das UI anzeigen.
-- **Bug B — Phase rückt bei abgelehntem Phasen-Gate vor (Medium).** `_detect_abc` mutiert `abc_phase` auf die Zielphase, **bevor** das Gate aufgelöst ist. Lehnt der Nutzer ab, läuft der Skill nicht — aber `abc_phase`/Gantt zeigen bereits die neue Phase. Widerspricht dem Edge-Case „bleibt in der alten Phase pausiert". *Repro:* abc_phase=architecture, `abc-frontend` aufrufen → Gate ablehnen → `abc_phase==frontend` (falsch). *Fix-Richtung:* Phase erst nach Freigabe übernehmen (Zielphase merken, bei `deny` zurückrollen), bzw. Detektion vom Gate entkoppeln.
+### Bugs — beide BEHOBEN (Backend-Fix 2026-06-23)
+- **Bug A — deny-Notiz im UI unsichtbar (Medium) → BEHOBEN.** `deny` legt jetzt eine **nicht-blockierende, bereits aufgelöste** Notiz-Card in `pending_decisions` (kein Future, kein `awaiting_approval`). Sie erscheint im Cockpit (Polling) **und** auf der Detailseite (State-Snapshot) und wird mit „Zur Kenntnis" quittiert (`resolve_decision` entfernt future-lose Notizen). Das Frontend-Deny-Rendering ist damit aktiv. (`manager._register_deny_notice` + `resolve_decision`-Zweig.)
+- **Bug B — Phase rückt bei abgelehntem Phasen-Gate vor (Medium) → BEHOBEN.** Die Phase wird jetzt **seiteneffektfrei** vorausberechnet (`abc_phases.detect_phase_signal`) und erst **nach Freigabe** übernommen (`manager._apply_phase`). Bei Ablehnung bleibt die alte Phase; bei Freigabe springt sie. (`request_decision` deferred-apply.)
 
-Beide als `xfail(strict=True)` in `tests/test_proj10_qa.py` festgehalten — sie flippen auf PASS, sobald gefixt.
+Regression abgesichert in `tests/test_proj10_qa.py` (keine xfail mehr): `test_denied_phase_gate_keeps_old_phase`, `test_approved_phase_gate_advances_phase`, `test_deny_surfaces_a_dismissable_notice`.
 
 ### Security / Red-Team
 - ✅ **Bypass kann das harte Phasen-Gate nicht aushebeln** — die Gate-Prüfung steht **vor** dem Bypass-Auto-Allow.
@@ -237,7 +237,7 @@ Beide als `xfail(strict=True)` in `tests/test_proj10_qa.py` festgehalten — sie
 - `tests/test_proj10_trust_policy.py` (18) + `tests/test_proj10_qa.py` (3 Edge-Cases + 2 xfail-Bugs).
 
 ### Verdict
-Keine **Critical/High**-Bugs → technisch deploybar. Zwei **Medium**-Bugs betreffen jedoch explizite AC (#3) bzw. einen Spec-Edge-Case (#9-Ablehnung) → **Empfehlung: In Review halten**, Bug A + B vor dem Deploy fixen.
+Erst-QA fand zwei **Medium**-Bugs (A: deny unsichtbar; B: Phase rückt bei Ablehnung vor). **Beide sind jetzt backend-seitig behoben** und per Regressionstest abgesichert; AC #3 und der Ablehnungs-Edge-Case von #9/#10 sind damit erfüllt. Keine offenen Critical/High/Medium. Gesamtsuite **348 passed**. → **Bereit für erneute QA-Abnahme** (`/abc-qa 10`), danach `/abc-deploy`.
 
 ## Deployment
 _To be added by /abc-deploy_

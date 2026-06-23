@@ -171,7 +171,7 @@ async def test_card_carries_triggering_rule_and_real_phase(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_deny_blocks_without_pending_card(tmp_path, monkeypatch):
+async def test_deny_is_nonblocking_but_surfaces_notice(tmp_path, monkeypatch):
     _point_store_at(
         tmp_path, monkeypatch,
         "rules:\n  - tool: Bash\n    level: deny\n    reason: Shell gesperrt\n",
@@ -180,8 +180,10 @@ async def test_deny_blocks_without_pending_card(tmp_path, monkeypatch):
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")
     out = await mgr.request_decision(rt.state.session_id, "tu1", "Bash", {"command": "rm -rf /"})
     assert out.behavior == "deny" and "Shell gesperrt" in out.reason
-    assert rt.pending == {}                       # deny blockiert die Session NICHT
+    # Aktion nie ausgeführt, Session NICHT blockiert …
     assert rt.state.status != AWAITING_APPROVAL
+    # … aber eine sichtbare, bereits aufgelöste deny-Notiz liegt vor (QA-Bug A-Fix).
+    assert rt.pending["tu1"].card_type == "deny" and rt.pending["tu1"].state == "resolved"
 
 
 @pytest.mark.asyncio

@@ -1,10 +1,9 @@
-"""PROJ-10 QA — Edge-Cases + dokumentierte Bugs (Red-Team/Verhaltensprüfung).
+"""PROJ-10 QA — Edge-Cases + Regression der zwei behobenen Befunde.
 
 Ergänzt ``test_proj10_trust_policy.py`` um die Spec-Edge-Cases, die dort nicht
-abgedeckt waren: nicht-linearer Phasensprung + Entprellung, sowie zwei mit
-``xfail`` festgehaltene Befunde (Bug A: deny-Notiz unsichtbar; Bug B: Phase rückt
-bei abgelehntem Gate vor). Die xfail-Tests flippen automatisch auf PASS, sobald
-die Bugs gefixt sind (``strict=True`` → würde dann als XPASS-Fehler auffallen).
+abgedeckt waren: nicht-linearer Phasensprung + Entprellung. Die ursprünglich als
+``xfail`` festgehaltenen Befunde (QA-Bug A: deny-Notiz unsichtbar; QA-Bug B: Phase
+rückt bei abgelehntem Gate vor) sind gefixt → die Tests sichern das Verhalten ab.
 """
 from __future__ import annotations
 
@@ -113,10 +112,11 @@ async def test_specific_transitions_only_gate_listed_targets(tmp_path, monkeypat
 
 # --- Dokumentierte Befunde (xfail, strict) ---------------------------------
 
+# --- Regression der behobenen Befunde --------------------------------------
+
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=True, reason="QA-Bug B: abc_phase rückt bei abgelehntem Phasen-Gate vor "
-                                       "(Edge-Case 'Nutzer lehnt ab → bleibt in alter Phase' verletzt).")
 async def test_denied_phase_gate_keeps_old_phase(tmp_path, monkeypatch):
+    """QA-Bug B (fix): abgelehnter Phasen-Übergang lässt die Phase NICHT vorrücken."""
     _point(tmp_path, monkeypatch)
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku",
@@ -125,21 +125,40 @@ async def test_denied_phase_gate_keeps_old_phase(tmp_path, monkeypatch):
 
     task, gated = await _gate(mgr, rt, "a", "abc-frontend")
     assert gated
+    # Während die Card offen ist, darf die Phase noch nicht umgesprungen sein.
+    assert rt.state.abc_phase == "architecture"
     mgr.resolve_decision(rt.state.session_id, "a", approve=False, comment="Noch nicht")
     await task
-    # Erwartung der Spec: bei Ablehnung bleibt die alte Phase.
-    assert rt.state.abc_phase == "architecture"
+    assert rt.state.abc_phase == "architecture"  # bleibt in der alten Phase
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=True, reason="QA-Bug A: deny erzeugt nur ein transientes Event, keine "
-                                       "im UI sichtbare Notiz (pending_decisions bleibt leer).")
-async def test_deny_surfaces_a_visible_notice(tmp_path, monkeypatch):
+async def test_approved_phase_gate_advances_phase(tmp_path, monkeypatch):
+    """Gegenprobe: bei Freigabe wird die neue Phase übernommen."""
+    _point(tmp_path, monkeypatch)
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku",
+                          permission_mode="bypassPermissions")
+    rt.state.abc_phase = "architecture"
+    task, gated = await _gate(mgr, rt, "a", "abc-frontend")
+    assert gated and rt.state.abc_phase == "architecture"  # noch nicht
+    mgr.resolve_decision(rt.state.session_id, "a", approve=True)
+    await task
+    assert rt.state.abc_phase == "frontend"  # erst NACH Freigabe
+
+
+@pytest.mark.asyncio
+async def test_deny_surfaces_a_dismissable_notice(tmp_path, monkeypatch):
+    """QA-Bug A (fix): deny erzeugt eine sichtbare, quittierbare Notiz-Card (ohne Blockade)."""
     _point(tmp_path, monkeypatch, "rules:\n  - tool: Bash\n    level: deny\n    reason: gesperrt\n")
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")
     out = await mgr.request_decision(rt.state.session_id, "tu1", "Bash", {"command": "ls"})
     assert out.behavior == "deny"
-    # Erwartung: die Ablehnung ist im Cockpit sichtbar (z. B. als kurzlebige Card).
-    # Aktuell landet sie NICHT in pending_decisions → unsichtbar.
-    assert any(c.card_type == "deny" for c in rt.pending.values())
+    # Sichtbar in pending_decisions, aber NICHT blockierend (Status nicht awaiting).
+    card = rt.pending["tu1"]
+    assert card.card_type == "deny" and card.state == "resolved"
+    assert rt.state.status != AWAITING_APPROVAL
+    # „Zur Kenntnis" quittiert sie (future-lose Notiz → einfach entfernen).
+    mgr.resolve_decision(rt.state.session_id, "tu1", approve=False)
+    assert "tu1" not in rt.pending
