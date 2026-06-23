@@ -37,6 +37,7 @@ Der **Projektname** wird beim **Start einer neuen Session** im Setup abgefragt (
 - [ ] **Live-Aktualisierung** der Bars (gleiche Polling-/Update-Mechanik wie der Rest des Cockpits), ohne manuelles Reload.
 - [ ] Phasen-Mapping ist konsistent mit der Ampel/Kanban-Logik (eine Session in QA steht in der QA-Phase).
 - [ ] Responsive (Desktop-first; horizontal scrollbar, wenn die Phasen nicht in die Breite passen).
+- [ ] **Versions-Anzeige in der Sidebar:** Neben dem „Jupiter"-Titel in der Sidebar wird die **aktuelle Version (Bump)** klein/dezent angezeigt (z. B. `🪐 Jupiter  v0.1.0`). Quelle: die App-Version (`package.json` / Release-Tag), nicht manuell gepflegt.
 
 ## Benötigte Erweiterungen an bestehenden Features
 > Diese Spec ist **additiv**; sie setzt zwei kleine Erweiterungen voraus, die mit der Implementierung dieses Features kommen:
