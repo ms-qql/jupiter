@@ -25,6 +25,9 @@ class PendingDecision:
     created_at: str
     state: str = OPEN
     resolution: str | None = None   # "approve" | "deny" (nach dem Auflösen)
+    # Roh-Input des Tools — für Frage-Tools (AskUserQuestion) rendert das Frontend
+    # daraus eine Auswahlliste statt eines JSON-Blobs.
+    tool_input: dict = field(default_factory=dict)
 
     def to_read(self) -> dict:
         return {
@@ -38,6 +41,7 @@ class PendingDecision:
             "created_at": self.created_at,
             "state": self.state,
             "resolution": self.resolution,
+            "tool_input": self.tool_input,
         }
 
 

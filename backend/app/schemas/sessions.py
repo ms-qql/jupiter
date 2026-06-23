@@ -55,6 +55,7 @@ class PendingDecisionRead(BaseModel):
     created_at: str
     state: str
     resolution: str | None = None
+    tool_input: dict = {}   # Roh-Input (Frage-Tools: Frontend rendert Auswahlliste)
 
 
 class DecisionResolve(BaseModel):

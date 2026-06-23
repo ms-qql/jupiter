@@ -12,18 +12,26 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ApiError, resolveDecision } from "@/lib/api";
 import { projectName } from "@/lib/status";
-import type { PendingDecision } from "@/lib/types";
+import type { AskUserQuestionInput, PendingDecision } from "@/lib/types";
+import { QuestionCard } from "./question-card";
 
-export function DecisionCard({
-  decision,
-  showJump = true,
-  className,
-}: {
+type CardProps = {
   decision: PendingDecision;
   /** „In Session springen" zeigen (auf der Detailseite überflüssig). */
   showJump?: boolean;
   className?: string;
-}) {
+};
+
+export function DecisionCard(props: CardProps) {
+  // Frage-Tool (AskUserQuestion) → lesbare Auswahl-Karte statt Approve/Deny-JSON.
+  const questions = (props.decision.tool_input as AskUserQuestionInput | undefined)?.questions;
+  if (props.decision.tool_name === "AskUserQuestion" && Array.isArray(questions) && questions.length) {
+    return <QuestionCard {...props} questions={questions} />;
+  }
+  return <ApproveDenyCard {...props} />;
+}
+
+function ApproveDenyCard({ decision, showJump = true, className }: CardProps) {
   const [busy, setBusy] = useState(false);
   const [commentOpen, setCommentOpen] = useState(false);
   const [comment, setComment] = useState("");

@@ -24,6 +24,19 @@ export interface PendingDecision {
   created_at: string;
   state: string; // open | resolved | obsolete
   resolution: string | null;
+  /** Roh-Input des Tools; bei Frage-Tools (AskUserQuestion) rendert die Card daraus
+   *  eine Auswahlliste statt eines JSON-Blobs. */
+  tool_input?: AskUserQuestionInput | Record<string, unknown>;
+}
+
+/** Struktur des AskUserQuestion-Tool-Inputs (für die Frage-Karte, PROJ-4). */
+export interface AskUserQuestionInput {
+  questions: {
+    question: string;
+    header?: string;
+    multiSelect?: boolean;
+    options: { label: string; description?: string }[];
+  }[];
 }
 
 export interface Session {

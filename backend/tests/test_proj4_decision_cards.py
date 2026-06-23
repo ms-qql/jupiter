@@ -167,6 +167,25 @@ async def test_error_event_marks_open_cards_obsolete():
 
 
 @pytest.mark.asyncio
+async def test_question_card_carries_tool_input():
+    """PROJ4-QA-2: AskUserQuestion-Card trägt den Roh-Input (Frontend rendert daraus
+    eine Auswahlliste statt JSON)."""
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")
+    q = {"questions": [{"question": "Lieblingszahl?", "header": "Zahl",
+                        "options": [{"label": "7"}, {"label": "42"}]}]}
+    task = asyncio.create_task(mgr.request_decision(rt.state.session_id, "tu1", "AskUserQuestion", q))
+    await asyncio.sleep(0)
+    card = rt.pending["tu1"].to_read()
+    assert card["tool_name"] == "AskUserQuestion"
+    assert card["tool_input"]["questions"][0]["options"][0]["label"] == "7"
+    # Antwort über Deny-mit-Begründung zurück.
+    mgr.resolve_decision(rt.state.session_id, "tu1", approve=False, comment="Antwort: 7")
+    out = await task
+    assert out.behavior == "deny" and "7" in out.reason
+
+
+@pytest.mark.asyncio
 async def test_multiple_cards_resolved_independently():
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")

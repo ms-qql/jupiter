@@ -327,6 +327,7 @@ class SessionRuntime:
                 "phase": self.state.constitution_source,
             },
             created_at=_now().isoformat(),
+            tool_input=tool_input or {},
         )
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self.pending[decision_id] = card
