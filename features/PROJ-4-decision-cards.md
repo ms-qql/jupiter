@@ -261,4 +261,13 @@ Die Detailseite zeigte eine bereits offene Card **nicht** an: Der **initiale Web
 **READY / Approved** (innerhalb des MVP-Scopes) — alle 6 AC + alle Edge Cases bestanden, keine Critical/High-Bugs. **SEC-1 ist ein verbindliches Deploy-Gate** (in `/abc-deploy` abhaken: `/internal` nicht öffentlich + starkes `JUPITER_HOOK_TOKEN`). SEC-2/3 + LOW-1/2 als P1-Härtung notiert.
 
 ## Deployment
-_To be added by /deploy_
+**Stand 2026-06-23:** Auf **`origin/dev` gepusht** (Commit `7ba28f1`) — **noch NICHT in Produktion**. Status bleibt **Approved** (Prod-Promotion ausstehend).
+
+**Deploy-Modell (erfasst):** host-native auf dem VPS, **Caddy** (`jupiter.auxevo.tech`, TLS, Basic-Auth-Gate auf allem außer `/hooks/*`) → `/api/*` zu uvicorn :8000 (1 Worker), Rest zu Next.js :3001; systemd-Units `jupiter-backend/frontend/webhook`. **Auto-Deploy nur bei Push auf `main`** (GitHub-Webhook, HMAC) → `deploy.sh`: `git reset --hard origin/main` + `npm run build` + `systemctl restart`.
+
+**Warum dev-only statt Prod (User-Entscheidung):** Im geteilten Working Tree läuft parallel **PROJ-5** (uncommittete Änderungen). `deploy.sh`s `git reset --hard origin/main` würde diese überschreiben, der Service-Restart würde laufende Sessions killen. Daher nur `dev` gepusht; Prod-Promotion bewusst dem Nutzer überlassen.
+
+**Offene Gates vor Prod-Promotion (`dev → main`):**
+- [ ] **SEC-1 (QA):** Starkes `JUPITER_HOOK_TOKEN` in `jupiter-backend.service` setzen (aktuell Default `jupiter-local-hook`). `/api/internal/*` liegt hinter Caddy-Basic-Auth (✓); nur `/hooks/*` umgeht es.
+- [ ] In einer ruhigen Phase deployen (Restart killt In-Memory-Sessions) und mit der parallelen PROJ-5-Session koordinieren (sonst Verlust uncommitteter Arbeit durch `reset --hard`).
+- [ ] Danach Bookkeeping: Tag setzen, Spec/INDEX → **Deployed**, CodeGraph re-index, Smoke-Test gegen `https://jupiter.auxevo.tech`.
