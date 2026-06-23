@@ -1,6 +1,6 @@
 # PROJ-10: Trust-Policy — abgestuftes, konfigurierbares Vertrauen
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #5
@@ -70,7 +70,108 @@ Beim Wechsel der **ABC-Phase** (z. B. Architecture → Frontend, erkannt über P
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-23 · **Stack:** Next.js (Settings-UI) + FastAPI (Engine/Hook) + dateibasierte Config (kein DB, in-memory wie PROJ-1/2/5) · **Branch:** dev
+
+### Leitidee
+Die heutige **eine** Trigger-Funktion (`policy.requires_card()`, binär: Lese-Tool → durch, sonst → Card) wird durch einen **gestuften Policy-Evaluator** ersetzt — **1:1 am selben Aufrufpunkt**, der Rest des Codes ändert sich nicht. Es entstehen **zwei Sorten Gate an derselben Stelle** (`request_decision` in `manager.py`): weiche **operative** Gates (im Bypass durchlässig) und **harte, bypass-feste** Gates (feuern auch im Bypass). Das erste harte Gate ist das **Phasen-Übergangs-Gate**.
+
+### A) Komponenten (was gebaut wird)
+
+```
+Policy-Engine (Backend, erweitert engine/policy.py)
+├── PolicyStore        → lädt config/policy.yaml (live, mtime-basiert; Fallback bei Defekt)
+├── Evaluator          → evaluate(tool, kontext) → {level: auto-allow|card|deny, rule}
+│   └── Matcher        → Spezifität: tool+rolle+skill+projekt > tool+rolle > tool > default
+└── PhaseGate          → erkennt abc_phase-Wechsel (PROJ-8) → hartes Gate
+
+request_decision (engine/manager.py, bestehender Hook — erweitert)
+├── Phasen-Wechsel?  → JA → harte Card (auch im Bypass), pausieren
+├── Evaluator-Level  → deny → ablehnende Card-Notiz (nie ausführen)
+│                      card → operative Card (im Bypass: auto-allow)
+│                      auto-allow → durch
+└── Pause→Card→Resume (vorhandene PROJ-4-Futures, unverändert)
+
+Settings-Tab „Trust-Policy" (Next.js)
+├── Regel-Liste (Tool-Klasse × Kontext × Stufe), bearbeitbar
+├── Phasen-Gate-Schalter (welche Übergänge gaten; Default: alle)
+└── „Live übernommen"-Hinweis (kein Neustart)
+```
+
+### B) Datenmodell (Klartext, keine DB)
+
+**Policy-Config** — eine versionierte Datei `config/policy.yaml` neben der Konstitution (gleiches Muster wie `global.md`/`roles/<rolle>.md`):
+- Eine Liste von **Regeln**. Jede Regel: *Match* (Tool-Klasse + optional Rolle/Skill/Projekt) → *Stufe* (`auto-allow` | `card` | `deny`) + optionaler Klartext-Grund.
+- Ein **Phasen-Gate-Block**: an/aus + Liste der zu gatenden Übergänge (leer = alle).
+- Fehlt die Datei oder ist sie kaputt → **konservativer eingebauter Default** (heutiges Verhalten: Lese-Tools auto-allow, Rest card) + sichtbare Warnung, kein Crash.
+
+**Decision Card** (erweitert `PendingDecision`, in-memory):
+- neu: `triggering_rule` (welche Regel/Stufe hat ausgelöst — Nachvollziehbarkeit, AC).
+- neu: `card_type` (`normal` | `phase_transition` | `deny`) — Frontend rendert Phasen-Gate & Ablehnung anders.
+- **Bugfix:** `context.phase` trägt künftig den echten `abc_phase` (heute fälschlich `constitution_source`) und die echte `role`.
+
+**SessionState** (erweitert): `abc_phase_previous` — um einen **Wechsel** beim Tool-Call zu erkennen und **Doppel-Feuern** desselben Übergangs zu entprellen.
+
+### C) Wo es greift (Verhalten, keine neuen Endpunkte für den Hook)
+
+Der PreToolUse-Hook `request_decision` bleibt der einzige Entscheidungspunkt. Neue Reihenfolge:
+1. **Phasen-Wechsel erkannt** (`abc_phase` ≠ `abc_phase_previous`, Übergang ist gegated) → **harte Card** (`phase_transition`), Session pausiert — **auch bei `bypassPermissions`** (von der Bypass-Auto-Allow-Ausnahme ausgenommen).
+2. Sonst Evaluator-Stufe:
+   - **deny** → Aktion wird **nie** ausgeführt; ablehnende Card-Notiz mit Grund (`behavior="deny"`).
+   - **card** → operative Card; **im Bypass** läuft sie weiterhin durch (auto-allow, PROJ-1-Verhalten).
+   - **auto-allow** → durch.
+3. Pause/Card/Resume nutzt die vorhandene PROJ-4-Future-Mechanik unverändert.
+
+### D) Neue/erweiterte HTTP-Endpunkte (Settings-UI, keine DB)
+
+```
+GET   /settings/policy        → aktuelle Policy + Phasen-Gate-Config + Quelle/Warnung
+PUT   /settings/policy        → Policy ersetzen (validiert; schreibt config/policy.yaml; live aktiv)
+GET   /settings/policy/preview?tool=Bash&role=…  → welche Stufe/Regel würde greifen (Nachvollziehbarkeit/Test)
+```
+Live-Reload: der Evaluator prüft die Datei-mtime pro Call (Auswertung < 5 ms, in-process) — Schreiben über das UI wirkt sofort, ohne Sessions zu unterbrechen. Single-User-MVP: kein JWT (konsistent mit PROJ-1/2/5); Pfade/Secrets nie aus Client-Payload.
+
+### E) Tech-Entscheidungen (Warum)
+- **Ein Gate-Punkt, zwei Sorten** statt zweiter Engine-Pfad: Der Hook feuert auch im Bypass (Prod-verifiziert 2026-06-23) → harte Gates brauchen nur eine **Ausnahme** von der Bypass-Auto-Allow, keinen Parallelpfad. Weniger Code, eine Quelle der Wahrheit.
+- **YAML-Datei statt DB-Tabelle**: deckt sich mit Jupiters No-DB-/In-memory-Ansatz und dem Konstitutions-Muster (Datei + Live-Reload). Editierbar per UI **oder** direkt im Dateisystem.
+- **Spezifischer schlägt allgemeiner; deny schlägt alles**: deterministisch und vorhersehbar; Konflikte werden geloggt. Unbekanntes Tool → `card` (nie versehentlich auto-allow).
+- **`triggering_rule` in der Card**: erfüllt die Nachvollziehbarkeits-AC ohne separates Audit-Log.
+- **Entprellung über `abc_phase_previous`**: verhindert Doppel-Cards bei nicht-linearen Sprüngen (Frontend ↔ Backend).
+
+### F) Abhängigkeiten
+- Backend: `PyYAML` (Policy-Datei lesen/schreiben) — neu, falls noch nicht vorhanden; sonst keine.
+- Frontend: bestehende shadcn/ui-Komponenten (Table, Switch, Select, Badge) — nichts Neues.
+
+### G) Abdeckung der Acceptance Criteria
+| AC | Umsetzung |
+|---|---|
+| 3 Stufen auto-allow/card/deny | Evaluator-`level` |
+| Match nach Tool-Klasse + Kontext, spezifisch > allgemein | Matcher-Spezifität |
+| deny verhindert + ablehnende Card | `behavior="deny"`, nie ausgeführt |
+| konservativer Default | eingebauter Default-Layer (= heute) |
+| Card nennt auslösende Regel | `triggering_rule` |
+| live editierbar, kein Neustart | mtime-Reload + PUT-Endpunkt |
+| Rückwärtskompatibel ohne Policy | fehlende Datei → Default |
+| bypass-feste Gates | Ausnahme von Bypass-Auto-Allow |
+| Phasen-Gate vor neuer Phase, auch im Bypass | PhaseGate in `request_decision` |
+| gatebare Übergänge konfigurierbar | Phasen-Gate-Block in Config |
+| operative Per-Tool-Freigaben im Bypass durchlässig | unveränderte PROJ-1-Logik |
+| Phasen-Signal liegt im Bypass an | `_detect_abc` läuft schon im Hook |
+| alles deutsch | UI + Card-Texte |
+
+## Frontend-Implementierung (2026-06-23)
+Stack: **Next.js** (nicht Flutter — Jupiter-Override). Branch `dev`. UI gegen den geplanten
+API-Kontrakt gebaut; Backend (Evaluator + Phasen-Gate + `/settings/policy`) folgt via `/abc-backend`.
+
+**Neu/geändert:**
+- `lib/types.ts` — `PolicyLevel`, `PolicyRuleMatch`, `PolicyRule`, `PhaseGateConfig`, `TrustPolicy`, `PolicyPreview`; `PendingDecision` um `triggering_rule` + `card_type` (`normal`/`phase_transition`/`deny`) erweitert.
+- `lib/api.ts` — `getPolicy` (GET), `setPolicy` (PUT, live), `previewPolicy` (GET Trockenlauf).
+- `components/cockpit/policy-control.tsx` (neu) — Regel-Editor (Tool-Klasse × Rolle/Skill/Projekt × Stufe + Grund), bypass-festes Phasen-Gate (an/aus + Ziel-Phasen, leer = alle), Defekt-/Quelle-Banner, Regel-Test (Preview). „Speichern (live)".
+- `components/cockpit/settings-dialog.tsx` — auf Tabs umgestellt: „Allgemein" (Schwelle) + „Trust-Policy".
+- `components/cockpit/decision-card.tsx` — zeigt auslösende Regel; eigenes Styling/Badge für `phase_transition` (violett, „Phase freigeben") und `deny` (rot, nur „Zur Kenntnis", da nie ausgeführt).
+
+**Verifikation:** `tsc --noEmit` + `eslint` ohne Befunde in den PROJ-10-Dateien (vorbestehender `md-tree.test.ts`-Fehler unberührt). Backend-Endpunkte fehlen noch → Controls fangen Offline/404 ab (Banner „Backend offline?").
+
+**Offene Designwahl (für Backend):** Config-Format **YAML** angenommen (PyYAML); Match-Spezifität tool+rolle+skill+projekt > … > default, deny gewinnt; `transitions` = Ziel-Phasen, leer = jeder Wechsel.
 
 ## QA Test Results
 _To be added by /abc-qa_

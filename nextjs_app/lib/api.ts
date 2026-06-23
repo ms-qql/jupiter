@@ -10,11 +10,15 @@ import type {
   MdFileRead,
   MdIndexResult,
   MdSource,
+  PhaseGateConfig,
+  PolicyPreview,
+  PolicyRule,
   RootEntry,
   Session,
   SessionCreate,
   SessionDetail,
   ThresholdSetting,
+  TrustPolicy,
   UploadResult,
   VaultWriteResult,
 } from "./types";
@@ -152,6 +156,37 @@ export function setThreshold(thresholdPct: number): Promise<ThresholdSetting> {
   return request<ThresholdSetting>("/settings/threshold", {
     method: "PATCH",
     body: JSON.stringify({ threshold_pct: thresholdPct }),
+  });
+}
+
+// --- PROJ-10: Trust-Policy -------------------------------------------------
+
+/** Aktuelle Trust-Policy lesen (Regeln + Phasen-Gate + Herkunft/Warnung). */
+export function getPolicy(signal?: AbortSignal): Promise<TrustPolicy> {
+  return request<TrustPolicy>("/settings/policy", { signal });
+}
+
+/** Trust-Policy ersetzen — wird serverseitig validiert und LIVE übernommen
+ *  (kein Neustart, laufende Sessions bleiben ununterbrochen). */
+export function setPolicy(
+  rules: PolicyRule[],
+  phaseGate: PhaseGateConfig,
+): Promise<TrustPolicy> {
+  return request<TrustPolicy>("/settings/policy", {
+    method: "PUT",
+    body: JSON.stringify({ rules, phase_gate: phaseGate }),
+  });
+}
+
+/** Trockenlauf: welche Stufe/Regel würde für einen Kontext greifen (Nachvollziehbarkeit). */
+export function previewPolicy(
+  match: { tool?: string; role?: string; skill?: string; project?: string },
+  signal?: AbortSignal,
+): Promise<PolicyPreview> {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(match)) if (v) params.set(k, v);
+  return request<PolicyPreview>(`/settings/policy/preview?${params.toString()}`, {
+    signal,
   });
 }
 

@@ -27,6 +27,12 @@ export interface PendingDecision {
   /** Roh-Input des Tools; bei Frage-Tools (AskUserQuestion) rendert die Card daraus
    *  eine Auswahlliste statt eines JSON-Blobs. */
   tool_input?: AskUserQuestionInput | Record<string, unknown>;
+  /** PROJ-10: Klartext der Policy-Regel, die diese Card ausgelöst hat
+   *  (z. B. „card · Bash @ Rolle architect"). null = konservativer Default. */
+  triggering_rule?: string | null;
+  /** PROJ-10: Card-Typ — „normal" (operative Freigabe), „phase_transition"
+   *  (bypass-festes Phasen-Gate) oder „deny" (hart verboten, nur Info). */
+  card_type?: "normal" | "phase_transition" | "deny";
 }
 
 /** Struktur des AskUserQuestion-Tool-Inputs (für die Frage-Karte, PROJ-4). */
@@ -106,6 +112,49 @@ export interface ThresholdSetting {
   threshold_pct: number;
   min_pct: number;
   max_pct: number;
+}
+
+// --- PROJ-10: Trust-Policy (abgestuftes, konfigurierbares Vertrauen) --------
+
+/** Vertrauensstufe einer Regel. */
+export type PolicyLevel = "auto-allow" | "card" | "deny";
+
+/** Wonach eine Regel matcht — leere Felder = „beliebig" (allgemeiner). */
+export interface PolicyRuleMatch {
+  tool?: string | null; // Tool-Klasse, z. B. „Bash" (leer = alle Tools)
+  role?: string | null;
+  skill?: string | null;
+  project?: string | null;
+}
+
+/** Eine Policy-Regel: Match → Stufe (+ optionaler Klartext-Grund, v. a. bei deny). */
+export interface PolicyRule {
+  match: PolicyRuleMatch;
+  level: PolicyLevel;
+  reason?: string | null;
+}
+
+/** Phasen-Übergangs-Gate (bypass-fest). transitions = Ziel-Phasen, deren Eintritt
+ *  eine Freigabe verlangt; leere Liste = JEDER Phasenwechsel gated. */
+export interface PhaseGateConfig {
+  enabled: boolean;
+  transitions: AbcPhase[];
+}
+
+/** Gesamte Trust-Policy (GET/PUT /settings/policy). */
+export interface TrustPolicy {
+  rules: PolicyRule[];
+  phase_gate: PhaseGateConfig;
+  /** Herkunft: z. B. „config/policy.yaml" oder „default" (keine Datei gepflegt). */
+  source: string;
+  /** Warnung bei kaputter/ungültiger Config (sonst null) — UI zeigt Fallback-Hinweis. */
+  warning: string | null;
+}
+
+/** Antwort von GET /settings/policy/preview — welche Stufe/Regel würde greifen. */
+export interface PolicyPreview {
+  level: PolicyLevel;
+  rule: string; // Klartext der greifenden Regel (oder „Default")
 }
 
 // --- PROJ-7: MD-Reader (read-only) -----------------------------------------
