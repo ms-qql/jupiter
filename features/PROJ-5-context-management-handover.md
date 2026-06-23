@@ -1,6 +1,6 @@
 # PROJ-5: Context-Management & Handover
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-23
 
@@ -181,7 +181,44 @@ Alle Endpunkte sind Single-User-MVP (Owner serverseitig gestempelt, kein JWT —
 - Visuelle E2E-Verifikation gegen laufendes Backend + echte Claude-Session (`/abc-qa-e2e`) — Build/Typecheck/Unit sind grün, der Live-Flow (WS-Notice, Reset-Navigation, Vault-Write-Pointer) ist noch nicht im Browser gegen den Stack durchgeklickt.
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-06-23 · **Branch:** dev · **Tester:** QA/Red-Team
+**Automatisiert:** Backend `pytest` **183 grün** (24 PROJ-5, davon 3 neue Red-Team-Fälle) · Frontend `tsc --noEmit` ✓ · `eslint` ✓ · `vitest` **23 grün** · `next build` ✓.
+**Methodik:** Akzeptanzkriterien gegen Code + automatisierte Tests + dynamische Red-Team-Probe (Manager/TestClient mit FakeDriver). **Nicht** abgedeckt: visuelle Browser-E2E gegen laufenden Stack + echte Claude-Session (→ `/abc-qa-e2e` empfohlen vor Deploy).
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis | Beleg |
+|---|---|---|---|
+| 1 | Füllstand % + Token-Verbrauch je Kachel (Gauge, #25) | ✅ PASS | `SessionRead.context_fill_pct/context_known/tokens_used`; `ContextGauge` in Tile + Detail; `test_context_known_true_after_usage` |
+| 2 | Schwellenwarnung + Handover-Vorschlag bei konfigurierbarer Schwelle | ✅ PASS | `threshold_warning`-Flag im `kind=state`; `ThresholdBadge`; one-shot `kind=notice`; Toast; `test_threshold_warning_and_one_shot_notice` |
+| 3 | Handover manuell (Button) + automatisch (Schwelle) | ✅ PASS¹ | `HandoverDialog` (manuell); Schwellen-Notice (auto-Vorschlag). Phasen-Trigger bewusst → PROJ-8 |
+| 4 | Handover-MD-Felder Wo/Erledigt/Offen/Fallstricke/Pointer | ✅ PASS | `build_handover_md`; `test_generate_handover_has_all_sections` |
+| 5 | Handover über PROJ-2 in den Vault | ✅ PASS | `/handover` → `vault.write(type="handover")`; `test_generate_then_write_handover` |
+| 6 | Session zurücksetzen (Kind-Session + Seed + Archiv) | ✅ PASS | `/reset`; `test_reset_archives_old_and_seeds_child`, `…_links_parent` |
+
+¹ „Automatisch" = automatischer **Vorschlag** beim Schwellenübergang (kein Auto-Write — bewusste Architektur-Entscheidung „Generieren≠Schreiben"). Deckt sich mit dem Tech-Design.
+
+### Edge Cases
+| Edge Case | Ergebnis | Beleg |
+|---|---|---|
+| Token-Daten fehlen → Gauge „unbekannt" statt 0 % | ✅ PASS | `context_known=false` → gestreifter Balken + `contextLabel`; `test_fresh_state_is_unknown`, `test_generate_handover_on_empty_transcript` |
+| Handover ausgelöst, während Session arbeitet | ✅ PASS | `/handover/generate` ist rein lesend (Snapshot) — unterbricht keinen Tool-Call |
+| Reset bei sehr kurzer Session → erlaubt + Hinweis | ✅ PASS | Frontend-Hinweis bei `num_turns ≤ 1` (`ResetSessionButton`) |
+| Schwelle 0/100/Unsinn → geklemmt | ✅ PASS | `clamp_threshold` [50,98]; `test_clamp_threshold`, `test_patch_threshold_clamps`, `test_patch_session_threshold_override` |
+
+### Security / Red-Team
+- **Keine neue Auth/Tenant-Fläche.** Alle neuen Endpunkte sind Single-User-MVP (kein JWT), konsistent mit PROJ-1/2/4 — kein RLS/Mandanten-Modell im MVP (bekannte, dokumentierte Posture, kein Regress).
+- **Pfad-Härtung beim Vault-Write** unverändert (slug + `safe_id_segment`); generierter/editierter Body ist erwarteter MD-Inhalt, Frontmatter via `json.dumps` escaped. Kein Injection-Vektor server-seitig.
+- **Reset bei `awaiting_approval` hängt nicht** — blockierter Hook wird mit `deny` entsperrt (`test_reset_while_awaiting_approval_does_not_hang`).
+- **Schwellen-Eingaben** (negativ/riesig/None) werden geklemmt bzw. als Override gelöscht — keine Dauerwarnung / kein „nie".
+
+### Bugs
+| ID | Sev | Beschreibung | Status |
+|---|---|---|---|
+| QA5-1 | **Low** | Doppelter `/reset` auf dieselbe (bereits archivierte) Session erzeugt eine zweite Kind-Session; die erste bleibt als **lebende Waise** in der Registry. Client-seitig durch den `resetting`-Guard + Navigation entschärft; serverseitig ungebremst. Empfehlung: Reset auf nicht-archivierte Sessions beschränken oder bei vorhandenem Kind ablehnen. | offen (nicht blockierend) |
+
+### Produktionsreife
+**READY (MVP)** — keine Critical/High-Bugs. 1× Low (QA5-1) dokumentiert, nicht blockierend.
+**Empfehlung vor Deploy:** `/abc-qa-e2e` für den Live-Browser-Flow (WS-Notice-Toast, Reset-Navigation zur Kind-Session, Vault-Pointer nach dem Schreiben) gegen laufendes Backend + echte Claude-Session — diese Schicht wurde hier nicht visuell verifiziert.
 
 ## Deployment
 _To be added by /deploy_

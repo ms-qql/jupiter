@@ -230,3 +230,61 @@ async def test_reset_manager_level_links_parent():
     assert child.state.parent_session_id == rt.state.session_id
     assert rt.state.status == DONE  # alt archiviert
     assert "Seed-Kontext-XYZ" in child.state.effective_constitution
+
+
+# --- Red-Team / Edge-Cases (QA PROJ-5) -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reset_while_awaiting_approval_does_not_hang():
+    """Reset einer Session mit offener Decision Card darf NICHT hängen — der blockierte
+    Hook-Aufruf wird entsperrt (deny), alt wird archiviert, Kind verweist auf Vorgänger."""
+    from app.engine.manager import AWAITING_APPROVAL
+
+    mgr = _mgr()
+    rt = await _session(mgr)
+    task = asyncio.create_task(
+        mgr.request_decision(rt.state.session_id, "tu1", "Bash", {"command": "x"})
+    )
+    await asyncio.sleep(0)
+    assert rt.state.status == AWAITING_APPROVAL
+    child = await asyncio.wait_for(
+        mgr.reset(rt.state.session_id, seed_context="seed"), timeout=3.0
+    )
+    out = await asyncio.wait_for(task, timeout=3.0)
+    assert out.behavior == "deny"  # wartender Hook entsperrt
+    assert rt.state.status == DONE
+    assert child.state.parent_session_id == rt.state.session_id
+
+
+@pytest.mark.asyncio
+async def test_generate_handover_on_empty_transcript():
+    """Generieren ohne jegliche Treiber-Daten: gültiges Gerüst, Füllstand „unbekannt"."""
+    from app.engine.manager import SessionRuntime, SessionState
+
+    mgr = _mgr()
+    st = SessionState(
+        session_id="empty123", owner="dev", project_path=PROJECT,
+        model="haiku", permission_mode="default",
+    )
+    mgr._sessions["empty123"] = SessionRuntime(st, FakeDriver())
+    out = mgr.generate_handover("empty123")
+    assert all(f"## {s}" in out["body"] for s in ("Wo stehen wir?", "Offen", "Pointer"))
+    assert "unbekannt" in out["body"]
+
+
+@pytest.mark.asyncio
+async def test_generate_handover_lists_open_decision_in_offen():
+    """Offene Freigabe (PROJ-4) erscheint im Handover unter „Offen" — kein verlorener Kontext."""
+    mgr = _mgr()
+    rt = await _session(mgr)
+    task = asyncio.create_task(
+        mgr.request_decision(rt.state.session_id, "tu1", "Bash", {"command": "rm x"})
+    )
+    await asyncio.sleep(0)
+    out = mgr.generate_handover(rt.state.session_id)
+    offen = out["body"].split("## Offen")[1].split("##")[0]
+    assert "Freigabe ausstehend" in offen
+    # Aufräumen: blockierten Hook entsperren.
+    mgr.resolve_decision(rt.state.session_id, "tu1", approve=False)
+    await task
