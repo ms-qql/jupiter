@@ -14,7 +14,7 @@ from .config import settings
 from .engine.base import EngineDriver
 from .engine.manager import SessionManager
 from .engine.vault import VaultService
-from .routes import constitution, permission, sessions, vault
+from .routes import constitution, permission, sessions, settings as settings_routes, vault
 
 
 def create_app(
@@ -38,6 +38,7 @@ def create_app(
     app.include_router(constitution.router)
     app.include_router(vault.router)
     app.include_router(permission.router)
+    app.include_router(settings_routes.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

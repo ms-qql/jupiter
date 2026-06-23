@@ -13,12 +13,18 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from ..config import MVP_ALLOWED_PERMISSION_MODES, VALID_MODELS, settings
+from ..config import (
+    MVP_ALLOWED_PERMISSION_MODES,
+    VALID_MODELS,
+    clamp_threshold,
+    settings,
+)
 from . import policy
 from .base import EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .constitution import combine_with_extra, resolve_constitution
 from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
+from .handover import build_handover_md, build_title
 from .events import (
     StreamEvent,
     extract_rate_limit,
@@ -36,6 +42,13 @@ STARTING, RUNNING, WAITING, DONE, ERROR = "starting", "running", "waiting", "don
 AWAITING_APPROVAL = "awaiting_approval"
 
 DriverFactory = Callable[[], EngineDriver]
+
+# Default-Auftakt der Reset-Kind-Session, wenn der Nutzer keinen eigenen Prompt gibt.
+# Der verdichtete Handover liegt als System-Kontext (Seed) bereits an.
+_DEFAULT_RESET_PROMPT = (
+    "Du übernimmst eine laufende Arbeit per Handover (siehe System-Kontext). "
+    "Mach dich kurz damit vertraut und arbeite an den offenen Punkten weiter."
+)
 
 
 def _now() -> datetime:
@@ -96,6 +109,24 @@ class SessionState:
     num_turns: int = 0
     error: str | None = None
     rate_limit: dict | None = None
+    # PROJ-5 — Kontext-Management & Handover.
+    parent_session_id: str | None = None  # Reset-Kind-Session → Vorgänger (Staffelstab).
+    context_known: bool = False  # Treiber-Daten da? sonst Gauge „unbekannt" statt 0 %.
+    context_threshold_override_pct: int | None = None  # pro-Session-Schwelle (None → global).
+    threshold_warned: bool = False  # one-shot Auto-Vorschlag bei Schwellenüberschreitung.
+
+    @property
+    def effective_threshold_pct(self) -> int:
+        """Wirksame Kontext-Schwelle: Session-Override oder globaler Wert, geklemmt."""
+        base = self.context_threshold_override_pct
+        if base is None:
+            base = settings.context_fill_threshold_pct
+        return clamp_threshold(base)
+
+    @property
+    def threshold_warning(self) -> bool:
+        """True, sobald der (bekannte) Füllstand die wirksame Schwelle erreicht."""
+        return self.context_known and self.context_fill_pct >= self.effective_threshold_pct
 
     def to_read(self) -> dict:
         return {
@@ -111,10 +142,14 @@ class SessionState:
             "last_activity": self.last_activity.isoformat(),
             "tokens_used": self.tokens_used,
             "context_fill_pct": self.context_fill_pct,
+            "context_known": self.context_known,
+            "context_fill_threshold_pct": self.effective_threshold_pct,
+            "threshold_warning": self.threshold_warning,
             "total_cost_usd": round(self.total_cost_usd, 6),
             "num_turns": self.num_turns,
             "error": self.error,
             "rate_limit": self.rate_limit,
+            "parent_session_id": self.parent_session_id,
         }
 
 
@@ -219,6 +254,10 @@ class SessionRuntime:
         # Nach jedem Event einen Zustands-Snapshot an die UI streamen.
         self._broadcast({"kind": "state", **self.to_read()})
 
+        # PROJ-5: beim ERSTEN Überschreiten der Kontext-Schwelle einmalig einen
+        # Handover vorschlagen (Auto-Trigger = Schwelle).
+        self._maybe_warn_threshold()
+
         # Beim Übergang nach DONE genau einmal das Roh-Log in den Vault schreiben (PROJ-2).
         if self.state.status == DONE and not self._done_fired:
             self._done_fired = True
@@ -229,11 +268,35 @@ class SessionRuntime:
         usage = extract_usage(event)
         if usage is None:
             return
+        self.state.context_known = True  # ab jetzt echte Daten → Gauge nicht mehr „unbekannt".
         self.state.context_fill_pct = usage.context_fill_pct
         if event.type == "result":
             self.state.tokens_used += usage.billed_tokens
             if usage.total_cost_usd is not None:
                 self.state.total_cost_usd += float(usage.total_cost_usd)
+
+    def _maybe_warn_threshold(self) -> None:
+        """One-shot Handover-Vorschlag, sobald der Füllstand die Schwelle erreicht.
+
+        Feuert genau einmal pro Session (``threshold_warned``). Das ist der einzige
+        Auto-Trigger im MVP (phasen-basierter Trigger → PROJ-8). Generieren/Schreiben
+        des Handovers bleiben bewusst nutzerbestätigt — hier wird nur *vorgeschlagen*.
+        """
+        s = self.state
+        if s.threshold_warned or s.status in (DONE, ERROR):
+            return
+        if not s.threshold_warning:
+            return
+        s.threshold_warned = True
+        self._broadcast(
+            {
+                "kind": "notice",
+                "event": "threshold_reached",
+                "session_id": s.session_id,
+                "context_fill_pct": s.context_fill_pct,
+                "threshold_pct": s.effective_threshold_pct,
+            }
+        )
 
     # --- Decision Cards / Freigabe (PROJ-4) --------------------------------
 
@@ -341,6 +404,7 @@ class SessionManager:
         role: str | None = None,
         extra_system_prompt: str | None = None,
         owner: str | None = None,
+        parent_session_id: str | None = None,
     ) -> SessionRuntime:
         model = model or settings.default_model
         permission_mode = permission_mode or settings.default_permission_mode
@@ -368,6 +432,7 @@ class SessionManager:
             role=resolved.role,
             constitution_source=resolved.source,
             effective_constitution=effective,
+            parent_session_id=parent_session_id,
         )
         driver = self._driver_factory()
         runtime = SessionRuntime(state, driver, on_done=self._write_session_log)
@@ -480,6 +545,54 @@ class SessionManager:
     ) -> PendingDecision:
         """Nutzer-Entscheidung einspielen (Freigeben/Ablehnen/Mit Kommentar zurück)."""
         return self._require(session_id).resolve_decision(decision_id, approve, comment)
+
+    # --- Context-Management & Handover (PROJ-5) ----------------------------
+
+    def generate_handover(self, session_id: str) -> dict:
+        """Erzeugt den Handover-INHALT (Vorschau) — schreibt noch NICHT in den Vault.
+
+        Hybrid: mechanisches Gerüst aus dem Session-Zustand + optionaler LLM-Anreicherung
+        (heute über ``settings.handover_llm_enrich`` abschaltbar; fällt sie aus, bleibt das
+        Gerüst gültig). Rückgabe: ``{title, body}`` — der Body geht (ggf. editiert) an
+        ``/handover``.
+        """
+        runtime = self._require(session_id)
+        body = build_handover_md(
+            runtime.state,
+            runtime.transcript,
+            list(runtime.pending.values()),
+            enrichment=None,  # LLM-Anreicherungs-Seam (Tech-Design PROJ-5) — MVP: Gerüst.
+        )
+        return {"title": build_title(runtime.state), "body": body}
+
+    async def reset(
+        self,
+        session_id: str,
+        *,
+        seed_context: str,
+        initial_prompt: str | None = None,
+    ) -> SessionRuntime:
+        """„Session zurücksetzen" (Staffelstab): alte Session archivieren, Kind-Session
+        mit dem verdichteten Handover als Seed-Kontext frisch starten.
+
+        Bewusst KEIN ``--resume`` (das schleppt den vollen alten Kontext mit — genau das
+        Problem). Die Kind-Session startet frisch und bekommt nur die verdichtete Übergabe
+        als ``--append-system-prompt`` (Seed). ``parent_session_id`` verweist zurück.
+        """
+        old = self._require(session_id)
+        old_state = old.state
+        # Alte Session archivieren: sauber stoppen → DONE → Auto-Log in den Vault (PROJ-2).
+        await self.stop(session_id)
+        return await self.create(
+            project_path=old_state.project_path,
+            initial_prompt=initial_prompt or _DEFAULT_RESET_PROMPT,
+            model=_model_alias(old_state.model),
+            permission_mode=old_state.permission_mode,
+            role=old_state.role,
+            extra_system_prompt=seed_context,
+            owner=old_state.owner,
+            parent_session_id=old_state.session_id,
+        )
 
     def transcript_text(self, session_id: str) -> str:
         """Gesamtes Transkript als Klartext (Copy-out)."""

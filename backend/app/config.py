@@ -22,6 +22,17 @@ MVP_ALLOWED_PERMISSION_MODES: set[str] = {"default", "acceptEdits"}
 # Fluten des Kontextfensters.
 MAX_INPUT_CHARS: int = 100_000
 
+# Kontext-Schwelle (PROJ-5): erlaubter Bereich, auf den jeder Schwellenwert
+# (global oder pro Session) geklemmt wird. Schützt vor Fehlkonfiguration
+# (0/100/Unsinn → keine Dauerwarnung, kein „nie warnen").
+THRESHOLD_MIN_PCT: int = 50
+THRESHOLD_MAX_PCT: int = 98
+
+
+def clamp_threshold(value: int) -> int:
+    """Klemmt die Kontext-Schwelle auf ``[THRESHOLD_MIN_PCT, THRESHOLD_MAX_PCT]``."""
+    return max(THRESHOLD_MIN_PCT, min(THRESHOLD_MAX_PCT, int(value)))
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="JUPITER_", env_file=".env", extra="ignore")
@@ -67,6 +78,16 @@ class Settings(BaseSettings):
     vault_jupiter_subdir: str = "Agentic OS/Jupiter"
     # Roh-Session-Logs beim Session-Ende automatisch in den Vault schreiben (Grundlage #8/#9).
     vault_autolog: bool = True
+
+    # --- Kontext-Management & Handover (PROJ-5) ---------------------------
+    # Schwelle (%) für Kontext-Warnung + Handover-Vorschlag. Global; pro Session
+    # überschreibbar. Beim Lesen/Setzen auf [THRESHOLD_MIN_PCT, THRESHOLD_MAX_PCT]
+    # geklemmt.
+    context_fill_threshold_pct: int = 85
+    # Optionale LLM-Anreicherung der Handover-Prosa (Hybrid-Generator). Default
+    # AUS: das mechanische Gerüst ist der garantierte, deterministische Pfad;
+    # die Anreicherung ist ein optionaler Aufsatz (Tech-Design PROJ-5).
+    handover_llm_enrich: bool = False
 
 
 settings = Settings()

@@ -6,14 +6,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
+from ..config import clamp_threshold
 from ..engine.manager import SessionManager
 from ..schemas.sessions import (
     ConstitutionRead,
     DecisionResolve,
+    HandoverPreview,
+    ResetRequest,
     SessionCreate,
     SessionDetail,
     SessionInput,
     SessionRead,
+    ThresholdPatch,
     TranscriptText,
 )
 from ..schemas.vault import HandoverRequest, VaultWriteResult
@@ -127,6 +131,55 @@ async def get_session_constitution(session_id: str, request: Request) -> dict:
         "source": runtime.state.constitution_source or "leer",
         "text": runtime.state.effective_constitution,
     }
+
+
+@router.post("/{session_id}/handover/generate", response_model=HandoverPreview)
+async def generate_handover(session_id: str, request: Request) -> dict:
+    """Handover-INHALT erzeugen (Vorschau, Hybrid-Gerüst) — schreibt NICHT in den Vault.
+
+    Der zurückgegebene Body geht (ggf. vom Nutzer editiert) an ``POST …/handover``.
+    """
+    manager = _manager(request)
+    if manager.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    return manager.generate_handover(session_id)
+
+
+@router.post("/{session_id}/reset", response_model=SessionRead, status_code=201)
+async def reset_session(session_id: str, payload: ResetRequest, request: Request) -> dict:
+    """„Session zurücksetzen": alte Session archivieren, Kind-Session mit dem Handover
+    als Seed-Kontext frisch starten (Staffelstab, ``parent_session_id`` verweist zurück).
+    """
+    manager = _manager(request)
+    if manager.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    try:
+        child = await manager.reset(
+            session_id,
+            seed_context=payload.seed_context,
+            initial_prompt=payload.initial_prompt,
+        )
+    except ValueError as exc:  # ungültiger Pfad / Modell der Kind-Session
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:  # claude-Binary weg
+        raise HTTPException(
+            status_code=503, detail="Claude-CLI nicht gefunden — ist `claude` installiert/eingeloggt?"
+        ) from exc
+    return child.to_read()
+
+
+@router.patch("/{session_id}/threshold", response_model=SessionRead)
+async def set_session_threshold(session_id: str, payload: ThresholdPatch, request: Request) -> dict:
+    """Pro-Session-Override der Kontext-Schwelle (None = globale Schwelle nutzen)."""
+    runtime = _manager(request).get(session_id)
+    if runtime is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    runtime.state.context_threshold_override_pct = (
+        clamp_threshold(payload.threshold_pct) if payload.threshold_pct is not None else None
+    )
+    # Schwelle geändert → Warn-Status kann sich ändern: Snapshot streamen.
+    runtime._broadcast({"kind": "state", **runtime.to_read()})
+    return runtime.to_read()
 
 
 @router.post("/{session_id}/handover", response_model=VaultWriteResult, status_code=201)

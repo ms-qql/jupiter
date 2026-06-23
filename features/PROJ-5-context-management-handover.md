@@ -1,6 +1,6 @@
 # PROJ-5: Context-Management & Handover
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-23
 
@@ -127,6 +127,35 @@ Alle Endpunkte sind Single-User-MVP (Owner serverseitig gestempelt, kein JWT —
 | Handover in Vault | `/handover` → `vault.write` (vorhanden) | Backend (Verifikation) |
 | Session zurücksetzen (Kind-Session + Archiv) | `/sessions/{id}/reset` + `ResetSessionButton` | Backend → Frontend |
 | Schwelle konfigurierbar (global/Session) | `/settings/threshold` + `ThresholdControl` | Backend → Frontend |
+
+## Implementierung — Backend (2026-06-23)
+**Branch:** dev · **Tests:** `backend/tests/test_proj5_handover.py` (21 neu) · gesamte Suite **180 grün**.
+
+### Gebaut
+- **Schwellen-Konfiguration + Klemmung** (`config.py`): `context_fill_threshold_pct` (global, Default **85 %**); `clamp_threshold()` klemmt jeden Wert auf `[THRESHOLD_MIN_PCT=50, THRESHOLD_MAX_PCT=98]` (Edge-Case 0/100/Unsinn).
+- **Settings-API** (`routes/settings.py`, `schemas/settings.py`): `GET /settings/threshold` (Wert + min/max), `PATCH /settings/threshold` (klemmt, in-memory).
+- **Pro-Session-Override**: `PATCH /sessions/{id}/threshold` (`threshold_pct` | `null` = global). State-Feld `context_threshold_override_pct`; `SessionState.effective_threshold_pct` löst Override→global→geklemmt auf.
+- **Gauge-Daten + „unbekannt"** (`manager.py`/`events.py`): neues Feld `context_known` (erst nach erstem Usage-Event `True`) → Frontend zeigt „unbekannt" statt irreführend 0 %. `to_read()` liefert zusätzlich `context_known`, `context_fill_threshold_pct`, `threshold_warning`, `parent_session_id`.
+- **Schwellen-Warnung + Auto-Vorschlag** (`manager.py`): `threshold_warning` (live abgeleitet, im `kind=state`-Snapshot) + einmaliger `{"kind":"notice","event":"threshold_reached"}`-Broadcast beim ERSTEN Überschreiten (`threshold_warned` one-shot). Einziger Auto-Trigger im MVP — Phasen-Trigger bleibt PROJ-8.
+- **Hybrid-Handover-Generator** (`engine/handover.py`): `POST /sessions/{id}/handover/generate` → Vorschau `{title, body}` (schreibt NICHT). Mechanisches Gerüst aus Session-Zustand mit den Feldern **Wo stehen wir? / Erledigt / Offen / Fallstricke / Pointer** (Pointer statt Volltext, zahlt auf #23 ein). LLM-Anreicherung als optionaler `enrichment`-Seam (Default aus via `settings.handover_llm_enrich`); fällt sie aus, bleibt das Gerüst gültig.
+- **Schreiben** unverändert über `POST /sessions/{id}/handover` → `vault.write(type="handover")` (PROJ-2). Generierter Body fließt direkt hinein.
+- **Reset-Staffelstab** (`manager.reset` + `POST /sessions/{id}/reset`): archiviert die alte Session (`stop()` → DONE → Auto-Log in den Vault), startet eine **Kind-Session** mit dem Handover als `--append-system-prompt`-Seed (bewusst KEIN `--resume`), setzt `parent_session_id`. Body: `seed_context` (Pflicht), `initial_prompt` (optional, sonst Default-Auftakt).
+
+### Bewusste Abweichungen / offene Punkte
+- **„Automatisches Handover" = automatischer Vorschlag**, keine Auto-Schreibung — respektiert „Generieren≠Schreiben" (Nutzer prüft den Staffelstab) und den Edge-Case „nicht mitten im Tool-Call".
+- **LLM-Anreicherung als Seam, Default aus** — das deterministische Gerüst ist der garantierte Pfad; die echte Treiber-Anreicherung kann später ohne Vertragsänderung zugeschaltet werden.
+- **Schwelle in-memory** (kein DB im MVP, konsistent mit PROJ-1/2).
+- **Frontend offen**: `ThresholdBadge`, `HandoverDialog`, `ResetSessionButton`, `ThresholdControl` → `/abc-frontend`. Reset-Hinweis „wenig Kontext" (Edge-Case kurze Session) ist eine Frontend-Anzeige auf Basis von `num_turns`/`context_fill_pct`.
+
+### API-Vertrag (für Frontend)
+| Methode | Pfad | Body | Antwort |
+|---|---|---|---|
+| POST | `/sessions/{id}/handover/generate` | — | `{title, body}` (Vorschau) |
+| POST | `/sessions/{id}/handover` | `{body, title?, on_exists?}` | `VaultWriteResult` (`path,type,created`) |
+| POST | `/sessions/{id}/reset` | `{seed_context, initial_prompt?}` | `SessionRead` (Kind, inkl. `parent_session_id`) |
+| PATCH | `/sessions/{id}/threshold` | `{threshold_pct \| null}` | `SessionRead` |
+| GET/PATCH | `/settings/threshold` | `{threshold_pct}` | `{threshold_pct, min_pct, max_pct}` |
+| WS | `/sessions/{id}/stream` | — | `kind=state` trägt `context_known/threshold_warning/...`; `kind=notice` `event=threshold_reached` |
 
 ## QA Test Results
 _To be added by /qa_

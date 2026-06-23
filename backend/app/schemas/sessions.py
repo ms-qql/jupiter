@@ -80,10 +80,14 @@ class SessionRead(BaseModel):
     last_activity: str
     tokens_used: int
     context_fill_pct: float
+    context_known: bool = False
+    context_fill_threshold_pct: int = 85
+    threshold_warning: bool = False
     total_cost_usd: float
     num_turns: int
     error: str | None = None
     rate_limit: dict | None = None
+    parent_session_id: str | None = None
     pending_decisions: list[PendingDecisionRead] = []
 
 
@@ -127,3 +131,35 @@ class ConstitutionOverview(BaseModel):
 
     global_text: str
     roles: list[str]
+
+
+# --- Context-Management & Handover (PROJ-5) --------------------------------
+
+
+class HandoverPreview(BaseModel):
+    """Vorschau von POST /sessions/{id}/handover/generate (noch nicht geschrieben)."""
+
+    title: str
+    body: str
+
+
+class ResetRequest(BaseModel):
+    """Body von POST /sessions/{id}/reset — Staffelstab in eine frische Kind-Session."""
+
+    seed_context: str = Field(
+        ..., min_length=1, max_length=MAX_INPUT_CHARS,
+        description="Verdichteter Handover (MD) als Seed-Kontext der Kind-Session.",
+    )
+    initial_prompt: str | None = Field(
+        default=None, max_length=MAX_INPUT_CHARS,
+        description="Optionaler erster Auftrag; ohne Angabe startet die Übernahme automatisch.",
+    )
+
+
+class ThresholdPatch(BaseModel):
+    """Body von PATCH /sessions/{id}/threshold — pro-Session-Override der Kontext-Schwelle."""
+
+    threshold_pct: int | None = Field(
+        default=None,
+        description="Schwelle in % (wird serverseitig geklemmt). None = globale Schwelle nutzen.",
+    )
