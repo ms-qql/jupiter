@@ -214,7 +214,51 @@ Die Detailseite zeigte eine bereits offene Card **nicht** an: Der **initiale Web
 → Bereit für `/abc-qa`.
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-06-23 · **Branch:** dev · **Tester:** QA Engineer (Red-Team) · **Methode:** pytest (159 grün) + Vitest (18 grün) + Lint/Build grün + adversariale Code-Review des neuen Angriffsflächen-Endpoints + (aus der Frontend-Phase) echter End-to-End-Smoke gegen eine reale Haiku-Session inkl. Playwright-Screenshots.
+
+### Automatisierte Tests
+- **Backend `pytest` → 159 grün** (35 davon PROJ-4-spezifisch in `test_proj4_decision_cards.py`). Neu in der QA-Runde: `test_error_event_marks_open_cards_obsolete` (Card-Abandon auch im ERROR-Pfad, nicht nur Stop). Keine Regression in den 124 Bestands-Tests (PROJ-1/2/3/6).
+- **Frontend `vitest` → 18 grün** (`lib/status.test.ts`: orange/awaiting_approval-Mapping, review-Spalte, `freigabe`-Zähler, railRank-Priorität). `npm run lint` grün, `next build` grün (TypeScript ok).
+
+### Akzeptanzkriterien (6/6 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | Schreib/Shell → Card, Lesen → auto (fixer Trigger) | ✅ PASS | `policy.requires_card` (Tests read=auto/write=card) + Live-Smoke (Bash → Card) |
+| 2 | Card zeigt Was / Ausschnitt / Warum / Kontext | ✅ PASS | Screenshot Detail+Kanban: Bash-Badge, „Shell-Befehl: echo hallo", `$ echo hallo`, „Warum", Projekt·Phase |
+| 3 | Aktionen Freigeben / Ablehnen / Kommentar / In Session springen | ✅ PASS | DecisionCard (Screenshot) + REST `POST …/decisions/{id}` |
+| 4 | Entscheidung wird zurückgespielt; Session läuft weiter / bricht ab | ✅ PASS | **Deny+Kommentar live** (Claude las Begründung, passte sich an); **Approve→allow** über vollen Hook-Pfad im E2E-Test (`test_end_to_end_hook_blocks_until_resolved`) |
+| 5 | Wartende Session im Kanban | ✅ PASS | `awaiting_approval` → „Review/Approval"-Spalte (Screenshot, Zähler 1) |
+| 6 | Trigger fix/konservativ an EINER zentralen Stelle | ✅ PASS | `engine/policy.py:requires_card` — einzige Quelle, #5-ready |
+
+### Edge Cases (alle abgedeckt)
+- **Mehrere offene Cards** → einzeln auflösbar (`decision_id = tool_use_id`), Status bleibt `awaiting_approval` bis zur letzten — `test_multiple_cards_resolved_independently` ✅
+- **Session stirbt mit offener Card** → Card `obsolet`, Hook fail-safe entsperrt — `test_stop_marks_open_cards_obsolete` + `test_error_event_marks_open_cards_obsolete` ✅
+- **Nutzer ignoriert Card** → kein Timeout-Autoproceed (Future bleibt offen; Hook-Timeout 24 h, danach Claudes sicherer Default deny) ✅
+- **Deny mit Kommentar** → Kommentar als Begründung inline zu Claude — `test_deny_with_comment_returns_reason` + Live ✅
+- **Doppeltes Auflösen** → 404/409 — `test_double_resolve_raises` + REST-Tests ✅
+- **Unbekannte Session / falsches Token am Hook-Endpoint** → fail-safe deny / 403 ✅
+
+### Security-Audit (Red-Team)
+**Kontext:** Single-User-MVP, **kein JWT/RLS/mandant_id** (bewusst, #21) → klassische Tenant-Isolation/JWT-Audits **N/A**. Neue Angriffsfläche ist der Freigabe-Pfad.
+- ✅ **XSS:** `excerpt`/`action`/`rationale` werden als React-Textknoten gerendert (auto-escaped, `<pre>` = Textinhalt) — kein Injection-Vektor aus dem Tool-Input.
+- ✅ **Input-Validierung:** `decision` ist `Literal["approve","deny"]` (→ 422), `comment` `max_length=100k`. Unbekannte Session/Decision → 404, Doppelauflösung → 409.
+- ✅ **Hook-Token:** `/internal/permission` ohne/mit falschem Token → 403; unbekannte Session → fail-safe deny.
+- ✅ **Fail-safe-Kette:** Backend nicht erreichbar → Hook deny; Future nie aufgelöst → Session bleibt sauber pausiert (kein Auto-Approve).
+
+#### Findings (keine Critical/High)
+| ID | Sev | Befund | Empfehlung |
+|----|-----|--------|------------|
+| **SEC-1** | **Medium (Deploy-Gate)** | `/internal/permission` ist nur durch ein **hardcodiertes Default-Token** (`jupiter-local-hook`) geschützt. Würde der Reverse-Proxy (Caddy) `/internal/*` öffentlich routen statt nur `/api`, könnte ein Angreifer Freigabe-Anfragen fälschen — in Kombination mit dem unauth. Decision-Endpoint auch Aktionen auto-freigeben. **Im MVP (uvicorn an 127.0.0.1, lokal) nicht ausnutzbar.** | Vor Exposition in `/abc-deploy`: (a) sicherstellen, dass `/internal` **nicht** öffentlich geroutet wird, (b) **starkes `JUPITER_HOOK_TOKEN`** setzen. |
+| **SEC-2** | Low (MVP-akzeptiert) | Decision-Endpoint `POST /sessions/{id}/decisions/{id}` ist unauthentifiziert (wie alle Session-Endpoints, #21). Eine Freigabe kann beliebige Shell-/Datei-Ops auslösen. | Vor Multi-User/Exposition echtes Auth (#21). |
+| **SEC-3** | Low | Token-Vergleich mit `!=` (nicht konstantzeitig). | Beim Härten `secrets.compare_digest`. |
+| **LOW-1** | Low | Fehlt `tool_use_id` (laut Spike nie der Fall) und ein gleichnamiges Tool ist parallel offen, kollidiert die synthetische `decision_id` → erste Future verwaist (hängt bis 24 h-Timeout). | Fallback-Key eindeutiger machen (z. B. Zähler) beim Härten. |
+| **LOW-2** | Low (UX) | Die Detailseiten-Eingabe bleibt aktiv, während eine Card offen ist; eine Eingabe mitten in der Entscheidung kann die Statusanzeige kurz desynchronisieren (`awaiting_approval`→`running`, Card noch offen). | Eingabe deaktivieren/Hinweis, solange eine Entscheidung aussteht. |
+
+### Regression (PROJ-1/2/3/6)
+- `lib/status.ts`-Änderungen sind additiv: bestehende Status behalten ihre Ampel/Spalte/Rang-Reihenfolge; `countStatuses` nur um `freigabe` erweitert (alle Konsumenten angepasst). Backend 124 Bestands-Tests grün. „Review/Approval"-Spalte (PROJ-3-Platzhalter) ist jetzt befüllt — wie vorgesehen.
+
+### Produktionsreife-Entscheidung
+**READY / Approved** (innerhalb des MVP-Scopes) — alle 6 AC + alle Edge Cases bestanden, keine Critical/High-Bugs. **SEC-1 ist ein verbindliches Deploy-Gate** (in `/abc-deploy` abhaken: `/internal` nicht öffentlich + starkes `JUPITER_HOOK_TOKEN`). SEC-2/3 + LOW-1/2 als P1-Härtung notiert.
 
 ## Deployment
 _To be added by /deploy_

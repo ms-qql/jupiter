@@ -149,6 +149,24 @@ async def test_deny_with_comment_returns_reason():
 
 
 @pytest.mark.asyncio
+async def test_error_event_marks_open_cards_obsolete():
+    """Edge-Case: Session kippt mit offener Card nach ERROR → Card obsolet, Hook entsperrt."""
+    from app.engine.events import StreamEvent
+
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")
+    task = asyncio.create_task(mgr.request_decision(rt.state.session_id, "tu1", "Bash", {"command": "x"}))
+    await asyncio.sleep(0)
+    card = rt.pending["tu1"]
+    # Treiber meldet einen Fehler, während die Card offen ist.
+    await rt.handle_event(StreamEvent("system", "error", {"message": "Treiber gestürzt"}))
+    out = await task
+    assert out.behavior == "deny"          # wartender Hook wird fail-safe entsperrt
+    assert card.state == OBSOLETE and rt.pending == {}
+    assert rt.state.status == "error"
+
+
+@pytest.mark.asyncio
 async def test_multiple_cards_resolved_independently():
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")
