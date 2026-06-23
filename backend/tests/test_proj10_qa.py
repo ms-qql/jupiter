@@ -12,7 +12,7 @@ import asyncio
 import pytest
 
 from app.engine import policy
-from app.engine.manager import AWAITING_APPROVAL, SessionManager
+from app.engine.manager import AWAITING_APPROVAL, RUNNING, SessionManager
 from app.engine.policy import PolicyStore
 
 from .fakes import FakeDriver
@@ -145,6 +145,30 @@ async def test_approved_phase_gate_advances_phase(tmp_path, monkeypatch):
     mgr.resolve_decision(rt.state.session_id, "a", approve=True)
     await task
     assert rt.state.abc_phase == "frontend"  # erst NACH Freigabe
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(strict=True, reason="QA-Bug C (Regression aus Fix A): eine liegengebliebene "
+                                       "deny-Notiz in self.pending verhindert die Rückkehr nach "
+                                       "RUNNING — die 'pending leer?'-Prüfung muss nur blockierende "
+                                       "Cards (self._futures) zählen.")
+async def test_lingering_deny_notice_does_not_freeze_status(tmp_path, monkeypatch):
+    _point(tmp_path, monkeypatch,
+           "phase_gate:\n  enabled: false\n  transitions: []\n"
+           "rules:\n  - tool: Bash\n    level: deny\n  - tool: Write\n    level: card\n")
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")
+    # deny-Notiz (nicht-blockierend) bleibt in pending …
+    await mgr.request_decision(rt.state.session_id, "t1", "Bash", {"command": "ls"})
+    # … dann eine echte blockierende Card öffnen + freigeben.
+    task = asyncio.create_task(
+        mgr.request_decision(rt.state.session_id, "t2", "Write", {"file_path": "a", "content": "c"})
+    )
+    await asyncio.sleep(0)
+    mgr.resolve_decision(rt.state.session_id, "t2", approve=True)
+    await task
+    # Erwartung: keine BLOCKIERENDE Entscheidung mehr offen → Status zurück auf RUNNING.
+    assert rt.state.status == RUNNING
 
 
 @pytest.mark.asyncio

@@ -225,7 +225,13 @@ Stack: FastAPI + **dateibasierte Policy** (YAML, kein DB). Branch `dev`. In-memo
 - **Bug A — deny-Notiz im UI unsichtbar (Medium) → BEHOBEN.** `deny` legt jetzt eine **nicht-blockierende, bereits aufgelöste** Notiz-Card in `pending_decisions` (kein Future, kein `awaiting_approval`). Sie erscheint im Cockpit (Polling) **und** auf der Detailseite (State-Snapshot) und wird mit „Zur Kenntnis" quittiert (`resolve_decision` entfernt future-lose Notizen). Das Frontend-Deny-Rendering ist damit aktiv. (`manager._register_deny_notice` + `resolve_decision`-Zweig.)
 - **Bug B — Phase rückt bei abgelehntem Phasen-Gate vor (Medium) → BEHOBEN.** Die Phase wird jetzt **seiteneffektfrei** vorausberechnet (`abc_phases.detect_phase_signal`) und erst **nach Freigabe** übernommen (`manager._apply_phase`). Bei Ablehnung bleibt die alte Phase; bei Freigabe springt sie. (`request_decision` deferred-apply.)
 
-Regression abgesichert in `tests/test_proj10_qa.py` (keine xfail mehr): `test_denied_phase_gate_keeps_old_phase`, `test_approved_phase_gate_advances_phase`, `test_deny_surfaces_a_dismissable_notice`.
+Regression abgesichert in `tests/test_proj10_qa.py`: `test_denied_phase_gate_keeps_old_phase`, `test_approved_phase_gate_advances_phase`, `test_deny_surfaces_a_dismissable_notice`.
+
+### Re-QA (2026-06-23) — NEUER Befund aus Fix A
+- **Bug C — Status friert auf `awaiting_approval` ein (Medium, Regression aus Fix A).** Die nicht-blockierende deny-Notiz liegt in `self.pending`. Wird danach eine **echte** blockierende Card freigegeben, prüft `resolve_decision` `if not self.pending …` → die liegengebliebene Notiz hält `pending` nicht-leer → der Status kehrt **nicht** nach `RUNNING` zurück, sondern bleibt `awaiting_approval` (Cockpit/Kanban zeigen die Session fälschlich als „wartet auf Freigabe", obwohl der Treiber weiterläuft). *Repro:* deny-Regel (Bash) + card-Regel (Write) → Bash (deny-Notiz) → Write-Card freigeben → Status bleibt `awaiting_approval`. *Fix-Richtung:* Die „leer?"-Prüfung darf nur **blockierende** Cards zählen → `self._futures` statt `self.pending` verwenden (Notizen haben kein Future). Alternativ Notizen aus `pending` heraushalten und über eine separate `notices`-Liste in `to_read()` ausliefern.
+- Festgehalten als `xfail(strict=True)`: `test_lingering_deny_notice_does_not_freeze_status` (flippt auf PASS nach dem Fix).
+
+**Re-QA-Verdict:** Bug A + B bestätigt behoben. **Ein neuer Medium-Bug (C)** durch Fix A → **Status bleibt In Review**, Bug C vor Deploy fixen. Suite: 348 passed + 1 xfail (Bug C).
 
 ### Security / Red-Team
 - ✅ **Bypass kann das harte Phasen-Gate nicht aushebeln** — die Gate-Prüfung steht **vor** dem Bypass-Auto-Allow.
