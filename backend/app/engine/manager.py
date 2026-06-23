@@ -406,6 +406,14 @@ class SessionRuntime:
         if not policy.requires_card(tool_name, tool_input):
             return DecisionOutcome(behavior="allow", auto=True)
 
+        # bypassPermissions (PROJ-1): operative Aktionen laufen OHNE Card durch.
+        # Der PreToolUse-Hook feuert in Claude Code auch im Bypass — ohne diese Ausnahme
+        # würde jede Schreib-/Exec-Aktion trotzdem blockieren (Bug: Bypass wirkte wie
+        # „Standard"). Künftige „harte" Gates (Phasen-Übergang, PROJ-10) werden hier gezielt
+        # AUSGENOMMEN, damit sie auch im Bypass weiterhin eine Card erzeugen.
+        if self.state.permission_mode == "bypassPermissions":
+            return DecisionOutcome(behavior="allow", auto=True)
+
         card = PendingDecision(
             decision_id=decision_id,
             session_id=self.state.session_id,

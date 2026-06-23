@@ -113,6 +113,20 @@ async def test_read_tool_auto_allows_without_card():
 
 
 @pytest.mark.asyncio
+async def test_bypass_mode_auto_allows_write_tool_without_card():
+    # PROJ-1-Fix: im Bypass-Modus laufen operative Aktionen (z. B. Bash) OHNE Card durch
+    # — sonst blockiert die Session trotz Bypass an jeder Freigabe.
+    mgr = _mgr()
+    rt = await mgr.create(
+        project_path=PROJECT, initial_prompt="Hallo", model="haiku",
+        permission_mode="bypassPermissions",
+    )
+    out = await mgr.request_decision(rt.state.session_id, "tu1", "Bash", {"command": "ls"})
+    assert out.behavior == "allow" and out.auto is True
+    assert rt.pending == {} and rt.state.status != AWAITING_APPROVAL
+
+
+@pytest.mark.asyncio
 async def test_write_tool_opens_card_and_approve_unblocks():
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Hallo", model="haiku")
