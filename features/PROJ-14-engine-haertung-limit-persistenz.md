@@ -1,6 +1,6 @@
 # PROJ-14: PROJ-1-Härtung — Limit paralleler Sessions + Persistenz
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** — (Härtung aus QA-3 von PROJ-1)
@@ -141,6 +141,30 @@ z. B. `/home/dev/jupiter-data/session_index.db`), wird bei Bedarf automatisch an
 ### I) Verhaltenswahrung
 - Bestehende PROJ-1-Tests bleiben grün: Limit greift erst beim Überschreiten; Persistenz ist additiv und
   best-effort. Tests können den Manager mit `NullRepository` / hohem Limit fahren (kein Default-Bruch).
+
+## Implementation Notes (Backend)
+**Branch:** dev · **Stand:** 2026-06-23 · keine neuen Python-Abhängigkeiten.
+
+**Limit paralleler Sessions**
+- `config.py`: `max_parallel_sessions` (Default 12, Env `JUPITER_MAX_PARALLEL_SESSIONS`) + `clamp_session_limit()` (klemmt ≤0 auf 1) + `SESSION_LIMIT_MIN`.
+- `manager.py`: `ACTIVE_STATES = {starting, running, waiting, awaiting_approval}`, `active_count()`, `max_parallel_sessions`-Property. `create()` prüft das Limit **atomar** unter `self._create_lock` und reserviert den Slot durch Insert in die Registry, bevor der Lock fällt (Edge-Case Limit-Race). Überschreitung → neue `SessionLimitError`.
+- `routes/sessions.py`: `SessionLimitError` → **HTTP 429** mit deutscher Meldung. Neuer `GET /sessions/limits` → `{max_parallel_sessions, active}` (Cockpit-Statusanzeige, PROJ-3).
+
+**Persistenz-Seam (SQLite-Live-Index)**
+- Neues Paket `backend/app/db/`: `SessionIndexRepository` (Protocol) + `SqliteSessionIndexRepository` (stdlib `sqlite3`, WAL, per-Operation-Connection, alle I/O via `asyncio.to_thread`) + `NullSessionIndexRepository` + Factory `build_session_index_repo(settings)`. Tabelle `session_index` (PK `session_id`, Index auf `status`).
+- `manager.py`: Repo injizierbar (`repo=`, Default Null). `_persist()` ist ein best-effort `on_persist`-Hook, der **nur bei Statuswechsel** feuert (`SessionRuntime._maybe_persist`, getrackt via `_last_persisted_status`) → Hot-Path der Event-Verarbeitung unbelastet. Schreiben fire-and-forget über `asyncio.create_task` + `_safe_upsert` (schluckt Fehler → Warnung, In-Memory führt).
+- `base.py`: `EngineDriver.pid`-Property (Default None) + `DeadDriver` (Platzhalter für rehydrierte Sessions). `claude_driver.py`: echte PID aus dem Subprozess.
+- `main.py`: `create_app()` baut das Repo (oder akzeptiert `session_index_repo=`) und fährt einen **lifespan** (`repo.init()` → `manager.rehydrate()` → bei Shutdown `repo.close()`).
+
+**Restart/Reconcile**
+- `SessionManager.rehydrate()`: lädt persistierte Sessions; **In-Memory gewinnt** (vorhandene IDs werden nicht überschrieben). Sessions, die in einem aktiven Status standen, werden als **verwaist** (`status=error`, sprechende `error`-Meldung) markiert und fallen aus der Aktiv-Zählung; PID-Lebendigkeit best-effort via `os.kill(pid,0)` (`_pid_alive`). Korrigierter Status wird zurückgespiegelt. Rehydrierte Sessions tragen einen `DeadDriver` → eine Eingabe löst regulär den `claude --resume`-Pfad aus.
+
+**Tests** (`backend/tests/test_proj14_haertung.py`, 12 Tests, alle grün; Gesamt-Suite 303 grün):
+Limit (Ablehnung, nur aktive zählen, Race-Atomarität, 429 + `/limits`), Clamp, SQLite-Roundtrip/Upsert, Create-Spiegelung, Best-effort bei DB-Ausfall, Rehydrierung (verwaist + In-Memory-Vorrang), `_pid_alive`. `conftest.py`: Persistenz im Test global aus (kein Schreiben in den echten Home-Pfad), Tests injizieren ihr eigenes Repo.
+
+**Verhaltenswahrung:** alle bestehenden PROJ-1-Tests bleiben grün; Limit greift erst beim Überschreiten, Persistenz ist additiv/best-effort (Default-Repo = Null in Tests).
+
+**Offen für QA / PROJ-17:** Re-Attach an einen den Restart *überlebenden* Prozess ist bewusst nicht implementiert (Stream nicht wieder ankoppelbar) — solche Sessions werden als verwaist geführt; das Repository-Seam ist die Basis für PROJ-17 (Recovery über Vault).
 
 ## QA Test Results
 _To be added by /abc-qa_

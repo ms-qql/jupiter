@@ -58,3 +58,38 @@ class EngineDriver(ABC):
     @abstractmethod
     def is_alive(self) -> bool:
         ...
+
+    @property
+    def pid(self) -> int | None:
+        """OS-PID des Subprozesses (PROJ-14 Persistenz/Verwaist-Check).
+
+        Default ``None`` — Treiber ohne echten Prozess (z. B. Fakes, ein
+        rehydrierter Platzhalter nach Restart) müssen das nicht überschreiben.
+        """
+        return None
+
+
+class DeadDriver(EngineDriver):
+    """Platzhalter-Treiber ohne Prozess (PROJ-14).
+
+    Wird beim Startup für aus dem Live-Index **rehydrierte** Sessions gesetzt:
+    der ursprüngliche Subprozess hat den Backend-Neustart nicht steuerbar
+    überlebt. ``is_alive`` ist ``False`` → eine Eingabe löst regulär den
+    ``claude --resume``-Pfad aus, der einen frischen Treiber einsetzt.
+    """
+
+    async def start(self, spec: LaunchSpec, on_event: EventHandler) -> None:  # pragma: no cover - nie aufgerufen
+        raise RuntimeError("DeadDriver kann nicht gestartet werden (rehydrierter Platzhalter).")
+
+    async def send_input(self, text: str) -> None:  # pragma: no cover - durch _resume ersetzt
+        raise RuntimeError("Session ist verwaist — bitte fortsetzen (resume), dann eingeben.")
+
+    async def pause(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    @property
+    def is_alive(self) -> bool:
+        return False
