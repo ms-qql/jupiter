@@ -1,6 +1,6 @@
 # PROJ-10: Trust-Policy — abgestuftes, konfigurierbares Vertrauen
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #5
@@ -250,4 +250,5 @@ Alle Acceptance Criteria erfüllt, alle Edge-Cases abgedeckt, alle drei QA-Bugs 
 Erst-QA fand zwei **Medium**-Bugs (A: deny unsichtbar; B: Phase rückt bei Ablehnung vor). **Beide sind jetzt backend-seitig behoben** und per Regressionstest abgesichert; AC #3 und der Ablehnungs-Edge-Case von #9/#10 sind damit erfüllt. Keine offenen Critical/High/Medium. Gesamtsuite **348 passed**. → **Bereit für erneute QA-Abnahme** (`/abc-qa 10`), danach `/abc-deploy`.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-23 · **Version:** 0.4.0 · **URL:** https://jupiter.auxevo.tech
+**Host:** Dev-VPS host-native (systemd + Caddy), Promotion `dev → main` → Webhook-Rebuild. Sammel-Deploy mit PROJ-9 + PROJ-12 (Bump 0.3.1 → 0.4.0). Gates grün: Backend 375/375, Next.js-Prod-Build, Secret-Scan.

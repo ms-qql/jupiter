@@ -1,6 +1,6 @@
 # PROJ-9: Smart Launcher — mitdenkender Session-Start
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #12
@@ -267,4 +267,5 @@ Bisher nur TestClient/Unit; diese Runde gegen einen **laufenden uvicorn** + Prod
 **Production-Ready (Runde 2): JA** — Status bleibt **Approved**.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-23 · **Version:** 0.4.0 · **URL:** https://jupiter.auxevo.tech
+**Host:** Dev-VPS host-native (systemd + Caddy), Promotion `dev → main` → Webhook-Rebuild. Sammel-Deploy mit PROJ-10 + PROJ-12 (Bump 0.3.1 → 0.4.0). Gates grün: Backend 375/375, Next.js-Prod-Build, Secret-Scan.

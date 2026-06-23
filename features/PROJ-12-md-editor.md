@@ -1,6 +1,6 @@
 # PROJ-12: MD-Editor (voll) — Obsidian-DNA
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #16 (voller Ausbau; Reader = PROJ-7)
@@ -191,4 +191,9 @@ Erweitert den bestehenden `/md`-Router (PROJ-7), keine neue Domain.
 **READY** — keine Critical/High/Medium-Bugs. Freigabe für `/abc-deploy` empfohlen.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-23 · **Version:** 0.4.0 · **URL:** https://jupiter.auxevo.tech (Doku-Tab → Datei → „Bearbeiten")
+**Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend` + Caddy), Promotion `dev → main` → GitHub-Webhook-Rebuild.
+
+Gemeinsam mit PROJ-9 + PROJ-10 als Sammel-Deploy (Bump 0.3.1 → 0.4.0). Pre-Deploy-Gates grün: Backend 375/375, Next.js-Prod-Build (inkl. TypeScript), Secret-Scan sauber.
+
+**Browser-Smoke (auf Prod zu verifizieren, hinter Basic-Auth):** Datei im Doku-Tab öffnen → „Bearbeiten" → Text ändern (Dirty-Anzeige) → `[[`-Autocomplete → Speichern (Toast) → Vorschau (Wikilinks klickbar) → Backlinks-Panel; zweiter Tab/externe Änderung → 409-Dialog.
