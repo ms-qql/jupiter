@@ -16,6 +16,7 @@ import {
   statusMeta,
 } from "@/lib/status";
 import type { Session } from "@/lib/types";
+import { APP_VERSION } from "@/lib/version";
 import { Ampel } from "./ampel";
 import { NewSessionDialog } from "./new-session-dialog";
 import { useNow, useSessions } from "./sessions-provider";
@@ -51,6 +52,9 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
           className="text-sm font-semibold tracking-tight"
         >
           🛰️ Jupiter
+          <span className="ml-1.5 align-middle text-[0.65rem] font-normal tabular-nums text-muted-foreground">
+            v{APP_VERSION}
+          </span>
         </Link>
         <NewSessionDialog>
           <button className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">

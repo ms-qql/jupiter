@@ -3,7 +3,7 @@
 ## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
-**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** offen (`/abc-frontend`)
+**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** ✅ implementiert (2026-06-23) · **QA:** offen (`/abc-qa`)
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit) — der Gantt lebt **unter dem Kanban** in derselben Ansicht.
@@ -158,6 +158,17 @@ Additiv, In-Memory (Jupiter-Override: kein DB/RLS/Migration). Umgesetzt gemäß 
 - **Tests (`backend/tests/test_proj8_gantt.py`, neu):** Phasen-Mapping, monotone max-Phase, Feature-Erkennung (Arg + Pfad), Detektor-Logik inkl. Rückwärtssprung & Nicht-Phasen-Skill, Hook-Verdrahtung (Skill öffnet weiterhin Card, Phase wird trotzdem gesetzt), `project_name`-Fallback, REST-Vertrag. **262 Tests grün** (volle Suite).
 
 **Offen für `/abc-frontend`:** `ABC_PHASES` in `lib/status.ts` spiegeln, `GanttChart` unter dem `KanbanBoard`, vier Felder in `types.ts`, `project_name`-Feld im `NewSessionDialog`, Versions-Badge in Rail/Topbar.
+
+## Frontend-Implementierung (2026-06-23)
+Next.js (Jupiter-Override), additive, gepollte Lese-Ansicht — kein Extra-Request (nutzt den bestehenden 4s-Poll aus `sessions-provider.tsx`). Gemäß Tech-Design A + Aufgaben-Zuschnitt H:
+
+- **`lib/status.ts`:** `ABC_PHASES` (8er-Liste mit Label + Kürzel, einzige Frontend-Quelle, spiegelt `abc_phases.py`) + `phaseIndex`-Helfer.
+- **`lib/types.ts`:** `AbcPhase`-Typ; `Session` um `project_name`/`abc_phase`/`abc_phase_reached`/`abc_feature` erweitert; `SessionCreate` um optionales `project_name`.
+- **`components/cockpit/gantt-chart.tsx` (neu):** komponierte Ansicht (Tailwind-Grid, kein nachgebautes Primitive). Phasen-Kopf (8 feste Spalten, sticky Label-Spalte, horizontal scrollbar), eine Zeile pro Session: Bar gefüllt bis `abc_phase_reached`, aktuelle Phase (`abc_phase`) per `ring`/Primärfarbe hervorgehoben. Beendete Sessions eingefroren + ausgegraut (`· beendet`), keine aktuelle Markierung. Neutrale Zeile ohne Phase. Vertikal scrollbar (max-h) für viele Sessions. Eigener Empty-State. `aria-label` je Zelle (offen/abgeschlossen/aktuelle Phase).
+- **`app/(cockpit)/page.tsx`:** Gantt-Sektion „ABC-Fortschritt" direkt **unter** dem `KanbanBoard` im Kanban-Tab.
+- **`new-session-dialog.tsx`:** neues Feld **„Projekt" als erstes** (vor dem Pfad); Placeholder = live Pfad-Basename; wird als `project_name` an `POST /sessions` durchgereicht (leer → Backend-Fallback).
+- **Versions-Badge:** `lib/version.ts` (liest `NEXT_PUBLIC_APP_VERSION`), via `next.config.ts` aus `package.json` injiziert (nicht manuell gepflegt). Dezent `v{version}` neben „🛰️ Jupiter" in Rail + Mobile-Topbar.
+- **Tests:** `lib/status.test.ts` (ABC_PHASES/phaseIndex) + `components/cockpit/gantt-chart.test.tsx` (neu: Füllung, Hervorhebung, nicht-linear, neutrale/beendete Zeile, Empty-State, Basename-Fallback) — via `renderToStaticMarkup`. **47 Vitest grün, ESLint sauber, `next build` erfolgreich** (TS clean, Version ins Client-Bundle injiziert).
 
 ## QA Test Results
 _To be added by /abc-qa_

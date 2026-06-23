@@ -4,6 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { GlobalStatusBar } from "@/components/cockpit/global-status-bar";
 import { SessionGrid } from "@/components/cockpit/session-grid";
 import { KanbanBoard } from "@/components/cockpit/kanban-board";
+import { GanttChart } from "@/components/cockpit/gantt-chart";
 import { ArchivedSection } from "@/components/cockpit/archived-section";
 import { NewSessionDialog } from "@/components/cockpit/new-session-dialog";
 import { SettingsDialog } from "@/components/cockpit/settings-dialog";
@@ -77,6 +78,13 @@ export default function CockpitPage() {
           <TabsContent value="kanban" className="mt-4">
             {/* Kanban = voller Pipeline-View inkl. „Fertig"-Spalte. */}
             <KanbanBoard sessions={sessions} now={now} />
+            {/* PROJ-8: ABC-Fortschritt je Session direkt unter dem Kanban. */}
+            <section className="mt-6">
+              <h2 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
+                ABC-Fortschritt
+              </h2>
+              <GanttChart sessions={sessions} />
+            </section>
           </TabsContent>
         </Tabs>
       )}

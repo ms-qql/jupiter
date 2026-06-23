@@ -66,8 +66,27 @@ export interface Session {
   parent_session_id: string | null;
   /** PROJ-5: Vorgänger → Reset-Nachfolger (1 Strang = 1 Nachfolger). */
   child_session_id: string | null;
+  /** PROJ-8: sprechendes Projekt-Label (Fallback Basename) — Gantt-Zeilen-Titel. */
+  project_name: string | null;
+  /** PROJ-8: AKTUELLE ABC-Phase (hervorgehoben). null = keine Phase. */
+  abc_phase: AbcPhase | null;
+  /** PROJ-8: WEITESTE bisher erreichte Phase (Bar-Füllung). */
+  abc_phase_reached: AbcPhase | null;
+  /** PROJ-8: Feature-Referenz, z. B. „8" (aus Skill-Arg/berührtem Spec). */
+  abc_feature: string | null;
   pending_decisions: PendingDecision[];
 }
+
+/** PROJ-8: kanonische ABC-Workflow-Phasen (spiegelt backend/app/engine/abc_phases.py). */
+export type AbcPhase =
+  | "brainstorm"
+  | "requirements"
+  | "architecture"
+  | "frontend"
+  | "backend"
+  | "qa"
+  | "deploy"
+  | "document";
 
 /** Vorschau von POST /sessions/{id}/handover/generate (PROJ-5). */
 export interface HandoverPreview {
@@ -137,4 +156,6 @@ export interface SessionCreate {
   model: ModelName;
   permission_mode?: PermissionMode;
   role?: string | null;
+  /** PROJ-8: sprechendes Projekt-Label; ohne Angabe nutzt das Backend den Basename. */
+  project_name?: string | null;
 }
