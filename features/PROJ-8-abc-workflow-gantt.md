@@ -223,4 +223,5 @@ Keine Critical/High-Bugs. Alle 11 AC + alle dokumentierten Edge Cases bestanden.
 > Hinweis (kein Bug): Eine vollständige visuelle Browser-Verifikation (Bars live wandern bei echtem `abc-*`-Skill-Lauf, 375/768/1440 px) wurde **nicht** in einem laufenden Full-Stack-Build durchgeführt — die Ansicht ist reines CSS-Grid (build-verifiziert) + Render-Tests. Empfohlen als kurzer Smoke beim `/abc-deploy`.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-23 · **URL:** https://jupiter.auxevo.tech · **Version:** v0.2.0 · **Branch:** dev → main
+ABC-Gantt unter dem Kanban + `abc_phase`/`abc_feature`/`project_name` (Engine) + Sidebar-Versions-Badge. Sichtbar, sobald ≥ 1 Session läuft.

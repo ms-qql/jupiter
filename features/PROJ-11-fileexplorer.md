@@ -277,4 +277,6 @@ Next.js 16 + shadcn/ui, Branch `dev`. Beide Oberflächen über den geteilten Hoo
 Keine Critical/High-Bugs. Backend adversarial abgesichert, Build grün. Die 5 Low-Punkte sind sichere Abweichungen/Nice-to-haves und können als Follow-up adressiert werden. Empfehlung: kurzer manueller Browser-Smoke der beiden interaktiven Flows vor `/abc-deploy`.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-23 · **URL:** https://jupiter.auxevo.tech · **Version:** v0.2.0 · **Branch:** dev → main
+Host-native (systemd `jupiter-backend`/`jupiter-frontend`, Caddy TLS, GitHub-Webhook). Ausgeliefert: `/files`-API + Fileexplorer (`/dateien`) + In-Session Dokument-Clipboard. `python-multipart` als Dependency deklariert.
+**Browser-Smoke (nach SW-/Hard-Refresh zu bestätigen):** Upload per Button/Drag-and-Drop/Paste · „Pfad kopieren" · In-Session-Anhängen fügt Pfad ein.

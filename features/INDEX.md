@@ -14,8 +14,8 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-4 | Decision Cards (Freigabe-Flow) | P0 | Deployed | PROJ-1, PROJ-3 | [Spec](PROJ-4-decision-cards.md) |
 | PROJ-5 | Context-Management & Handover | P0 | Deployed | PROJ-1, PROJ-2, PROJ-3 | [Spec](PROJ-5-context-management-handover.md) |
 | PROJ-6 | Knappheits-Konstitution | P0 | Approved | PROJ-1 | [Spec](PROJ-6-knappheits-konstitution.md) |
-| PROJ-7 | MD-Reader | P0 | Approved | PROJ-2 | [Spec](PROJ-7-md-reader.md) |
-| PROJ-8 | ABC-Workflow-Gantt (Phasen-Fortschritt je Session) | P0 | Approved | PROJ-3, PROJ-1 | [Spec](PROJ-8-abc-workflow-gantt.md) |
+| PROJ-7 | MD-Reader | P0 | Deployed | PROJ-2 | [Spec](PROJ-7-md-reader.md) |
+| PROJ-8 | ABC-Workflow-Gantt (Phasen-Fortschritt je Session) | P0 | Deployed | PROJ-3, PROJ-1 | [Spec](PROJ-8-abc-workflow-gantt.md) |
 
 ## Phase 1 — Ausbau
 
@@ -23,7 +23,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 |----|---------|------|--------|----------------|------|
 | PROJ-9 | Smart Launcher (mitdenkender Session-Start) | P1 | Planned | PROJ-3, PROJ-1 | [Spec](PROJ-9-smart-launcher.md) |
 | PROJ-10 | Trust-Policy (abgestuft, konfigurierbar) | P1 | Planned | PROJ-4, PROJ-6 | [Spec](PROJ-10-trust-policy.md) |
-| PROJ-11 | Fileexplorer + Drag-and-Drop | P1 | Approved | PROJ-1, PROJ-3 | [Spec](PROJ-11-fileexplorer.md) |
+| PROJ-11 | Fileexplorer + Drag-and-Drop | P1 | Deployed | PROJ-1, PROJ-3 | [Spec](PROJ-11-fileexplorer.md) |
 | PROJ-12 | MD-Editor (voll, Obsidian-DNA) | P1 | Planned | PROJ-7 | [Spec](PROJ-12-md-editor.md) |
 | PROJ-13 | Git-Branch-Handling (in-App, abc-konform) | P1 | Planned | PROJ-3 | [Spec](PROJ-13-git-branch-handling.md) |
 | PROJ-14 | PROJ-1-Härtung: Limit + Persistenz | P1 | Planned | PROJ-1 | [Spec](PROJ-14-engine-haertung-limit-persistenz.md) |

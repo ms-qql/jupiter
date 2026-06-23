@@ -189,4 +189,5 @@ GET /md/file?path=<pfad>                      → liest EINE .md → {path, fron
 - ✅ `next build` grün, `/doku` prerendered; bestehende Routen unberührt.
 
 ## Deployment
-_To be added by /deploy_
+**Deployed:** 2026-06-23 · **URL:** https://jupiter.auxevo.tech · **Version:** v0.2.0 · **Branch:** dev → main
+MD-Reader (`/doku`, read-only) — erstmals in Produktion mit diesem Release.
