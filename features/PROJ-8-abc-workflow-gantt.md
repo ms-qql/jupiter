@@ -1,6 +1,6 @@
 # PROJ-8: ABC-Workflow-Gantt — Phasen-Fortschritt je Session/Projekt
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 
@@ -75,7 +75,76 @@ Der **Projektname** wird beim **Start einer neuen Session** im Setup abgefragt (
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-23 · **Stack:** Next.js 16 (App Router) + Tailwind + shadcn/ui (Frontend) · FastAPI In-Memory-Engine (Backend, kein DB/RLS — Jupiter-Override) · **Branch:** dev
+
+### Kurzfassung
+Der Gantt ist eine **rein additive, gepollte Lese-Ansicht**. Er nutzt exakt dieselbe Session-Liste, die Board/Rail/Kanban schon alle 4 s laden ([sessions-provider.tsx:17](../nextjs_app/components/cockpit/sessions-provider.tsx#L17) → [listSessions, lib/api.ts:53](../nextjs_app/lib/api.ts#L53)) — **kein Extra-Request**. Es kommen drei neue Felder pro Session dazu (`project_name`, `abc_phase`, `abc_phase_reached`, `abc_feature`), die der Engine-Treiber aus den Skill-Aufrufen der Session ableitet. Damit ist die Live-Aktualisierung „gratis".
+
+### A) Komponenten-Struktur (Frontend)
+```
+app/(cockpit)/page.tsx  (Kanban-Tab)
+└── <section> „ABC-Fortschritt"        ← NEU, direkt UNTER <KanbanBoard/> (page.tsx:77-80)
+    └── GanttChart (neu)
+        ├── GanttHeader   → 8 feste Phasen-Spaltenköpfe (horizontal scrollbar)
+        ├── GanttRow  (eine pro Session)
+        │   ├── RowLabel  → „<Projektname> · Feature 8"  (links, sticky)
+        │   └── PhaseTrack → 8 Zellen:
+        │         · gefüllt bis  abc_phase_reached  (zuletzt erreichte Phase)
+        │         · aktuelle Phase (abc_phase) farblich hervorgehoben/markiert
+        │         · „beendet"-Session → Track eingefroren, dezent ausgegraut
+        └── EmptyState → „Noch keine Sessions mit ABC-Phase."
+```
+- **shadcn-first:** Es gibt keinen shadcn-Gantt. `GanttChart` ist eine **komponierte** Ansicht aus `div`/Tailwind-Grid (8-Spalten-Raster) + bestehender `Badge`/`Card` für Labels — keine nachgebaute Primitive.
+- **Sidebar-Version:** In [session-rail.tsx:48-54](../nextjs_app/components/cockpit/session-rail.tsx#L48) und der Mobile-Topbar ([cockpit-shell.tsx:52](../nextjs_app/components/cockpit/cockpit-shell.tsx#L52)) neben „🛰️ Jupiter" ein dezentes `v{version}` (muted, text-xs). Quelle: `version` aus [package.json](../nextjs_app/package.json#L3), zur Build-Zeit über `next.config.ts` als `NEXT_PUBLIC_APP_VERSION` injiziert (eine zentrale `lib/version.ts`-Konstante), **nicht** manuell gepflegt.
+
+### B) Datenmodell (neue Felder je Session)
+Erweiterung von `SessionState` ([manager.py:94](../backend/app/engine/manager.py#L94)) + `to_read()` ([manager.py:133](../backend/app/engine/manager.py#L133)) und spiegelbildlich `Session` in [types.ts:42](../nextjs_app/lib/types.ts#L42):
+
+```
+project_name      : string | null   – sprechendes Label aus dem „Neue Session"-Dialog
+                                       (Fallback: Basename von project_path)
+abc_phase         : Phase  | null    – AKTUELLE Phase (hervorgehoben). null = „keine Phase"
+abc_phase_reached : Phase  | null    – WEITESTE bisher erreichte Phase (Bar-Füllung)
+abc_feature       : string | null    – Feature-Referenz, z. B. „8" bzw. „PROJ-8"
+```
+`Phase` ∈ { brainstorm, requirements, architecture, frontend, backend, qa, deploy, document }.
+State bleibt **in-memory** (kein Neon/RLS — konsistent mit PROJ-1). Keine Migration.
+
+### C) Signalquelle & Ableitung (Backend, der Kern)
+**Eine zentrale Phasen-Konstante** (geteilt): `app/engine/abc_phases.py` mit der kanonischen Reihenfolge + Mapping `abc-skill → Phase`; im Frontend gespiegelt als `ABC_PHASES` in [lib/status.ts](../nextjs_app/lib/status.ts) (analog zu `STATUS_META`/`COLUMNS`).
+
+Skill-Aufrufe sind im MVP bereits sichtbar: jeder Tool-Aufruf läuft durch den Permission-Hook → `request_decision(tool_name, tool_input, …)` ([manager.py:324](../backend/app/engine/manager.py#L324), aufgerufen via [manager.py:566](../backend/app/engine/manager.py#L566)). Dort wird **vor** der bestehenden Card-Logik ein kleiner Detektor eingehängt:
+- `tool_name == "Skill"` **und** `tool_input["skill"]` beginnt mit `abc-` → Phase via Mapping bestimmen.
+- `abc_phase` = erkannte Phase; `abc_phase_reached` = max(bisher, neue Phase) entlang der kanonischen Reihenfolge (deckt nicht-lineare Sprünge ab, Edge-Case „Deploy vor Document").
+- `abc_feature` = `tool_input["args"]` (z. B. „8"). Fallback: aus zuletzt von der Session berührtem `features/PROJ-X-*.md`-Pfad (Write/Edit-`file_path`).
+- `abc-qa-e2e → qa`. Nicht-Phasen-Skills (`abc-refactor`, `abc-challenge`, `abc-clarification`, `/codegraph` …) ändern **nichts** (aktuelle Phase bleibt stehen).
+- Tool ist read-only-ähnlich → die bestehende Auto-Allow-Logik bleibt unberührt; der Detektor läuft nur als Seiteneffekt, erzeugt keine Decision Card.
+
+### D) API-Form
+Keine neuen Endpoints. `GET /sessions` (Liste) und der WS-State-Broadcast ([manager.py:262](../backend/app/engine/manager.py#L262)) tragen die vier neuen Felder über das erweiterte `to_read()` automatisch mit. `POST /sessions` (`SessionCreate`, [schemas/sessions.py:15](../backend/app/schemas/sessions.py#L15)) bekommt ein optionales `project_name`.
+
+### E) Entscheidungen zu den 6 offenen Design-Fragen
+1. **Phasen-Signal:** Permission-Hook (`Skill`-Tool-Aufruf), nicht roher stream-json-Parser — nutzt einen vorhandenen Per-Tool-Seam, robust & billig.
+2. **Feature-Erkennung:** primär `args` des abc-Skills; Fallback berührte `PROJ-X-*.md`.
+3. **„Abgeschlossen":** **session-lokale** Phasen-Historie (`abc_phase_reached`), NICHT der INDEX-Status — weil Zeilen pro Session sind und mehrere Sessions sich ein Projekt teilen. INDEX-Cross-Check = späteres Optional.
+4. **Granularität:** **eine Zeile pro Session**; Projektname = Label.
+5. **„Projekt":** explizites Feld im Dialog (frei, vorbelegt aus Pfad-Basename), gespeichert als `project_name`.
+6. **Achse:** **Phasen-Raster** (8 gleich breite Spalten), keine Kalender-Zeitachse.
+
+### F) Abhängigkeiten (Pakete)
+Keine neuen Pakete. Frontend: bestehendes Tailwind-Grid + shadcn `Badge`/`Card`. Backend: Standardbibliothek. (Versions-Injektion via vorhandenem `next.config.ts`.)
+
+### G) Edge-Cases → Umsetzung
+- **Keine Phase** (kein abc-Skill lief) → `abc_phase=null`, neutrale Zeile, leerer Track.
+- **Feature unklar** (Skill ohne Arg) → Projektname ohne Feature-Suffix, Track zeigt nur die Phase.
+- **Mehrere Sessions/Projekt** → mehrere Zeilen, gleiches Label.
+- **Session beendet/Fehler** → letzter Stand eingefroren, optisch „beendet".
+- **0 Sessions** → eigener Empty-State im Gantt-Abschnitt.
+- **Viele Sessions** → vertikal scrollbarer Bereich; eine flache Zeile/Session, performant.
+
+### H) Aufgaben-Zuschnitt für die Spezialisten
+- **Backend (`/abc-backend`):** `abc_phases.py` (Konstante+Mapping), Detektor in `request_decision`, drei Felder in `SessionState`/`to_read()`, `project_name` in `SessionCreate`/Session-Anlage, Tests (Skill-Erkennung, max-Phase, Fallback).
+- **Frontend (`/abc-frontend`):** `ABC_PHASES` in `status.ts`, `GanttChart`+Sub-Komponenten, Einhängen unter `KanbanBoard`, `project_name`-Feld im `NewSessionDialog`, Versions-Badge in Rail/Topbar, neue Felder in `types.ts`.
 
 ## QA Test Results
 _To be added by /abc-qa_
