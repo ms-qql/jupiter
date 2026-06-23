@@ -159,3 +159,42 @@ export interface SessionCreate {
   /** PROJ-8: sprechendes Projekt-Label; ohne Angabe nutzt das Backend den Basename. */
   project_name?: string | null;
 }
+
+// --- PROJ-11: Fileexplorer + Clipboard -------------------------------------
+
+/** Eine Datei oder ein Ordner — spiegelt backend/app/schemas/files.py FileEntry. */
+export interface FileEntry {
+  name: string;
+  kind: "file" | "dir";
+  size: number;
+  mtime: string; // ISO
+  path: string; // absoluter Pfad (für „Pfad kopieren" / In-Session-Referenz)
+}
+
+/** Erlaubter Wurzel-Ordner (RootSelector). */
+export interface RootEntry {
+  label: string;
+  path: string;
+}
+
+/** Antwort von GET /files/list. */
+export interface DirListing {
+  path: string;
+  entries: FileEntry[];
+}
+
+/** Antwort von POST /files/upload. */
+export interface UploadResult {
+  files: FileEntry[];
+}
+
+/** Antwort von POST /files/delete. */
+export interface DeleteResult {
+  deleted: string[];
+  failed: string[];
+}
+
+/** Clipboard-Ordner (GET/PATCH /settings/clipboard-dir). */
+export interface ClipboardDir {
+  path: string;
+}

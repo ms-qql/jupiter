@@ -6,7 +6,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon } from "lucide-react";
+import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FolderIcon } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
@@ -76,6 +76,19 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
         >
           <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
           Doku
+        </Link>
+        <Link
+          href="/dateien"
+          onClick={onItemClick}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+            pathname.startsWith("/dateien")
+              ? "bg-accent text-accent-foreground"
+              : "text-foreground/90 hover:bg-accent/50",
+          )}
+        >
+          <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
+          Dateien
         </Link>
       </div>
 

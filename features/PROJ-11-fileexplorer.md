@@ -4,7 +4,7 @@
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #15 (+ Clipboard-Paste-Erweiterung)
-**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** offen (`/abc-frontend`)
+**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** ✅ implementiert (2026-06-23)
 
 ## Dependencies
 - Requires: PROJ-1 (Pfad-Scope) — Wiederverwendung der erlaubten Roots / `validate_project_path`-Logik für sicheren Datei-Zugriff.
@@ -209,6 +209,28 @@ Fehler: 400 (außerhalb Roots / zu groß / Typ nicht erlaubt / ungültiger Name)
 - **Clipboard-Paste ohne Endung** (Browser-„blob") → Endung wird aus `content_type` ergänzt; **gänzlich namenlos** → `clip-YYYYMMDD-HHMMSS.<ext>`.
 - **Upload-Whitelist** (`upload_allowed_extensions`) deckt Bilder + gängige Dokumente ab; **leere Menge = alles erlauben**. Extensionslose Dateien (z. B. `LICENSE`) werden bei aktiver Whitelist abgelehnt — bei Bedarf Whitelist via `JUPITER_UPLOAD_ALLOWED_EXTENSIONS` leeren/erweitern.
 - Echtes **Streaming** (kein Voll-RAM) via synchrone Handler + Chunk-Copy in temp-Datei; harter Abbruch bei Größenüberschreitung.
+
+## Frontend-Implementierung (2026-06-23)
+Next.js 16 + shadcn/ui, Branch `dev`. Beide Oberflächen über den geteilten Hook `useFileUpload`.
+
+**Neue Dateien:**
+- `components/cockpit/use-file-upload.ts` — geteilter Upload-Hook (Default-Ziel = Clipboard).
+- `components/cockpit/session-clipboard-button.tsx` — Surface-B-Button („Anhängen").
+- `components/cockpit/file-explorer.tsx` — Surface-A-Explorer (Roots, Navigation, Drop/Paste/Upload, Neuer Ordner, Download, Pfad kopieren, Umbenennen, Löschen, Clipboard-Pin).
+- `app/(cockpit)/dateien/page.tsx` — Route „Dateien".
+- `lib/clipboard.ts` — `copyText`-Helfer.
+
+**Geändert:**
+- `lib/types.ts` + `lib/api.ts` — File-Typen + API-Funktionen (`listFileRoots`, `listDir`, `uploadFiles` (multipart), `makeDir`, `renameFile`, `moveFile`, `deleteFiles`, `fileDownloadUrl`, `get/setClipboardDir`).
+- `app/(cockpit)/sessions/[id]/page.tsx` — **Surface B**: „Anhängen"-Button + `onPaste`/`onDrop` an der Textarea → Upload in Clipboard-Ordner → absoluter Pfad ins Eingabefeld eingefügt.
+- `components/cockpit/session-rail.tsx` — Sidebar-Link „Dateien".
+
+**Verifikation:** ESLint sauber; `tsc` für alle PROJ-11-Dateien fehlerfrei (einziger Projekt-tsc-Fehler liegt in der fremden PROJ-7-Datei `lib/md-tree.test.ts`).
+
+**Bewusste MVP-Abweichungen (für QA):**
+- **Verschieben (move):** Backend-Endpoint vorhanden; im Explorer-UI noch **kein** Ziel-Picker (Umbenennen/Löschen/Upload sind drin). Nachgelagert.
+- **Pfad-Einfügen** in die Session-Textarea hängt den Pfad **am Ende** an (nicht an Cursor-Position) — pragmatischer MVP.
+- Umbenennen/Neuer-Ordner nutzen native `window.prompt`/`confirm` (kein eigener Dialog) — bewusst schlank.
 
 ## QA Test Results
 _To be added by /abc-qa_

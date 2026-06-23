@@ -14,6 +14,8 @@ import { ThresholdBadge } from "@/components/cockpit/threshold-badge";
 import { HandoverDialog } from "@/components/cockpit/handover-dialog";
 import { ResetSessionButton } from "@/components/cockpit/reset-session-button";
 import { SessionThresholdControl } from "@/components/cockpit/threshold-control";
+import { SessionClipboardButton } from "@/components/cockpit/session-clipboard-button";
+import { useFileUpload } from "@/components/cockpit/use-file-upload";
 import { useNow } from "@/components/cockpit/sessions-provider";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { ApiError, getSession, sendInput, stopSession } from "@/lib/api";
@@ -48,6 +50,21 @@ export default function SessionDetailPage({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
+  // Surface B (PROJ-11): Datei anhängen → Upload in den Clipboard-Ordner →
+  // absoluten Pfad ins Eingabefeld einfügen (referenzieren).
+  const { upload, uploading } = useFileUpload();
+
+  async function attachFiles(files: File[]) {
+    const entries = await upload(files);
+    if (entries.length === 0) return;
+    const paths = entries.map((e) => e.path).join(" ");
+    setInput((prev) => (prev.trim() ? `${prev.trimEnd()} ${paths} ` : `${paths} `));
+    toast.success(
+      entries.length === 1
+        ? "Datei angehängt — Pfad eingefügt"
+        : `${entries.length} Dateien angehängt — Pfade eingefügt`,
+    );
+  }
 
   useEffect(() => {
     let active = true;
@@ -273,11 +290,34 @@ export default function SessionDetailPage({
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSend(e);
           }}
+          onPaste={(e) => {
+            // Datei aus der Zwischenablage (Screenshot) → anhängen statt einfügen.
+            const files = Array.from(e.clipboardData.files);
+            if (files.length) {
+              e.preventDefault();
+              attachFiles(files);
+            }
+          }}
+          onDrop={(e) => {
+            const files = Array.from(e.dataTransfer.files);
+            if (files.length) {
+              e.preventDefault();
+              attachFiles(files);
+            }
+          }}
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+          }}
         />
         <div className="flex flex-col gap-2">
           <Button type="submit" disabled={!input.trim() || busy || hasPending}>
             {ended ? "Fortsetzen" : "Senden"}
           </Button>
+          <SessionClipboardButton
+            onPick={attachFiles}
+            disabled={hasPending}
+            uploading={uploading}
+          />
           {!ended && (
             <Button type="button" variant="outline" onClick={handleStop}>
               Stop
