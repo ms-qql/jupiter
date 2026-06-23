@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-8
+**Next Available ID:** PROJ-9
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -15,6 +15,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-5 | Context-Management & Handover | P0 | Planned | PROJ-1, PROJ-2, PROJ-3 | [Spec](PROJ-5-context-management-handover.md) |
 | PROJ-6 | Knappheits-Konstitution | P0 | Approved | PROJ-1 | [Spec](PROJ-6-knappheits-konstitution.md) |
 | PROJ-7 | MD-Reader | P0 | Planned | PROJ-2 | [Spec](PROJ-7-md-reader.md) |
+| PROJ-8 | ABC-Workflow-Gantt (Phasen-Fortschritt je Session) | P1 | Planned | PROJ-3, PROJ-1 | [Spec](PROJ-8-abc-workflow-gantt.md) |
 
 ## Empfohlene Bau-Reihenfolge (Phase 0)
 1. **PROJ-1** — Engine-Treiber (riskantester Unbekannter; Verifikations-Spike zuerst)
@@ -26,5 +27,6 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 7. **PROJ-7** — MD-Reader
 
 ## Roadmap (noch ohne Spec — siehe docs/PRD.md)
+- **P1 (mit Spec):** PROJ-8 ABC-Workflow-Gantt — Cockpit-Erweiterung, baut auf PROJ-3 (fertig) + PROJ-1 (Phasen-/Feature-Erkennung) auf.
 - **P1:** Smart Launcher #12 · Trust-Policy #5 · Fileexplorer #15 · MD-Editor #16 · Vault Stufe 3 #9/#10/#11 · Watchdog #19 · Recovery #20 · weitere Engines #13 · RAG/Späher/Caching/Token-Dashboard #23/#26/#27/#28 · Spracheingabe #29 · Git-Branch-Handling #31 · PROJ-1-Härtung: Session-Limit + Persistenz (QA-3)
 - **P2:** Multi-Agent-Dispatch #17/#18 · Cross-Agent-Review #30 · Vault als geteilter Dienst #14 · echtes Auth/RLS #21 · Registry
