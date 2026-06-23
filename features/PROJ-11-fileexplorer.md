@@ -1,9 +1,10 @@
 # PROJ-11: Fileexplorer + Drag-and-Drop-Transport
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #15 (+ Clipboard-Paste-Erweiterung)
+**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** offen (`/abc-frontend`)
 
 ## Dependencies
 - Requires: PROJ-1 (Pfad-Scope) — Wiederverwendung der erlaubten Roots / `validate_project_path`-Logik für sicheren Datei-Zugriff.
@@ -176,6 +177,38 @@ PATCH /settings/clipboard-dir     → Clipboard-Pfad setzen (Scope-geprüft)
 - **Konkreter Clipboard-Pfad** (Default-Vorschlag `/home/dev/projects/clipboard`) — in der Review bestätigen.
 - **Browse-Scope:** beide Roots (Projekte + Tools) oder nur Projekte? Default-Vorschlag: beide, wie heute bei Sessions.
 - **Aufräumen** des Clipboard-Ordners: im MVP keine Auto-Löschung (siehe Open Design Question 2).
+
+## Backend-Implementierung (2026-06-23)
+Geliefert auf Branch `dev`. Dateisystem-Ebene, kein DB/JWT (Jupiter-Override); `realpath`-Scope auf `allowed_roots`.
+
+**Neue Dateien:**
+- `backend/app/engine/files.py` — `FileService` (Pfad-Härtung, gestreamter Upload mit Größen-Abbruch, atomares Schreiben via `os.replace`, `uniqueName`, Clipboard-Ordner).
+- `backend/app/schemas/files.py` — Pydantic-Schemas (FileEntry, DirListing, UploadResult, …).
+- `backend/app/routes/files.py` — `/files`-Router (synchrone Handler → Threadpool-Streaming).
+- `backend/tests/test_proj11_files.py` — 21 Tests (Upload/Paste, Listing, Download, Ops, Security, Clipboard-Dir).
+
+**Geändert:** `config.py` (`clipboard_dir` Default `/home/dev/projects/clipboard`, `upload_max_file_bytes` 50 MB, `upload_allowed_extensions`), `routes/settings.py` + `schemas/settings.py` (Clipboard-Dir-Endpoints), `main.py` (`app.state.files` + Router).
+
+**Route-Kontrakt (fürs Frontend, `/abc-frontend`):**
+| Methode + Pfad | Eingabe | Antwort |
+|---|---|---|
+| `GET /files/roots` | — | `[{label, path}]` (RootSelector) |
+| `GET /files/list?path=` | optional `path` (Default = erste Wurzel) | `{path, entries:[{name,kind,size,mtime,path}]}` (Ordner zuerst) |
+| `GET /files/download?path=` | `path` | Datei-Stream (FileResponse) |
+| `POST /files/upload` | multipart `files[]` + optional Form `target_dir` (Default = Clipboard) | `{files:[FileEntry]}` — **`path` ist absolut** (für „Pfad kopieren" / Einfügen in Session-Textarea) |
+| `POST /files/mkdir` | `{parent, name}` | `FileEntry` |
+| `POST /files/rename` | `{path, new_name}` | `FileEntry` |
+| `POST /files/move` | `{path, dest_dir}` | `FileEntry` |
+| `POST /files/delete` | `{paths:[…]}` | `{deleted:[…], failed:[…]}` |
+| `GET/PATCH /settings/clipboard-dir` | PATCH `{path}` | `{path}` |
+
+Fehler: 400 (außerhalb Roots / zu groß / Typ nicht erlaubt / ungültiger Name), 404 (nicht gefunden), 409 (Namenskollision bei rename/move/mkdir).
+
+**Hinweise / kleine Abweichungen:**
+- **Surface B (In-Session):** Frontend ruft `POST /files/upload` (Default-Ziel Clipboard) und fügt den zurückgegebenen `files[0].path` in die Session-`Textarea` ein.
+- **Clipboard-Paste ohne Endung** (Browser-„blob") → Endung wird aus `content_type` ergänzt; **gänzlich namenlos** → `clip-YYYYMMDD-HHMMSS.<ext>`.
+- **Upload-Whitelist** (`upload_allowed_extensions`) deckt Bilder + gängige Dokumente ab; **leere Menge = alles erlauben**. Extensionslose Dateien (z. B. `LICENSE`) werden bei aktiver Whitelist abgelehnt — bei Bedarf Whitelist via `JUPITER_UPLOAD_ALLOWED_EXTENSIONS` leeren/erweitern.
+- Echtes **Streaming** (kein Voll-RAM) via synchrone Handler + Chunk-Copy in temp-Datei; harter Abbruch bei Größenüberschreitung.
 
 ## QA Test Results
 _To be added by /abc-qa_

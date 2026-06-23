@@ -95,5 +95,27 @@ class Settings(BaseSettings):
     # die Anreicherung ist ein optionaler Aufsatz (Tech-Design PROJ-5).
     handover_llm_enrich: bool = False
 
+    # --- Fileexplorer + Clipboard (PROJ-11) ------------------------------
+    # Globaler, kurzer Clipboard-Ordner: Pastes/Drops landen hier, der Pfad ist
+    # aus jeder Session/jedem Terminal kurz referenzierbar. MUSS innerhalb von
+    # allowed_roots liegen (sonst weder im Explorer browsbar noch sicher). Wird
+    # bei Bedarf automatisch angelegt. Pro Lauf via JUPITER_CLIPBOARD_DIR / PATCH
+    # /settings/clipboard-dir überschreibbar.
+    clipboard_dir: str = "/home/dev/projects/clipboard"
+    # Obergrenze pro hochgeladener Datei (Streaming-Abbruch bei Überschreitung).
+    upload_max_file_bytes: int = 50 * 1024 * 1024  # 50 MB
+    # Erlaubte Datei-Endungen (lowercase, ohne Punkt) für Uploads. LEERE Menge =
+    # alle erlauben (Escape-Hatch). Default deckt Bilder + gängige Dokumente ab.
+    upload_allowed_extensions: set[str] = {
+        # Bilder
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "heic",
+        # Dokumente / Text / Daten
+        "pdf", "txt", "md", "markdown", "rtf", "csv", "tsv", "json", "yaml",
+        "yml", "log", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt",
+        "ods", "odp",
+        # Archive
+        "zip", "tar", "gz", "tgz",
+    }
+
 
 settings = Settings()

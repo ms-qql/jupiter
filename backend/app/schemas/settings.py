@@ -16,3 +16,15 @@ class ThresholdSettingPatch(BaseModel):
     """Neue globale Schwelle (%) — wird serverseitig auf [min, max] geklemmt."""
 
     threshold_pct: int = Field(..., description="Neuer globaler Schwellenwert in % (geklemmt).")
+
+
+class ClipboardDirRead(BaseModel):
+    """Aktueller Clipboard-Ordner (PROJ-11) — absoluter Pfad, innerhalb der Roots."""
+
+    path: str
+
+
+class ClipboardDirPatch(BaseModel):
+    """Neuer Clipboard-Ordner — muss innerhalb der allowed_roots liegen."""
+
+    path: str = Field(..., min_length=1, description="Absoluter Ordnerpfad innerhalb der erlaubten Roots.")
