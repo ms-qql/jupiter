@@ -23,7 +23,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 |----|---------|------|--------|----------------|------|
 | PROJ-9 | Smart Launcher (mitdenkender Session-Start) | P1 | Planned | PROJ-3, PROJ-1 | [Spec](PROJ-9-smart-launcher.md) |
 | PROJ-10 | Trust-Policy (abgestuft, konfigurierbar) | P1 | Planned | PROJ-4, PROJ-6 | [Spec](PROJ-10-trust-policy.md) |
-| PROJ-11 | Fileexplorer + Drag-and-Drop | P1 | Planned | PROJ-1 | [Spec](PROJ-11-fileexplorer.md) |
+| PROJ-11 | Fileexplorer + Drag-and-Drop | P1 | Architected | PROJ-1, PROJ-3 | [Spec](PROJ-11-fileexplorer.md) |
 | PROJ-12 | MD-Editor (voll, Obsidian-DNA) | P1 | Planned | PROJ-7 | [Spec](PROJ-12-md-editor.md) |
 | PROJ-13 | Git-Branch-Handling (in-App, abc-konform) | P1 | Planned | PROJ-3 | [Spec](PROJ-13-git-branch-handling.md) |
 | PROJ-14 | PROJ-1-Härtung: Limit + Persistenz | P1 | Planned | PROJ-1 | [Spec](PROJ-14-engine-haertung-limit-persistenz.md) |
