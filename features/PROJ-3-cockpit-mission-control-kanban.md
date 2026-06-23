@@ -164,6 +164,21 @@ Keine neuen Endpoints/Tabellen. Damit ist der Backend-Blocker für PROJ-3 (CORS)
 
 → Bereit für `/abc-qa`.
 
+## Nachträge / Enhancements (2026-06-23)
+Zwei Nutzer-Anforderungen nach dem ersten Cockpit-Release umgesetzt:
+
+### 1. Auxevo-Branding + Light/Dark-Toggle
+- **Brand-Tokens** (aus HAL `00 Context/Branding.md`) in `app/globals.css` für **beide** Modi: Teal `#0D9488` als Primary/Ring, Ink `#0A0A0A` / Off-White `#FAFAFA`, Surfaces `#171717`/`#1F1F1F`, Radius 8px (sm/md/lg ≈ 4/6/8). Light-Mode aus dem Dark-first-Brand abgeleitet.
+- **Fonts** DSGVO-konform via `next/font` self-hosted: **DM Sans** (Sans) + **JetBrains Mono** (Mono) — ersetzt Geist.
+- **Theme-Toggle** (`components/cockpit/theme-toggle.tsx`, Sonne/Mond) oben rechts in Board-Header, Detail-Header und Mobile-Topbar; `next-themes` `ThemeProvider`, **Dark als Brand-Default**, expliziter Light/Dark-Switch (kein System-Mode). Verifiziert: Dark+Light per Screenshot, Toggle schaltet `html.dark`/`html.light`.
+
+### 2. Beendete Session fortsetzen (Bug: „kann nicht weiterarbeiten")
+Eine selbst beendete Session (`done`/`error`) ließ sich nicht fortsetzen — die Detailseite blendete die Eingabe aus, und `POST /input` warf 409.
+- **Backend (PROJ-1-Engine):** `claude --resume <session-id>` lädt die bestehende Konversation. `LaunchSpec.resume`, `build_argv` (resume → `--resume` statt `--session-id`), `SessionManager.send_input` ist resume-fähig (toter Treiber → frischer Treiber via `_resume`, Modell-Alias-Normalisierung), neuer `_model_alias`-Helfer. Treiber-Swap am `SessionRuntime`, `_done_fired` zurückgesetzt.
+- **Frontend:** Detailseite zeigt die Eingabe **immer**; bei beendeter Session Hinweis „Session beendet — eine Nachricht setzt sie fort." + Button **„Fortsetzen"** (Stop ausgeblendet). Die offene WS-Verbindung streamt die fortgesetzten Events live.
+- **Tests:** Backend `test_send_input_resumes_done_session`, `test_build_argv_resume_vs_new`, `test_input_after_stop_resumes` (alter 409-Test auf neues Soll umgestellt) → **124 passed**.
+- **Live verifiziert:** beendete Haiku-Session per `POST /input` fortgesetzt → sie **erinnerte den Kontext** (zuvor gemerkte Zahl „42") + UI-End-to-End („Fortsetzen" → „Arbeitet ● live").
+
 ## QA Test Results
 **Getestet:** 2026-06-22 · **Branch:** dev · **Methode:** Vitest-Unit (lib/status.ts) + Playwright-E2E gegen laufendes Backend (uvicorn, 1 Worker) + visuelle Screenshots (Empty/Board/Kanban/Detail/Responsive/Error).
 
