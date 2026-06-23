@@ -137,6 +137,8 @@ class SessionState:
     abc_phase: str | None = None  # AKTUELLE Phase (hervorgehoben). None = „keine Phase".
     abc_phase_reached: str | None = None  # WEITESTE bisher erreichte Phase (Bar-Füllung).
     abc_feature: str | None = None  # Feature-Referenz, z. B. „8" (aus Skill-Arg/berührtem Spec).
+    # PROJ-10: zuletzt aufgerufener Skill (für Skill-Kontext der Trust-Policy).
+    current_skill: str | None = None
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -377,6 +379,11 @@ class SessionRuntime:
         gestreamt (Live-Aktualisierung der Bars, gratis über ``to_read``).
         """
         s = self.state
+        # PROJ-10: zuletzt genutzten Skill mitführen (Policy-Kontext „skill").
+        if tool_name == "Skill":
+            skill = str((tool_input or {}).get("skill", "")).strip()
+            if skill:
+                s.current_skill = skill
         before = (s.abc_phase, s.abc_phase_reached, s.abc_feature)
         s.abc_phase, s.abc_phase_reached, s.abc_feature = abc_phases.detect_phase_signal(
             tool_name,
@@ -393,41 +400,104 @@ class SessionRuntime:
     async def request_decision(
         self, decision_id: str, tool_name: str, tool_input: dict | None
     ) -> DecisionOutcome:
-        """Vom Freigabe-Hook aufgerufen, bevor ein Tool läuft.
+        """Vom Freigabe-Hook aufgerufen, bevor ein Tool läuft (PROJ-4/PROJ-10).
 
-        Lesezugriffe (``policy.requires_card`` = False) → sofortiges ``allow`` ohne Card.
-        Sonst: Card anlegen, Status auf ``awaiting_approval``, und **blockieren**, bis der
-        Nutzer entscheidet (``resolve_decision``) oder die Session stirbt (``abandon``).
+        Reihenfolge (eine Entscheidungsstelle, zwei Sorten Gate):
+        1. **Hartes Phasen-Gate** (bypass-fest): erkannter ABC-Phasenwechsel → Card,
+           pausiert die Session — **auch im Bypass**.
+        2. **Operativer Evaluator**: ``auto-allow`` → durch; ``deny`` → nie ausgeführt
+           (ablehnende Notiz); ``card`` → Freigabe nötig (im Bypass durchlässig).
         """
-        # PROJ-8: Phasen-/Feature-Detektor als reiner Seiteneffekt VOR der Card-Logik.
-        # Verändert nie, OB eine Card entsteht — beobachtet nur die ABC-Skill-Aufrufe.
+        # PROJ-8/PROJ-10: Phasen-/Feature-/Skill-Detektor VOR der Gate-Logik. Phase
+        # VORHER merken, um einen echten Übergang zu erkennen.
+        old_phase = self.state.abc_phase
         self._detect_abc(tool_name, tool_input)
+        new_phase = self.state.abc_phase
 
-        if not policy.requires_card(tool_name, tool_input):
+        # 1) Hartes, bypass-festes Phasen-Übergangs-Gate.
+        if self._should_gate_phase(old_phase, new_phase):
+            return await self._open_card(
+                decision_id, tool_name, tool_input,
+                card_type="phase_transition",
+                triggering_rule=f"Phasen-Gate: {old_phase} → {new_phase}",
+                action=f"Phasenwechsel {old_phase} → {new_phase}",
+            )
+
+        # 2) Operative Auswertung der abgestuften Trust-Policy.
+        decision = policy.policy_store.evaluate(
+            tool_name,
+            role=self.state.role,
+            skill=self.state.current_skill,
+            project=self.state.project_name or self.state.project_path,
+        )
+
+        if decision.level == policy.AUTO_ALLOW:
             return DecisionOutcome(behavior="allow", auto=True)
 
-        # bypassPermissions (PROJ-1): operative Aktionen laufen OHNE Card durch.
-        # Der PreToolUse-Hook feuert in Claude Code auch im Bypass — ohne diese Ausnahme
-        # würde jede Schreib-/Exec-Aktion trotzdem blockieren (Bug: Bypass wirkte wie
-        # „Standard"). Künftige „harte" Gates (Phasen-Übergang, PROJ-10) werden hier gezielt
-        # AUSGENOMMEN, damit sie auch im Bypass weiterhin eine Card erzeugen.
+        if decision.level == policy.DENY:
+            # Hart verboten: Aktion wird NIE ausgeführt; Claude erhält die Begründung
+            # inline (deny), die Session blockiert NICHT. Eine ablehnende Notiz wird als
+            # transientes Event gebroadcastet (Nachvollziehbarkeit), ohne Pending-Card.
+            reason = decision.reason or "Durch Trust-Policy verboten."
+            self._broadcast({
+                "kind": "decision", "event": "denied",
+                "decision": self._deny_notice(decision_id, tool_name, tool_input, decision),
+            })
+            return DecisionOutcome(behavior="deny", reason=f"{reason} ({decision.rule})")
+
+        # decision.level == CARD
+        # bypassPermissions (PROJ-1): OPERATIVE Freigaben laufen OHNE Card durch
+        # (nur die harten Gates oben feuern auch im Bypass).
         if self.state.permission_mode == "bypassPermissions":
             return DecisionOutcome(behavior="allow", auto=True)
 
+        return await self._open_card(
+            decision_id, tool_name, tool_input,
+            card_type="normal", triggering_rule=decision.rule,
+        )
+
+    def _should_gate_phase(self, old_phase: str | None, new_phase: str | None) -> bool:
+        """Echter, zu gatender ABC-Phasenübergang? (Entprellung über old≠new.)
+
+        Gilt nur für Übergänge ZWISCHEN zwei erkannten Phasen (``old`` ≠ None) — der
+        allererste Phaseneintritt (None→X, Session-Start) ist kein Übergang. Welche
+        Ziel-Phasen gaten, kommt aus der Policy (leere Liste = jeder Wechsel).
+        """
+        if old_phase is None or new_phase is None or old_phase == new_phase:
+            return False
+        gate = policy.policy_store.phase_gate()
+        if not gate.get("enabled"):
+            return False
+        transitions = gate.get("transitions") or []
+        return not transitions or new_phase in transitions
+
+    async def _open_card(
+        self,
+        decision_id: str,
+        tool_name: str,
+        tool_input: dict | None,
+        *,
+        card_type: str,
+        triggering_rule: str,
+        action: str | None = None,
+    ) -> DecisionOutcome:
+        """Legt eine blockierende Decision Card an und wartet auf die Auflösung."""
         card = PendingDecision(
             decision_id=decision_id,
             session_id=self.state.session_id,
             tool_name=tool_name,
-            action=policy.summarize_action(tool_name, tool_input),
+            action=action or policy.summarize_action(tool_name, tool_input),
             excerpt=policy.extract_excerpt(tool_name, tool_input),
             rationale=policy.clip_rationale(self._last_assistant_text),
             context={
                 "project_path": self.state.project_path,
                 "role": self.state.role,
-                "phase": self.state.constitution_source,
+                "phase": self.state.abc_phase,  # PROJ-10-Fix: echte Phase (war constitution_source).
             },
             created_at=_now().isoformat(),
             tool_input=tool_input or {},
+            triggering_rule=triggering_rule,
+            card_type=card_type,
         )
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self.pending[decision_id] = card
@@ -438,6 +508,27 @@ class SessionRuntime:
         self._broadcast({"kind": "state", **self.to_read()})
         self._maybe_persist()  # PROJ-14: awaiting_approval spiegeln (zählt aktiv).
         return await fut
+
+    def _deny_notice(
+        self, decision_id: str, tool_name: str, tool_input: dict | None, decision
+    ) -> dict:
+        """Transiente Ablehnungs-Notiz (kein Pending-Card) für die UI-Sichtbarkeit."""
+        return PendingDecision(
+            decision_id=decision_id,
+            session_id=self.state.session_id,
+            tool_name=tool_name,
+            action=policy.summarize_action(tool_name, tool_input),
+            excerpt=policy.extract_excerpt(tool_name, tool_input),
+            rationale=decision.reason or "Durch Trust-Policy verboten.",
+            context={"project_path": self.state.project_path, "role": self.state.role,
+                     "phase": self.state.abc_phase},
+            created_at=_now().isoformat(),
+            tool_input=tool_input or {},
+            triggering_rule=decision.rule,
+            card_type="deny",
+            state="resolved",
+            resolution="deny",
+        ).to_read()
 
     def resolve_decision(
         self, decision_id: str, approve: bool, comment: str | None = None

@@ -173,6 +173,20 @@ API-Kontrakt gebaut; Backend (Evaluator + Phasen-Gate + `/settings/policy`) folg
 
 **Offene Designwahl (für Backend):** Config-Format **YAML** angenommen (PyYAML); Match-Spezifität tool+rolle+skill+projekt > … > default, deny gewinnt; `transitions` = Ziel-Phasen, leer = jeder Wechsel.
 
+## Backend-Implementierung (2026-06-23)
+Stack: FastAPI + **dateibasierte Policy** (YAML, kein DB). Branch `dev`. In-memory/Datei-Ansatz wie PROJ-6.
+
+**Neu/geändert:**
+- `engine/policy.py` — gestufter Evaluator: `PolicyStore` (YAML, **mtime-Live-Reload**, Fallback bei Defekt), `evaluate(tool, role, skill, project) → PolicyDecision(level, rule, reason)`. Stufen `auto-allow`/`card`/`deny`; Spezifität tool+rolle+skill+projekt > … > Default; bei Gleichstand deny>card>auto (Konflikt geloggt). `project` matcht per Teilstring. Default ohne Datei/Regel = konservativ (Lesen auto, Rest card; unbekanntes Tool → card). `snapshot()`/`save()` für die API. Modul-Singleton `policy_store`.
+- `engine/manager.py` — `request_decision` neu: **(1)** hartes, bypass-festes **Phasen-Gate** (`_should_gate_phase`, Entprellung via old≠new, nur echte Übergänge old≠None), **(2)** Evaluator (auto/deny/card). `deny` blockiert die Session **nicht** (Aktion nie ausgeführt, Claude erhält Grund inline + transiente `deny`-Notiz). `card` im Bypass durchlässig. Neuer `_open_card`-Helfer. `SessionState.current_skill` (Skill-Kontext), `_detect_abc` führt ihn mit. **Bugfix:** Card-`context.phase` trägt jetzt `abc_phase` statt `constitution_source`.
+- `engine/decisions.py` — `PendingDecision` um `triggering_rule` + `card_type` (`normal`/`phase_transition`/`deny`).
+- `schemas/sessions.py` — `PendingDecisionRead` um dieselben Felder.
+- `schemas/settings.py` + `routes/settings.py` — `GET /settings/policy`, `PUT /settings/policy` (validiert Stufen + Phasen-Namen → 400/422, schreibt YAML, live), `GET /settings/policy/preview`.
+- `config.py` — `policy_config_path` (Default `backend/config/policy.yaml`, muss nicht existieren).
+- `config/policy.example.yaml` (dokumentierte Vorlage, nicht geladen); Laufzeit-`policy.yaml` in `.gitignore`.
+
+**Tests:** `tests/test_proj10_trust_policy.py` — 18 Tests (Stufen/Spezifität/Konflikt/Default/Defekt-Fallback/Live-Reload, Phasen-Gate feuert im Bypass, operative Card im Bypass durchlässig, deny ohne Pending-Card, Card trägt Regel+echte Phase, REST GET/PUT/preview inkl. 400/422). **Gesamtsuite: 322 passed.**
+
 ## QA Test Results
 _To be added by /abc-qa_
 

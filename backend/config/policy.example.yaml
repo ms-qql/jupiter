@@ -1,0 +1,34 @@
+# Trust-Policy (PROJ-10) — BEISPIEL / Vorlage.
+#
+# Diese Datei wird NICHT geladen. Aktiv ist allein `policy.yaml` im selben Ordner
+# (JUPITER_POLICY_CONFIG_PATH überschreibt den Pfad). Fehlt `policy.yaml`, gilt der
+# konservative Default: Lese-Tools laufen durch, Schreib-/Shell-Tools erzeugen eine
+# Decision Card (rückwärtskompatibel zu PROJ-4). Die Datei wird bei jeder Auswertung
+# mtime-geprüft → Änderungen sind sofort live, ohne Backend-Neustart.
+
+# Regeln: spezifischere (mehr gesetzte Match-Felder) schlägt allgemeinere; bei
+# gleicher Spezifität gewinnt die restriktivere Stufe (deny > card > auto-allow).
+# Leeres Match-Feld = beliebig. `project` matcht als Teilstring (Label oder Pfad).
+rules:
+  # Vertraue dem Architekten beim Lesen/Planen — Bash läuft ohne Card.
+  - tool: Bash
+    role: architect
+    level: auto-allow
+    reason: Architekt arbeitet read-mostly
+
+  # Niemals außerhalb der Projekte schreiben (greift überall).
+  - tool: Write
+    project: /etc
+    level: deny
+    reason: Schreiben außerhalb des Projekt-Scopes verboten
+
+  # Tasks (Subagenten) generell freigabepflichtig.
+  - tool: Task
+    level: card
+
+# Phasen-Übergangs-Gate (bypass-fest): erzeugt beim ABC-Phasenwechsel eine Freigabe,
+# AUCH im bypassPermissions-Modus. transitions = Ziel-Phasen, deren Eintritt gated;
+# leere Liste = JEDER Phasenwechsel. enabled: false schaltet es ganz ab.
+phase_gate:
+  enabled: true
+  transitions: []   # z. B. [frontend, backend, deploy] für nur diese Eintritte

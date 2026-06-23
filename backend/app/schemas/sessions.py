@@ -62,6 +62,8 @@ class PendingDecisionRead(BaseModel):
     state: str
     resolution: str | None = None
     tool_input: dict = {}   # Roh-Input (Frage-Tools: Frontend rendert Auswahlliste)
+    triggering_rule: str | None = None  # PROJ-10: auslösende Policy-Regel (Klartext)
+    card_type: str = "normal"           # PROJ-10: normal | phase_transition | deny
 
 
 class DecisionResolve(BaseModel):

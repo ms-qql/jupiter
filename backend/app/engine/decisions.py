@@ -28,6 +28,9 @@ class PendingDecision:
     # Roh-Input des Tools — für Frage-Tools (AskUserQuestion) rendert das Frontend
     # daraus eine Auswahlliste statt eines JSON-Blobs.
     tool_input: dict = field(default_factory=dict)
+    # PROJ-10: auslösende Policy-Regel (Klartext, Nachvollziehbarkeit) + Card-Typ.
+    triggering_rule: str | None = None
+    card_type: str = "normal"       # "normal" | "phase_transition" | "deny"
 
     def to_read(self) -> dict:
         return {
@@ -42,6 +45,8 @@ class PendingDecision:
             "state": self.state,
             "resolution": self.resolution,
             "tool_input": self.tool_input,
+            "triggering_rule": self.triggering_rule,
+            "card_type": self.card_type,
         }
 
 
