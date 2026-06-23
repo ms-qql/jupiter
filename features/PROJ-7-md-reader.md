@@ -1,6 +1,6 @@
 # PROJ-7: MD-Reader
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-23
 
@@ -102,6 +102,24 @@ GET /md/file?path=<pfad>                      → liest EINE .md → {path, fron
 ### Hinweis für /abc-frontend & /abc-backend
 - **Backend zuerst** (Reader braucht den Index): neuer Router `routes/md.py` + Schemas `schemas/md.py` (`MdSource`, `MdIndexEntry`, `MdFileRead` — letzteres kann `VaultFileRead` spiegeln). In `main.py` registrieren (Muster: `vault.py`). Lese-/Index-Validierung gegen `allowed_roots` via `validate_project_path`-Muster; Frontmatter-Helfer aus `engine/vault.py` importieren statt duplizieren.
 - **Frontend** danach: Route `app/(cockpit)/doku/page.tsx`, API-Methoden in `lib/api.ts` (`listMdSources`, `getMdIndex`, `readMdFile`), Typen in `lib/types.ts`. „Doku"-Link in `session-rail.tsx`; Deep-Link aus `sessions/[id]/page.tsx` auf das Handover-Pfad-Pointer.
+
+### Implementation Notes (Backend Developer)
+**Datum:** 2026-06-23 · **Branch:** dev · **Stand:** Backend fertig, Frontend + QA ausstehend · **Tests:** `pytest` → **205 grün** (15 neue für PROJ-7, keine Regression).
+
+**Gebaute Teile (rein lesend, kein Schreibpfad):**
+- **`engine/md_reader.py` — `MdReaderService`**: `sources()`, `resolve_source_root()`, `index()`, `read_file()`. Liest MD über die `allowed_roots`; deckt Vault + Projekt in einem Modell ab. Frontmatter via wiederverwendetem `_parse_frontmatter` aus `engine/vault.py` (kein Duplikat).
+- **Pfad-Härtung**: `_validate_dir` / `_validate_md_file` spiegeln das `realpath`-+-erlaubte-Wurzel-Muster aus `validate_project_path` (`manager.py`). Lesen nur innerhalb `allowed_roots`, nur `.md`, nur reguläre Dateien.
+- **Pfad-Schema = absolut**: `/md/index` liefert je Datei `{path (absolut), rel (relativ zur Wurzel, für Baum), name (Basisname, für Wikilinks)}`. `/md/file?path=<absolut>` validiert erneut gegen `allowed_roots`. Der Frontend baut Baum **und** Wikilink-Index (Basename→Pfad) aus einer einzigen `/md/index`-Antwort.
+- **API (`routes/md.py`)**: `GET /md/sources`, `GET /md/index?source=vault|project[&project=<pfad>]`, `GET /md/file?path=<pfad>`. In `main.py` als `app.state.md_reader` + Router registriert (Muster `vault.py`).
+- **Schemas (`schemas/md.py`)**: `MdSource`, `MdIndexEntry`, `MdIndexResult`, `MdFileRead` (spiegelt `VaultFileRead`).
+- **Config**: `reader_default_project` (`JUPITER_READER_DEFAULT_PROJECT`, Default `/home/dev/projects/jupiter`) — pro Request via `?project=` überschreibbar.
+
+**Sicherheit/Edge-Cases (getestet):** Pfad außerhalb `allowed_roots` (`/etc/passwd`, `/etc/hosts`) → `ValueError`/400; **Symlink-Escape** im Index → übersprungen (realpath-Guard, Exfiltration-Schutz); Nicht-`.md` → 400; fehlende Datei → 404; unbekannte Quelle → 400. Index überspringt `node_modules`/`.git`/`.next`/`__pycache__` u. a. + cappt bei 10 000 Dateien (DoS-Schutz).
+
+**Offen / Hinweis für QA & Frontend:**
+- **Suche** über Projekt-Repos ist Non-Goal (MVP nutzt das vault-weite `GET /vault/search`).
+- **Wikilink-Auflösung, Rendering (react-markdown), Frontmatter-Panel, „fehlend"-Stil, Bild-Platzhalter** sind Frontend-Themen (PROJ-7-Frontend) — Backend liefert nur Index + Roh-MD + getrenntes Frontmatter.
+- **Streaming/Windowing** für sehr große MD nicht umgesetzt (ganze Datei im RAM); für MVP-Größen unkritisch, Seam offen (analog QA-2.2 PROJ-2).
 
 ## QA Test Results
 _To be added by /qa_

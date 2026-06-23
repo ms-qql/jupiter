@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     # Roh-Session-Logs beim Session-Ende automatisch in den Vault schreiben (Grundlage #8/#9).
     vault_autolog: bool = True
 
+    # --- MD-Reader (PROJ-7) ----------------------------------------------
+    # Standard-„Projekt"-Quelle des read-only MD-Readers (Feature-Specs unter
+    # features/, Doku unter docs/). Muss innerhalb von allowed_roots liegen.
+    # Pro Request via ?project=<pfad> überschreibbar (z. B. project_path der Session).
+    reader_default_project: str = "/home/dev/projects/jupiter"
+
     # --- Kontext-Management & Handover (PROJ-5) ---------------------------
     # Schwelle (%) für Kontext-Warnung + Handover-Vorschlag. Global; pro Session
     # überschreibbar. Beim Lesen/Setzen auf [THRESHOLD_MIN_PCT, THRESHOLD_MAX_PCT]

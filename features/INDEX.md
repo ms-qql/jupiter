@@ -14,7 +14,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-4 | Decision Cards (Freigabe-Flow) | P0 | Deployed | PROJ-1, PROJ-3 | [Spec](PROJ-4-decision-cards.md) |
 | PROJ-5 | Context-Management & Handover | P0 | Deployed | PROJ-1, PROJ-2, PROJ-3 | [Spec](PROJ-5-context-management-handover.md) |
 | PROJ-6 | Knappheits-Konstitution | P0 | Approved | PROJ-1 | [Spec](PROJ-6-knappheits-konstitution.md) |
-| PROJ-7 | MD-Reader | P0 | Architected | PROJ-2 | [Spec](PROJ-7-md-reader.md) |
+| PROJ-7 | MD-Reader | P0 | In Progress | PROJ-2 | [Spec](PROJ-7-md-reader.md) |
 | PROJ-8 | ABC-Workflow-Gantt (Phasen-Fortschritt je Session) | P1 | Planned | PROJ-3, PROJ-1 | [Spec](PROJ-8-abc-workflow-gantt.md) |
 
 ## Empfohlene Bau-Reihenfolge (Phase 0)
