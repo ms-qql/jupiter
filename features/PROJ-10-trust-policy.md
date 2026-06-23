@@ -1,6 +1,6 @@
 # PROJ-10: Trust-Policy — abgestuftes, konfigurierbares Vertrauen
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #5
@@ -187,8 +187,57 @@ Stack: FastAPI + **dateibasierte Policy** (YAML, kein DB). Branch `dev`. In-memo
 
 **Tests:** `tests/test_proj10_trust_policy.py` — 18 Tests (Stufen/Spezifität/Konflikt/Default/Defekt-Fallback/Live-Reload, Phasen-Gate feuert im Bypass, operative Card im Bypass durchlässig, deny ohne Pending-Card, Card trägt Regel+echte Phase, REST GET/PUT/preview inkl. 400/422). **Gesamtsuite: 322 passed.**
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (2026-06-23)
+**Tester:** QA/Red-Team · **Branch:** dev · **Stand:** Backend 325 passed + 2 xfail; Frontend 47 passed; TS/Lint sauber.
+**Hinweis Jupiter-Override:** kein JWT/RLS/MinIO/Multi-Tenancy → Tenant-Isolations-Audit entfällt; geprüft wurden Bypass-Festigkeit, deny-Enforcement, Injection/Traversal über Policy-Felder, Config-Robustheit.
+
+### Acceptance Criteria
+| # | Kriterium | Ergebnis |
+|---|-----------|----------|
+| 1 | 3 Stufen auto-allow/card/deny | ✅ PASS |
+| 2 | Match Tool+Kontext, spezifisch > allgemein | ✅ PASS |
+| 3 | deny verhindert Aktion **+ ablehnende Card-Notiz** | ⚠️ TEILWEISE — Aktion wird nie ausgeführt ✅, aber die Notiz ist **im UI nicht sichtbar** (→ Bug A) |
+| 4 | Konservativer Default | ✅ PASS |
+| 5 | Card nennt auslösende Regel | ✅ PASS (`triggering_rule`, Frontend rendert sie) |
+| 6 | Live editierbar, kein Neustart | ✅ PASS (mtime-Reload + PUT) |
+| 7 | Rückwärtskompatibel ohne Policy | ✅ PASS |
+| 8 | Bypass-feste Gates | ✅ PASS |
+| 9 | Phasen-Gate vor neuer Phase, auch im Bypass | ✅ PASS (feuert); **Ablehnungs-Edge → Bug B** |
+| 10 | Gatebare Übergänge konfigurierbar | ✅ PASS |
+| 11 | Operative Per-Tool-Freigaben im Bypass durchlässig | ✅ PASS |
+| 12 | Phasen-Signal liegt im Bypass an | ✅ PASS |
+| 13 | Alles deutsch | ✅ PASS |
+
+### Edge Cases
+| Edge Case | Ergebnis |
+|-----------|----------|
+| Widersprüchliche Regeln → deny gewinnt + Konflikt geloggt | ✅ PASS |
+| Policy-Datei kaputt → Fallback + Warnung, kein Crash | ✅ PASS |
+| Unbekannte Tool-Klasse → card | ✅ PASS |
+| Rolle ohne Policy → Default | ✅ PASS |
+| Phasenwechsel im Bypass → Gate feuert | ✅ PASS |
+| Nicht-linearer Sprung (frontend↔backend) → Gate je Wechsel, Entprellung | ✅ PASS |
+| Phase nicht erkennbar / None→erste Phase → kein Gate | ✅ PASS |
+| Auto-allow trotz Watchdog (PROJ-16) | ⏭️ N/A (PROJ-16 nicht gebaut) |
+| **Nutzer lehnt Phasenübergang ab → bleibt in alter Phase** | ❌ FAIL (→ Bug B) |
+
+### Bugs
+- **Bug A — deny-Notiz im UI unsichtbar (Medium).** `deny` setzt Claude die Begründung inline und die Aktion läuft nie — korrekt. Die „ablehnende Card-Notiz" wird aber nur als transientes `kind:"decision"/event:"denied"` gebroadcastet; der WS-Hook (`use-session-stream.ts`) verarbeitet nur `state`/`message`/`notice`, und das Cockpit rendert ausschließlich `state.pending_decisions`. → Die Ablehnung erscheint **nirgends** in der UI; das Frontend-Deny-Rendering (`card_type:"deny"`, „Zur Kenntnis") ist derzeit toter Code. *Repro:* deny-Regel für Bash setzen → Bash-Aufruf wird geblockt, aber keine Card/Notiz im Cockpit. *Fix-Richtung:* deny entweder als kurzlebige resolved-Card in `pending_decisions`/State aufnehmen ODER ein `notice`-Event ergänzen, das der WS-Hook + das UI anzeigen.
+- **Bug B — Phase rückt bei abgelehntem Phasen-Gate vor (Medium).** `_detect_abc` mutiert `abc_phase` auf die Zielphase, **bevor** das Gate aufgelöst ist. Lehnt der Nutzer ab, läuft der Skill nicht — aber `abc_phase`/Gantt zeigen bereits die neue Phase. Widerspricht dem Edge-Case „bleibt in der alten Phase pausiert". *Repro:* abc_phase=architecture, `abc-frontend` aufrufen → Gate ablehnen → `abc_phase==frontend` (falsch). *Fix-Richtung:* Phase erst nach Freigabe übernehmen (Zielphase merken, bei `deny` zurückrollen), bzw. Detektion vom Gate entkoppeln.
+
+Beide als `xfail(strict=True)` in `tests/test_proj10_qa.py` festgehalten — sie flippen auf PASS, sobald gefixt.
+
+### Security / Red-Team
+- ✅ **Bypass kann das harte Phasen-Gate nicht aushebeln** — die Gate-Prüfung steht **vor** dem Bypass-Auto-Allow.
+- ✅ **Kein Code-/Injection-Risiko über die Policy:** `yaml.safe_load` (kein Exec); PUT validiert Stufen (Pydantic-`Literal` → 422) und Phasen-Namen (→ 400). Match-Felder werden nur für Gleichheit/Teilstring genutzt (kein SQL/eval/Pfad).
+- ✅ **Kein Path-Traversal:** `save()` schreibt auf den fixen Serverpfad (`settings.policy_config_path`), nie aus Client-Payload.
+- ⚠️ **Betriebs-Caveat (kein Bug):** eine Catch-all-`deny`-Regel (leeres `tool`) sperrt auch Lese-Tools und kann eine Session lahmlegen — bewusste Konfig-Macht; in der UI/Doku als Warnung sinnvoll.
+
+### Tests hinzugefügt
+- `tests/test_proj10_trust_policy.py` (18) + `tests/test_proj10_qa.py` (3 Edge-Cases + 2 xfail-Bugs).
+
+### Verdict
+Keine **Critical/High**-Bugs → technisch deploybar. Zwei **Medium**-Bugs betreffen jedoch explizite AC (#3) bzw. einen Spec-Edge-Case (#9-Ablehnung) → **Empfehlung: In Review halten**, Bug A + B vor dem Deploy fixen.
 
 ## Deployment
 _To be added by /abc-deploy_
