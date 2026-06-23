@@ -4,13 +4,17 @@
 // Wikilinks werden vom remark-Plugin als Links mit Schema wikilink:/wikiembed:
 // markiert; hier aufgelöst gegen den Index → Navigation oder „fehlend"-Stil.
 
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ImageIcon } from "lucide-react";
 import { remarkWikilink } from "@/lib/remark-wikilink";
 import { resolveWikilink, type TreeFile } from "@/lib/md-tree";
 import type { MdIndexEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+// QA-7.4: sehr große Dateien gekürzt rendern, damit der DOM-Baum nicht explodiert.
+// Großzügig gewählt — normale Doku/Specs bleiben unberührt.
+const MAX_RENDER_CHARS = 400_000;
 
 export function MarkdownView({
   body,
@@ -21,12 +25,29 @@ export function MarkdownView({
   index: Map<string, MdIndexEntry>;
   onNavigate: (file: Pick<TreeFile, "path">) => void;
 }) {
+  const truncated = body.length > MAX_RENDER_CHARS;
+  const rendered = truncated ? body.slice(0, MAX_RENDER_CHARS) : body;
   return (
     <div className="md-body">
+      {truncated && (
+        <p className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+          Große Datei ({Math.round(body.length / 1000)} KB) — Anzeige auf die ersten{" "}
+          {MAX_RENDER_CHARS / 1000} KB gekürzt.
+        </p>
+      )}
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkWikilink]}
+        // QA-7.2: react-markdowns Default-urlTransform würde die custom Schemata
+        // wikilink:/wikiembed: zu "" strippen → durchlassen, sonst Default (XSS-Schutz bleibt).
+        urlTransform={(url) =>
+          url.startsWith("wikilink:") || url.startsWith("wikiembed:")
+            ? url
+            : defaultUrlTransform(url)
+        }
         components={{
-          a({ href, children, ...props }) {
+          // QA-7.3: `node` (mdast) NICHT auf das DOM-Element spreaden.
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          a({ href, children, node, ...props }) {
             const url = href ?? "";
 
             // Bild-Embed ![[…]] → Platzhalter (Anzeige = nice-to-have, MVP).
@@ -90,7 +111,7 @@ export function MarkdownView({
           },
         }}
       >
-        {body}
+        {rendered}
       </ReactMarkdown>
     </div>
   );

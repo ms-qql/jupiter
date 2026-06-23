@@ -40,27 +40,22 @@ describe("MarkdownView — XSS / Sanitizing", () => {
   });
 });
 
-// FIXME(QA-7.2 / HIGH): react-markdown strippt das custom URL-Schema wikilink:/
-// wikiembed: über seinen Default-`urlTransform` zu "" → der a-Renderer landet im
-// Extern-Link-Zweig statt im Wikilink-/Embed-Zweig. Wikilinks navigieren NICHT und
-// fehlende Ziele werden NICHT markiert; Embeds zeigen keinen Platzhalter.
-// Diese drei Tests sind als `it.fails` markiert (dokumentieren den Bug, halten die
-// Suite grün). NACH dem Fix (MarkdownView muss urlTransform überschreiben/ein eigenes
-// Schema durchlassen) schlagen sie als bestanden um → `.fails` entfernen.
+// QA-7.2 (behoben): MarkdownView setzt einen urlTransform, der wikilink:/wikiembed:
+// durchlässt (sonst defaultUrlTransform → XSS-Schutz bleibt).
 describe("MarkdownView — Wikilinks & GFM", () => {
-  it.fails("rendert ein existierendes [[Ziel]] als klickbaren Button", () => {
+  it("rendert ein existierendes [[Ziel]] als klickbaren Button", () => {
     const html = render("siehe [[PROJ-7]]", [FILE]);
     expect(html).toContain("<button");
     expect(html).toContain("PROJ-7");
   });
 
-  it.fails("markiert ein fehlendes [[Ziel]] (line-through, kein Button/Link)", () => {
+  it("markiert ein fehlendes [[Ziel]] (line-through, kein Button/Link)", () => {
     const html = render("siehe [[Gibtsnicht]]", [FILE]);
     expect(html).toContain("line-through");
     expect(html).not.toContain("<button");
   });
 
-  it.fails("rendert ![[bild.png]] als Platzhalter-Badge (border-dashed, kein <img>)", () => {
+  it("rendert ![[bild.png]] als Platzhalter-Badge (border-dashed, kein <img>)", () => {
     const html = render("![[bild.png]]", [FILE]);
     expect(html).not.toContain("<img");
     expect(html).toContain("border-dashed"); // Platzhalter-Badge, nicht nur Text
@@ -70,5 +65,11 @@ describe("MarkdownView — Wikilinks & GFM", () => {
     const html = render("| A | B |\n|---|---|\n| 1 | 2 |\n");
     expect(html).toContain("<table");
     expect(html).toContain("<td");
+  });
+
+  it("kürzt sehr große Dateien mit Hinweis (QA-7.4)", () => {
+    const big = "x".repeat(450_000);
+    const html = render(big);
+    expect(html).toContain("gekürzt");
   });
 });
