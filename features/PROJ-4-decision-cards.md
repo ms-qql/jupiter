@@ -273,7 +273,15 @@ Beim manuellen Test auf einer Live-Instanz gefunden: Schickte man `POST /input`,
 Damit ist der Wedge strukturell unmöglich (bei offener Card nur entscheiden, nicht tippen). SEC-2/3 + LOW-1 bleiben P1-Härtung.
 
 ## Deployment
-**Stand 2026-06-23:** Auf **`origin/dev` gepusht** (Commit `7ba28f1`) — **noch NICHT in Produktion**. Status bleibt **Approved** (Prod-Promotion ausstehend).
+**✅ DEPLOYED 2026-06-23** → **https://jupiter.auxevo.tech** (Commit `5e30c62`, zusammen mit PROJ-5). Promotion `dev → main` → GitHub-Webhook → `deploy.sh` (reset --hard + `npm run build` + `systemctl restart`). Verifiziert: Backend/Frontend 200, `/sessions/{id}/decisions/{id}` + `/settings/threshold` im Schema, Services active.
+
+**Offene Gates — erledigt:**
+- [x] **SEC-1:** Starkes `JUPITER_HOOK_TOKEN` im `jupiter-backend.service` gesetzt (Default-Token → jetzt 403). `/api/*` (inkl. `/internal/*`) hinter Caddy-Basic-Auth; nur `/hooks/*` umgeht es (HMAC).
+- [x] In ruhiger Phase deployed (0 laufende Sessions → kein Verlust). Hinweis: `deploy.sh` schaltet den geteilten Working Tree auf `main` — Dev-Agenten müssen ggf. `git checkout dev`.
+- [ ] CodeGraph re-index (optional) · Browser-Smoke mit Basic-Auth-Login (User).
+
+---
+_Historie (vor der Prod-Promotion):_ zunächst nur auf `origin/dev` (Commit `7ba28f1`), Prod-Promotion bewusst dem Nutzer überlassen.
 
 **Deploy-Modell (erfasst):** host-native auf dem VPS, **Caddy** (`jupiter.auxevo.tech`, TLS, Basic-Auth-Gate auf allem außer `/hooks/*`) → `/api/*` zu uvicorn :8000 (1 Worker), Rest zu Next.js :3001; systemd-Units `jupiter-backend/frontend/webhook`. **Auto-Deploy nur bei Push auf `main`** (GitHub-Webhook, HMAC) → `deploy.sh`: `git reset --hard origin/main` + `npm run build` + `systemctl restart`.
 
