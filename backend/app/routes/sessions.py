@@ -39,6 +39,7 @@ async def create_session(payload: SessionCreate, request: Request) -> dict:
             permission_mode=payload.permission_mode,
             role=payload.role,
             extra_system_prompt=payload.extra_system_prompt,
+            project_name=payload.project_name,
         )
     except ValueError as exc:  # ungültiger Pfad / Modell
         raise HTTPException(status_code=400, detail=str(exc)) from exc

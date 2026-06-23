@@ -19,7 +19,7 @@ from ..config import (
     clamp_threshold,
     settings,
 )
-from . import policy
+from . import abc_phases, policy
 from .base import EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .constitution import combine_with_extra, resolve_constitution
@@ -116,6 +116,11 @@ class SessionState:
     context_known: bool = False  # Treiber-Daten da? sonst Gauge „unbekannt" statt 0 %.
     context_threshold_override_pct: int | None = None  # pro-Session-Schwelle (None → global).
     threshold_warned: bool = False  # one-shot Auto-Vorschlag bei Schwellenüberschreitung.
+    # PROJ-8 — ABC-Workflow-Gantt: sprechendes Label + dynamisch erkannte Phase/Feature.
+    project_name: str | None = None  # Gantt-Zeilen-Label (Fallback: Basename von project_path).
+    abc_phase: str | None = None  # AKTUELLE Phase (hervorgehoben). None = „keine Phase".
+    abc_phase_reached: str | None = None  # WEITESTE bisher erreichte Phase (Bar-Füllung).
+    abc_feature: str | None = None  # Feature-Referenz, z. B. „8" (aus Skill-Arg/berührtem Spec).
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -153,6 +158,10 @@ class SessionState:
             "rate_limit": self.rate_limit,
             "parent_session_id": self.parent_session_id,
             "child_session_id": self.child_session_id,
+            "project_name": self.project_name,
+            "abc_phase": self.abc_phase,
+            "abc_phase_reached": self.abc_phase_reached,
+            "abc_feature": self.abc_feature,
         }
 
 
@@ -319,6 +328,28 @@ class SessionRuntime:
             }
         )
 
+    # --- ABC-Workflow-Phase (PROJ-8) ---------------------------------------
+
+    def _detect_abc(self, tool_name: str, tool_input: dict | None) -> None:
+        """Leitet aus dem Tool-Aufruf die aktuelle ABC-Phase + Feature-Referenz ab.
+
+        Reiner Seiteneffekt für den Gantt (PROJ-8): ``Skill``-Aufrufe mit abc-Workflow-
+        Skill setzen Phase/erreichte-Phase/Feature; berührte ``features/PROJ-X-*.md``
+        liefern das Fallback-Feature. Ändert sich etwas, wird ein State-Snapshot
+        gestreamt (Live-Aktualisierung der Bars, gratis über ``to_read``).
+        """
+        s = self.state
+        before = (s.abc_phase, s.abc_phase_reached, s.abc_feature)
+        s.abc_phase, s.abc_phase_reached, s.abc_feature = abc_phases.detect_phase_signal(
+            tool_name,
+            tool_input,
+            phase=s.abc_phase,
+            reached=s.abc_phase_reached,
+            feature=s.abc_feature,
+        )
+        if before != (s.abc_phase, s.abc_phase_reached, s.abc_feature):
+            self._broadcast({"kind": "state", **self.to_read()})
+
     # --- Decision Cards / Freigabe (PROJ-4) --------------------------------
 
     async def request_decision(
@@ -330,6 +361,10 @@ class SessionRuntime:
         Sonst: Card anlegen, Status auf ``awaiting_approval``, und **blockieren**, bis der
         Nutzer entscheidet (``resolve_decision``) oder die Session stirbt (``abandon``).
         """
+        # PROJ-8: Phasen-/Feature-Detektor als reiner Seiteneffekt VOR der Card-Logik.
+        # Verändert nie, OB eine Card entsteht — beobachtet nur die ABC-Skill-Aufrufe.
+        self._detect_abc(tool_name, tool_input)
+
         if not policy.requires_card(tool_name, tool_input):
             return DecisionOutcome(behavior="allow", auto=True)
 
@@ -427,6 +462,7 @@ class SessionManager:
         extra_system_prompt: str | None = None,
         owner: str | None = None,
         parent_session_id: str | None = None,
+        project_name: str | None = None,
     ) -> SessionRuntime:
         model = model or settings.default_model
         permission_mode = permission_mode or settings.default_permission_mode
@@ -455,6 +491,8 @@ class SessionManager:
             constitution_source=resolved.source,
             effective_constitution=effective,
             parent_session_id=parent_session_id,
+            # PROJ-8: sprechendes Gantt-Label; ohne Angabe der Verzeichnis-Basename.
+            project_name=(project_name or "").strip() or os.path.basename(real_path) or real_path,
         )
         driver = self._driver_factory()
         runtime = SessionRuntime(state, driver, on_done=self._write_session_log)
@@ -629,6 +667,7 @@ class SessionManager:
             extra_system_prompt=seed_context,
             owner=old_state.owner,
             parent_session_id=old_state.session_id,
+            project_name=old_state.project_name,  # PROJ-8: Kind erbt das Projekt-Label.
         )
         old_state.child_session_id = child.state.session_id
         return child

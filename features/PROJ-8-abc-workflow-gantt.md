@@ -1,8 +1,9 @@
 # PROJ-8: ABC-Workflow-Gantt — Phasen-Fortschritt je Session/Projekt
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
+**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** offen (`/abc-frontend`)
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit) — der Gantt lebt **unter dem Kanban** in derselben Ansicht.
@@ -145,6 +146,18 @@ Keine neuen Pakete. Frontend: bestehendes Tailwind-Grid + shadcn `Badge`/`Card`.
 ### H) Aufgaben-Zuschnitt für die Spezialisten
 - **Backend (`/abc-backend`):** `abc_phases.py` (Konstante+Mapping), Detektor in `request_decision`, drei Felder in `SessionState`/`to_read()`, `project_name` in `SessionCreate`/Session-Anlage, Tests (Skill-Erkennung, max-Phase, Fallback).
 - **Frontend (`/abc-frontend`):** `ABC_PHASES` in `status.ts`, `GanttChart`+Sub-Komponenten, Einhängen unter `KanbanBoard`, `project_name`-Feld im `NewSessionDialog`, Versions-Badge in Rail/Topbar, neue Felder in `types.ts`.
+
+## Backend-Implementierung (2026-06-23)
+Additiv, In-Memory (Jupiter-Override: kein DB/RLS/Migration). Umgesetzt gemäß Tech-Design Abschnitt B/C/D + Aufgaben-Zuschnitt H:
+
+- **`backend/app/engine/abc_phases.py` (neu):** kanonische `ABC_PHASES` (8er-Tupel, einzige Quelle der Wahrheit), `SKILL_TO_PHASE`-Mapping (inkl. `abc-qa-e2e → qa`; Nicht-Workflow-Skills wie `abc-refactor`/`abc-fullstack` → `None`), `phase_for_skill`, `max_phase` (monotone „weiteste erreichte Phase", deckt nicht-lineare Sprünge ab), `feature_from_args`/`feature_from_path` und der seiteneffektfreie `detect_phase_signal`-Detektor.
+- **`SessionState` (manager.py:94):** vier neue Felder `project_name`, `abc_phase`, `abc_phase_reached`, `abc_feature`; in `to_read()` ergänzt → fließen automatisch in REST-Liste **und** WS-State-Broadcast (Live-Update „gratis").
+- **Detektor-Verdrahtung:** `SessionRuntime._detect_abc()` läuft als reiner Seiteneffekt **vor** der Card-Logik in `request_decision` — verändert nie, OB eine Decision Card entsteht; streamt bei Änderung einen State-Snapshot. `Skill`-Aufruf mit `abc-*` → Phase/erreichte-Phase/Feature; Write/Edit auf `features/PROJ-X-*.md` → Fallback-Feature.
+- **`project_name`:** optional in `SessionCreate` (max 120) + `create()`-Parameter; Fallback = Basename von `project_path`. `reset()` vererbt das Label an die Kind-Session.
+- **`SessionRead`:** vier neue Felder gespiegelt.
+- **Tests (`backend/tests/test_proj8_gantt.py`, neu):** Phasen-Mapping, monotone max-Phase, Feature-Erkennung (Arg + Pfad), Detektor-Logik inkl. Rückwärtssprung & Nicht-Phasen-Skill, Hook-Verdrahtung (Skill öffnet weiterhin Card, Phase wird trotzdem gesetzt), `project_name`-Fallback, REST-Vertrag. **262 Tests grün** (volle Suite).
+
+**Offen für `/abc-frontend`:** `ABC_PHASES` in `lib/status.ts` spiegeln, `GanttChart` unter dem `KanbanBoard`, vier Felder in `types.ts`, `project_name`-Feld im `NewSessionDialog`, Versions-Badge in Rail/Topbar.
 
 ## QA Test Results
 _To be added by /abc-qa_
