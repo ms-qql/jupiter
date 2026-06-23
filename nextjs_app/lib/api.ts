@@ -1,7 +1,14 @@
 // Dünner Client für das Jupiter-FastAPI-Backend (PROJ-1/PROJ-2).
 // Basis-URL via NEXT_PUBLIC_API_BASE; Default = lokaler uvicorn auf :8000.
 
-import type { Session, SessionCreate, SessionDetail } from "./types";
+import type {
+  HandoverPreview,
+  Session,
+  SessionCreate,
+  SessionDetail,
+  ThresholdSetting,
+  VaultWriteResult,
+} from "./types";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "http://localhost:8000";
@@ -76,6 +83,66 @@ export function resolveDecision(
   return request(`/sessions/${sessionId}/decisions/${decisionId}`, {
     method: "POST",
     body: JSON.stringify({ decision, comment: comment ?? null }),
+  });
+}
+
+// --- PROJ-5: Context-Management & Handover ---------------------------------
+
+/** Handover-Inhalt erzeugen (Vorschau, Hybrid-Gerüst) — schreibt noch NICHT. */
+export function generateHandover(id: string): Promise<HandoverPreview> {
+  return request<HandoverPreview>(`/sessions/${id}/handover/generate`, {
+    method: "POST",
+  });
+}
+
+/** (ggf. editierten) Handover in den Vault schreiben → liefert den Datei-Pointer. */
+export function writeHandover(
+  id: string,
+  body: string,
+  title?: string,
+): Promise<VaultWriteResult> {
+  return request<VaultWriteResult>(`/sessions/${id}/handover`, {
+    method: "POST",
+    body: JSON.stringify({ body, title: title ?? null, on_exists: "version" }),
+  });
+}
+
+/** „Session zurücksetzen": archiviert alt, startet Kind-Session mit Handover-Seed. */
+export function resetSession(
+  id: string,
+  seedContext: string,
+  initialPrompt?: string,
+): Promise<Session> {
+  return request<Session>(`/sessions/${id}/reset`, {
+    method: "POST",
+    body: JSON.stringify({
+      seed_context: seedContext,
+      initial_prompt: initialPrompt ?? null,
+    }),
+  });
+}
+
+/** Pro-Session-Override der Kontext-Schwelle (null = globale Schwelle nutzen). */
+export function setSessionThreshold(
+  id: string,
+  thresholdPct: number | null,
+): Promise<Session> {
+  return request<Session>(`/sessions/${id}/threshold`, {
+    method: "PATCH",
+    body: JSON.stringify({ threshold_pct: thresholdPct }),
+  });
+}
+
+/** Globale Kontext-Schwelle lesen. */
+export function getThreshold(signal?: AbortSignal): Promise<ThresholdSetting> {
+  return request<ThresholdSetting>("/settings/threshold", { signal });
+}
+
+/** Globale Kontext-Schwelle setzen (serverseitig geklemmt). */
+export function setThreshold(thresholdPct: number): Promise<ThresholdSetting> {
+  return request<ThresholdSetting>("/settings/threshold", {
+    method: "PATCH",
+    body: JSON.stringify({ threshold_pct: thresholdPct }),
   });
 }
 

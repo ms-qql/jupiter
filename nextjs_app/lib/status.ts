@@ -109,6 +109,18 @@ export function modelLabel(model: string): string {
   return model;
 }
 
+/** Füllstand-Label: „unbekannt", solange der Treiber keine Token-Daten lieferte (PROJ-5). */
+export function contextLabel(pct: number, known: boolean): string {
+  return known ? `${Math.round(pct)}%` : "unbekannt";
+}
+
+/** Farbklasse des Kontext-Balkens: rot ab Schwelle, amber kurz davor, sonst grün (PROJ-5). */
+export function gaugeColor(pct: number, threshold: number): string {
+  if (pct >= threshold) return "bg-red-500";
+  if (pct >= threshold * 0.7) return "bg-amber-400";
+  return "bg-emerald-500";
+}
+
 export function projectName(path: string): string {
   const parts = path.replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || path;

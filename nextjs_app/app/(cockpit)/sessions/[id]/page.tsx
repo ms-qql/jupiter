@@ -9,10 +9,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Ampel } from "@/components/cockpit/ampel";
 import { DecisionCard } from "@/components/cockpit/decision-card";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
+import { ContextGauge } from "@/components/cockpit/context-gauge";
+import { ThresholdBadge } from "@/components/cockpit/threshold-badge";
+import { HandoverDialog } from "@/components/cockpit/handover-dialog";
+import { ResetSessionButton } from "@/components/cockpit/reset-session-button";
+import { SessionThresholdControl } from "@/components/cockpit/threshold-control";
 import { useNow } from "@/components/cockpit/sessions-provider";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { ApiError, getSession, sendInput, stopSession } from "@/lib/api";
-import { formatDuration, modelLabel, projectName, statusMeta } from "@/lib/status";
+import {
+  contextLabel,
+  formatDuration,
+  modelLabel,
+  projectName,
+  statusMeta,
+} from "@/lib/status";
 import type { SessionDetail } from "@/lib/types";
 
 export default function SessionDetailPage({
@@ -22,7 +33,15 @@ export default function SessionDetailPage({
 }) {
   const { id } = use(params);
   const now = useNow();
-  const { state: liveState, liveText, connected } = useSessionStream(id);
+  const { state: liveState, liveText, connected } = useSessionStream(id, {
+    onNotice: (n) => {
+      if (n.event === "threshold_reached") {
+        toast.warning(
+          `Kontext-Schwelle (${n.threshold_pct}%) erreicht — Handover empfohlen.`,
+        );
+      }
+    },
+  });
 
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -108,6 +127,9 @@ export default function SessionDetailPage({
             {head.role && (
               <span className="text-sm text-muted-foreground">· {head.role}</span>
             )}
+            {head.threshold_warning && (
+              <ThresholdBadge thresholdPct={head.context_fill_threshold_pct} />
+            )}
             <span className="ml-auto text-xs text-muted-foreground">
               {connected ? "● live" : "○ getrennt"}
             </span>
@@ -117,17 +139,49 @@ export default function SessionDetailPage({
       </header>
 
       {head && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 py-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border py-2">
+          <HandoverDialog sessionId={id} />
+          <ResetSessionButton sessionId={id} numTurns={head.num_turns} />
+          {head.parent_session_id && (
+            <Link
+              href={`/sessions/${head.parent_session_id}`}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              ← Vorgänger-Session
+            </Link>
+          )}
+        </div>
+      )}
+
+      {head && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-xs text-muted-foreground">
           <span className="font-mono">{head.project_path}</span>
           <span className="tabular-nums">
             Laufzeit {formatDuration(head.created_at, now)}
           </span>
           <span className="tabular-nums">
-            Kontext {Math.round(head.context_fill_pct)}%
+            Kontext {contextLabel(head.context_fill_pct, head.context_known)}
           </span>
           <span className="tabular-nums">${head.total_cost_usd.toFixed(4)}</span>
           <span className="tabular-nums">{head.num_turns} Turns</span>
+          <span className="ml-auto flex items-center gap-1.5">
+            <span>Schwelle</span>
+            <SessionThresholdControl
+              sessionId={id}
+              effective={head.context_fill_threshold_pct}
+              onChange={(s) => setDetail((d) => (d ? { ...d, ...s } : d))}
+            />
+          </span>
         </div>
+      )}
+
+      {head && (
+        <ContextGauge
+          pct={head.context_fill_pct}
+          known={head.context_known}
+          threshold={head.context_fill_threshold_pct}
+          className="pb-1"
+        />
       )}
 
       {head?.status === "error" && head.error && (

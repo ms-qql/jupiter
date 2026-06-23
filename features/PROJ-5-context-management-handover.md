@@ -145,7 +145,7 @@ Alle Endpunkte sind Single-User-MVP (Owner serverseitig gestempelt, kein JWT —
 - **„Automatisches Handover" = automatischer Vorschlag**, keine Auto-Schreibung — respektiert „Generieren≠Schreiben" (Nutzer prüft den Staffelstab) und den Edge-Case „nicht mitten im Tool-Call".
 - **LLM-Anreicherung als Seam, Default aus** — das deterministische Gerüst ist der garantierte Pfad; die echte Treiber-Anreicherung kann später ohne Vertragsänderung zugeschaltet werden.
 - **Schwelle in-memory** (kein DB im MVP, konsistent mit PROJ-1/2).
-- **Frontend offen**: `ThresholdBadge`, `HandoverDialog`, `ResetSessionButton`, `ThresholdControl` → `/abc-frontend`. Reset-Hinweis „wenig Kontext" (Edge-Case kurze Session) ist eine Frontend-Anzeige auf Basis von `num_turns`/`context_fill_pct`.
+- **Frontend**: in dieser Iteration umgesetzt (siehe unten).
 
 ### API-Vertrag (für Frontend)
 | Methode | Pfad | Body | Antwort |
@@ -156,6 +156,29 @@ Alle Endpunkte sind Single-User-MVP (Owner serverseitig gestempelt, kein JWT —
 | PATCH | `/sessions/{id}/threshold` | `{threshold_pct \| null}` | `SessionRead` |
 | GET/PATCH | `/settings/threshold` | `{threshold_pct}` | `{threshold_pct, min_pct, max_pct}` |
 | WS | `/sessions/{id}/stream` | — | `kind=state` trägt `context_known/threshold_warning/...`; `kind=notice` `event=threshold_reached` |
+
+## Implementierung — Frontend (2026-06-23)
+**Stack:** Next.js 16 + Tailwind + shadcn/Base-UI · **Branch:** dev · **Gates:** `tsc --noEmit` ✓ · `eslint` ✓ · `vitest` **23 grün** · `next build` ✓.
+
+### Neue Komponenten (`nextjs_app/components/cockpit/`)
+- **`context-gauge.tsx`** — Füllstand-Balken; zeigt „unbekannt" (gestreift) statt 0 %, wenn `context_known=false`; Farbe rot ab Schwelle (amber davor), feine Schwellen-Markierung.
+- **`threshold-badge.tsx`** — Warn-Chip („Schwelle X% erreicht"), compact-Variante für die Kachel.
+- **`handover-dialog.tsx`** — Button → Dialog: ruft beim Öffnen `/handover/generate`, zeigt Titel + MD **editierbar**, schreibt via `/handover` in den Vault, zeigt den Datei-Pointer.
+- **`reset-session-button.tsx`** — „Zurücksetzen": generiert den Seed (Handover), Edge-Case-Hinweis „wenig Kontext" bei `num_turns ≤ 1`, bestätigt → `/reset` → navigiert zur Kind-Session.
+- **`threshold-control.tsx`** — `ThresholdControl` (global, `/settings/threshold`) + `SessionThresholdControl` (pro-Session `PATCH …/threshold`, „Global"-Reset = `null`).
+- **`settings-dialog.tsx`** — Zahnrad im Mission-Control-Header → globaler Schwellen-Regler.
+
+### Integration / geändert
+- **`lib/types.ts`** — `Session` um `context_known`, `context_fill_threshold_pct`, `threshold_warning`, `parent_session_id` erweitert; `HandoverPreview`/`VaultWriteResult`/`ThresholdSetting`.
+- **`lib/api.ts`** — `generateHandover`, `writeHandover`, `resetSession`, `setSessionThreshold`, `getThreshold`, `setThreshold`.
+- **`lib/status.ts`** — `contextLabel()` (+ „unbekannt") und `gaugeColor()` (Schwellen-basiert); Unit-Tests ergänzt.
+- **`hooks/use-session-stream.ts`** — verarbeitet `kind=notice`/`event=threshold_reached` via optionalem `onNotice`-Callback.
+- **`session-tile.tsx`** — nutzt `ContextGauge`; zeigt `ThresholdBadge` bei `threshold_warning`.
+- **Detailseite** (`app/(cockpit)/sessions/[id]/page.tsx`) — Header-Badge + Aktionsleiste (Handover, Zurücksetzen, „← Vorgänger-Session"); Schwellen-Override + Gauge; Toast bei Schwellen-Notice.
+- **Cockpit-Header** (`app/(cockpit)/page.tsx`) — `SettingsDialog` (Zahnrad).
+
+### Offen für QA
+- Visuelle E2E-Verifikation gegen laufendes Backend + echte Claude-Session (`/abc-qa-e2e`) — Build/Typecheck/Unit sind grün, der Live-Flow (WS-Notice, Reset-Navigation, Vault-Write-Pointer) ist noch nicht im Browser gegen den Stack durchgeklickt.
 
 ## QA Test Results
 _To be added by /qa_

@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { formatDuration, modelLabel, projectName, statusMeta } from "@/lib/status";
+import { contextLabel, formatDuration, modelLabel, projectName, statusMeta } from "@/lib/status";
 import type { Session } from "@/lib/types";
 import { Ampel } from "./ampel";
+import { ContextGauge } from "./context-gauge";
+import { ThresholdBadge } from "./threshold-badge";
 
 export function SessionTile({
   session,
@@ -73,31 +75,25 @@ export function SessionTile({
       )}
 
       {!compact && (
-        <div className="mt-2.5 flex items-center justify-between text-[11px] text-muted-foreground">
-          <span className="tabular-nums">
-            Kontext {Math.round(session.context_fill_pct)}%
-          </span>
-          <span className="tabular-nums">
-            ${session.total_cost_usd.toFixed(3)}
-          </span>
-        </div>
-      )}
-      {!compact && (
-        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className={cn(
-              "h-full rounded-full transition-all",
-              session.context_fill_pct > 85
-                ? "bg-red-500"
-                : session.context_fill_pct > 60
-                  ? "bg-amber-400"
-                  : "bg-emerald-500",
+        <>
+          <div className="mt-2.5 flex items-center justify-between text-[11px] text-muted-foreground">
+            <span className="tabular-nums">
+              Kontext {contextLabel(session.context_fill_pct, session.context_known)}
+            </span>
+            {session.threshold_warning ? (
+              <ThresholdBadge thresholdPct={session.context_fill_threshold_pct} compact />
+            ) : (
+              <span className="tabular-nums">${session.total_cost_usd.toFixed(3)}</span>
             )}
-            style={{
-              width: `${Math.min(100, Math.max(2, session.context_fill_pct))}%`,
-            }}
+          </div>
+          <ContextGauge
+            pct={session.context_fill_pct}
+            known={session.context_known}
+            threshold={session.context_fill_threshold_pct}
+            showLabel={false}
+            className="mt-1"
           />
-        </div>
+        </>
       )}
     </Link>
   );

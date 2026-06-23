@@ -6,6 +6,7 @@ import { SessionGrid } from "@/components/cockpit/session-grid";
 import { KanbanBoard } from "@/components/cockpit/kanban-board";
 import { ArchivedSection } from "@/components/cockpit/archived-section";
 import { NewSessionDialog } from "@/components/cockpit/new-session-dialog";
+import { SettingsDialog } from "@/components/cockpit/settings-dialog";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import {
   BoardSkeleton,
@@ -37,6 +38,7 @@ export default function CockpitPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <SettingsDialog />
           <ThemeToggle />
           <NewSessionDialog>
             <button className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">

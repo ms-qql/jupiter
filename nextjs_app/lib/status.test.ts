@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   columnFor,
+  contextLabel,
   countStatuses,
   formatDuration,
+  gaugeColor,
   modelLabel,
   projectName,
   railRank,
@@ -24,10 +26,14 @@ function session(overrides: Partial<Session> = {}): Session {
     last_activity: "2026-06-22T10:01:00Z",
     tokens_used: 0,
     context_fill_pct: 0,
+    context_known: false,
+    context_fill_threshold_pct: 85,
+    threshold_warning: false,
     total_cost_usd: 0,
     num_turns: 0,
     error: null,
     rate_limit: null,
+    parent_session_id: null,
     pending_decisions: [],
     ...overrides,
   };
@@ -148,5 +154,28 @@ describe("formatDuration", () => {
   });
   it("ungültiges Datum → —", () => {
     expect(formatDuration("nope", base)).toBe("—");
+  });
+});
+
+describe("contextLabel — PROJ-5", () => {
+  it("zeigt Prozent bei bekannten Daten", () => {
+    expect(contextLabel(42.4, true)).toBe("42%");
+  });
+  it("zeigt unbekannt ohne Treiber-Daten (kein irreführendes 0 Prozent)", () => {
+    expect(contextLabel(0, false)).toBe("unbekannt");
+    expect(contextLabel(90, false)).toBe("unbekannt");
+  });
+});
+
+describe("gaugeColor — PROJ-5", () => {
+  it("rot ab der Schwelle", () => {
+    expect(gaugeColor(85, 85)).toBe("bg-red-500");
+    expect(gaugeColor(95, 85)).toBe("bg-red-500");
+  });
+  it("amber kurz vor der Schwelle", () => {
+    expect(gaugeColor(70, 85)).toBe("bg-amber-400");
+  });
+  it("grün im grünen Bereich", () => {
+    expect(gaugeColor(10, 85)).toBe("bg-emerald-500");
   });
 });
