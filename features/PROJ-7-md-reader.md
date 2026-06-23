@@ -1,8 +1,8 @@
 # PROJ-7: MD-Reader
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-22
-**Last Updated:** 2026-06-22
+**Last Updated:** 2026-06-23
 
 ## Dependencies
 - Requires: PROJ-2 (Vault-Anbindung) — liefert die MD-Dateien + Suche/Index
@@ -36,7 +36,72 @@ Doku ohne Tool-Wechsel: Vault-MD im Browser lesen, mit Obsidian-DNA (#16, **read
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+**Erstellt:** 2026-06-23 · **Stack:** Next.js 16 (App Router, shadcn/ui) + FastAPI (read-only Datei-I/O, kein DB/RLS im MVP) · **Branch:** dev
+
+> Jupiter-MVP-Abweichung (wie PROJ-2/5): **kein JWT/RLS/Neon**. Der MD-Reader ist **rein lesend**. Er liest Markdown aus den bereits konfigurierten **`allowed_roots`** (`/home/dev/projects`, `/home/dev/tools`) und deckt damit **zwei Quellen** in einem Modell ab: den **Hal-Vault** und die **Projekt-Repos** (Feature-Specs unter `features/`, Doku unter `docs/`). Wiederverwendet wird der vorhandene `realpath`-gegen-`allowed_roots`-Guard aus `validate_project_path` (`engine/manager.py:68`) sowie der Frontmatter-Parser aus PROJ-2 (`engine/vault.py`).
+
+### Browse-Scope (User-Entscheidung 2026-06-23)
+Der Baum zeigt **beide Quellen**:
+- **Vault** — der ganze Hal-Vault read-only (konsistent mit dem vault-weiten Lese-/Such-Scope aus PROJ-2).
+- **Projekt** — das ausgewählte Projekt unter `/home/dev/projects/<name>` (z. B. `jupiter`), mit dem **`features/`-Ordner default aufgeklappt**, weil die Feature-Specs am häufigsten gelesen werden.
+
+### A) Komponenten-Struktur (Frontend, Next.js App Router)
+```
+DocReaderPage  (app/(cockpit)/doku/page.tsx — Client Component, liest ?source & ?path aus der URL → deep-linkbar)
+├── SourceSwitcher        (shadcn Tabs: „Vault" | „Projekt")
+├── FileTree (links)      (ScrollArea; aus dem flachen Index gebaut; Vault → „Agentic OS/Jupiter/" & Projekt → „features/" default expanded)
+│   ├── TreeFolder        (aufklappbar)
+│   └── TreeFile          (.md-Dateien; Klick → setzt ?path=…)
+├── MarkdownViewer (Haupt)
+│   ├── FrontmatterPanel  (shadcn Card: YAML als saubere Key/Value-Tabelle — NICHT als Rohtext)
+│   ├── MarkdownBody      (react-markdown + remark-gfm + Wikilink-Plugin)
+│   │   ├── WikiLink      ([[Ziel]] → klickbarer Link auf ?path=<aufgelöst>; fehlend → grau/„fehlend"-Stil, kein Crash)
+│   │   └── ImageEmbed    (![[bild.png]] → Platzhalter im MVP)
+│   └── States            (Loading / Error / Empty / „keine MD-Datei"-Hinweis — reuse components/cockpit/states.tsx)
+└── (optional) SearchBar  (nutzt bestehendes GET /vault/search)
+```
+**Navigations-Einstieg:** „Doku"-Link im Kopf der `SessionRail` (`components/cockpit/session-rail.tsx`). Zusätzlich **Deep-Link aus der Session-Detail-Seite**: das in PROJ-5 geschriebene Handover liefert einen Pfad-Pointer (`VaultWriteResult.path`) → Link auf `/doku?source=vault&path=<pfad>` erfüllt „Handover/Doku zu einer Session direkt aufrufen".
+
+### B) Datenmodell (Klartext)
+**Kein DB-Schema** — reine Datei-Lese-Operationen. Zwei logische Lese-Quellen, beide innerhalb der `allowed_roots`:
+
+| Quelle | Wurzel | Default-Fokus | Schreibzugriff |
+|--------|--------|---------------|----------------|
+| **Vault** | `/home/dev/tools/Hal` (`vault_root`) | `Agentic OS/Jupiter/` (Sessions/, Handovers/) | nein (read-only) |
+| **Projekt** | `/home/dev/projects/<projekt>` | `features/` (Feature-Specs) | nein (read-only) |
+
+Pro gelesener Datei liefert der Dienst (wie PROJ-2 schon) **getrennt**: `frontmatter` (geparstes YAML als Objekt) + `body` (Markdown). Das Frontend rendert das Frontmatter als Metadaten-Panel, den Body als Markdown.
+
+### C) API-Form (nur Endpunkte, kein Code)
+Neuer **read-only**-Router `routes/md.py` (MD-Reader), getrennt von PROJ-2s schreibendem `vault.py`, damit dessen Schreib-/Vault-Semantik unangetastet bleibt:
+```
+GET /md/sources                              → verfügbare Quellen [{id:"vault"|"project", label, root}]
+GET /md/index?source=vault                   → flache Liste aller .md im Vault  [{path, name}]  → Baum + Wikilink-Index
+GET /md/index?source=project&project=<pfad>  → flache Liste aller .md im Projekt [{path, name}]
+GET /md/file?path=<pfad>                      → liest EINE .md → {path, frontmatter, body, content}
+```
+- Lesen/Index sind **immer** gegen `allowed_roots` validiert (realpath-Guard, exakt wie `validate_project_path`). Pfad außerhalb → 400, nicht-`.md` → klarer Hinweis statt Fehlversuch.
+- **Suche** bleibt im MVP das bestehende vault-weite `GET /vault/search` (PROJ-2). Suche über Projekt-Repos ist Non-Goal/P1.
+- Der Frontend baut **Baum** (Gruppierung der flachen Pfadliste nach Ordner) **und** **Wikilink-Index** (Basename → Pfad) aus derselben `/md/index`-Antwort — eine Quelle, kein zweiter Endpunkt nötig.
+
+### D) Tech-Entscheidungen (warum)
+- **`allowed_roots` als gemeinsamer Lese-Scope.** Vault **und** Projekt-Specs liegen beide schon in den erlaubten Roots — der Reader braucht keinen neuen Sicherheits-Scope, sondern wiederverwendet `validate_project_path`. Das ist die kleinste sichere Erweiterung und konsistent mit PROJ-1/PROJ-2.
+- **Eigener `md.py`-Router statt Aufbohren von `vault.py`.** PROJ-2s `vault.py` mischt Lesen **und** Schreiben (Schreiben streng auf den Jupiter-Unterbaum begrenzt). Ein dedizierter **read-only** Reader-Router hält diese Schreib-Härtung sauber getrennt und macht den Reader trivially sicher (kein Schreibpfad existiert). Die Frontmatter-Parser-/Slug-Helfer aus `engine/vault.py` werden als reine Funktionen wiederverwendet (kein Duplikat).
+- **Ein flacher Index statt Lazy-Tree-Endpoint.** Bei einem persönlichen Vault/Repo (hunderte, nicht Millionen `.md`) genügt eine flache Pfadliste; Frontend baut Baum **und** Basename→Pfad-Wikilink-Map daraus. Spart einen zweiten Endpoint und macht Wikilink-Auflösung sofort lokal/synchron.
+- **Markdown-Rendering client-seitig mit `react-markdown` + `remark-gfm`** (Headings, Listen, Code, **Tabellen**, Task-Lists — deckt das AC ab). **Kein Roh-HTML** → standardmäßig kein `dangerouslySetInnerHTML`, damit XSS aus fremden Vault-Dateien ausgeschlossen ist (Sicherheits-Entscheidung; falls je Roh-HTML gewünscht, dann nur mit `rehype-sanitize`).
+- **Wikilinks via kleines remark-Plugin** (oder `remark-wiki-link`): `[[Ziel]]` → Lookup im Basename-Index. Treffer → klickbarer Link auf `?path=…` (gleiche Quelle zuerst, dann Cross-Source-Fallback). Kein Treffer → als „fehlend" markiert, **kein Crash** (Edge-Case).
+- **Frontmatter als Panel, nicht als Rohtext** (AC): das Backend liefert es bereits geparst getrennt vom Body — das Frontend rendert nur eine Key/Value-Tabelle.
+- **Deep-linkbare URL (`?source=&path=`).** Macht Wikilink-Navigation, Browser-Back und das „Handover zu Session aufrufen" (Deep-Link aus PROJ-5) ohne globalen State möglich.
+- **Edge-Cases:** sehr große Datei → Viewer lädt **nur die eine** Datei; react-markdown rendert den ganzen Body (für MVP-Größen ok, Windowing/Virtualisierung als späterer Seam notiert). Bild-Embeds → Platzhalter (Anzeige = nice-to-have). Nicht-`.md` → Hinweis. Read-only erzwungen (kein Schreibpfad im Router).
+
+### E) Abhängigkeiten
+- **Frontend (neu):** `react-markdown` (MD-Rendering), `remark-gfm` (Tabellen/Task-Lists/Autolinks), Wikilink-Handling (`remark-wiki-link` **oder** ein ~30-Zeilen-Eigen-Plugin für volle Kontrolle über „fehlend"-Stil + Navigation). **Optional:** `rehype-highlight` oder `shiki` für Code-Syntax-Highlighting (nice-to-have).
+- **Backend:** **keine neuen Pakete** — reine Datei-I/O, wiederverwendet `validate_project_path` + den Frontmatter-Parser aus PROJ-2.
+- **Config:** keine zwingende neue Setting. Optional `reader_default_project` (Default = Jupiter-Repo) bzw. die „Projekt"-Quelle leitet sich aus dem `project_path` der aktiven Session ab (`schemas/sessions.py`).
+
+### Hinweis für /abc-frontend & /abc-backend
+- **Backend zuerst** (Reader braucht den Index): neuer Router `routes/md.py` + Schemas `schemas/md.py` (`MdSource`, `MdIndexEntry`, `MdFileRead` — letzteres kann `VaultFileRead` spiegeln). In `main.py` registrieren (Muster: `vault.py`). Lese-/Index-Validierung gegen `allowed_roots` via `validate_project_path`-Muster; Frontmatter-Helfer aus `engine/vault.py` importieren statt duplizieren.
+- **Frontend** danach: Route `app/(cockpit)/doku/page.tsx`, API-Methoden in `lib/api.ts` (`listMdSources`, `getMdIndex`, `readMdFile`), Typen in `lib/types.ts`. „Doku"-Link in `session-rail.tsx`; Deep-Link aus `sessions/[id]/page.tsx` auf das Handover-Pfad-Pointer.
 
 ## QA Test Results
 _To be added by /qa_
