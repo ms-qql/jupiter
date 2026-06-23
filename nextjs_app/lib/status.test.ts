@@ -28,11 +28,19 @@ function session(overrides: Partial<Session> = {}): Session {
     num_turns: 0,
     error: null,
     rate_limit: null,
+    pending_decisions: [],
     ...overrides,
   };
 }
 
-const ALL: SessionStatus[] = ["starting", "running", "waiting", "done", "error"];
+const ALL: SessionStatus[] = [
+  "starting",
+  "running",
+  "waiting",
+  "awaiting_approval",
+  "done",
+  "error",
+];
 
 describe("statusMeta — Ampel-Mapping (AC: Ampel-Kacheln)", () => {
   it("startet/arbeitet → grün", () => {
@@ -42,6 +50,10 @@ describe("statusMeta — Ampel-Mapping (AC: Ampel-Kacheln)", () => {
   it("waiting → amber (stärkstes Signal)", () => {
     expect(statusMeta("waiting").ampel).toBe("amber");
     expect(statusMeta("waiting").label).toBe("Wartet auf dich");
+  });
+  it("awaiting_approval → orange (Freigabe nötig)", () => {
+    expect(statusMeta("awaiting_approval").ampel).toBe("orange");
+    expect(statusMeta("awaiting_approval").label).toBe("Freigabe nötig");
   });
   it("error → rot, done → grau", () => {
     expect(statusMeta("error").ampel).toBe("red");
@@ -64,38 +76,47 @@ describe("columnFor — Kanban-Spalten (AC: 4 Spalten, Auto-Wandern)", () => {
   it("fertig: done", () => {
     expect(columnFor("done")).toBe("fertig");
   });
-  it("review-Spalte erhält im MVP keinen Status (Platzhalter bis PROJ-4)", () => {
-    expect(ALL.map(columnFor)).not.toContain("review");
+  it("review: awaiting_approval (PROJ-4 Decision Cards)", () => {
+    expect(columnFor("awaiting_approval")).toBe("review");
   });
 });
 
 describe("countStatuses — Mission-Control-Zähler (AC: globaler Status)", () => {
-  it("zählt aktiv/wartet/fehler/fertig korrekt", () => {
+  it("zählt aktiv/wartet/freigabe/fehler/fertig korrekt", () => {
     const c = countStatuses([
       session({ status: "running" }),
       session({ status: "starting" }),
       session({ status: "waiting" }),
+      session({ status: "awaiting_approval" }),
       session({ status: "error" }),
       session({ status: "done" }),
       session({ status: "done" }),
     ]);
-    expect(c).toEqual({ aktiv: 2, wartet: 1, fehler: 1, fertig: 2 });
+    expect(c).toEqual({ aktiv: 2, wartet: 1, freigabe: 1, fehler: 1, fertig: 2 });
   });
   it("leere Liste → alles 0", () => {
-    expect(countStatuses([])).toEqual({ aktiv: 0, wartet: 0, fehler: 0, fertig: 0 });
+    expect(countStatuses([])).toEqual({
+      aktiv: 0,
+      wartet: 0,
+      freigabe: 0,
+      fehler: 0,
+      fertig: 0,
+    });
   });
 });
 
-describe("railRank — Rail/Board-Sortierung (AC: Wartet zuoberst)", () => {
-  it("waiting < error < running < done", () => {
+describe("railRank — Rail/Board-Sortierung (AC: Handlungsbedarf zuoberst)", () => {
+  it("awaiting_approval < waiting < error < running < done", () => {
+    expect(railRank("awaiting_approval")).toBeLessThan(railRank("waiting"));
     expect(railRank("waiting")).toBeLessThan(railRank("error"));
     expect(railRank("error")).toBeLessThan(railRank("running"));
     expect(railRank("running")).toBeLessThan(railRank("done"));
   });
-  it("sortiert eine gemischte Liste Wartet→Fehler→Aktiv→Fertig", () => {
-    const order = (["done", "running", "error", "waiting"] as SessionStatus[])
-      .sort((a, b) => railRank(a) - railRank(b));
-    expect(order).toEqual(["waiting", "error", "running", "done"]);
+  it("sortiert eine gemischte Liste Freigabe→Wartet→Fehler→Aktiv→Fertig", () => {
+    const order = (
+      ["done", "running", "error", "waiting", "awaiting_approval"] as SessionStatus[]
+    ).sort((a, b) => railRank(a) - railRank(b));
+    expect(order).toEqual(["awaiting_approval", "waiting", "error", "running", "done"]);
   });
 });
 

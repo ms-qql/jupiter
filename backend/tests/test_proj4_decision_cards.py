@@ -209,6 +209,16 @@ def test_session_read_has_pending_decisions_field(client: TestClient):
     assert data["pending_decisions"] == []
 
 
+def test_ws_initial_snapshot_carries_pending_decisions(client: TestClient):
+    """Der erste WS-Snapshot muss pending_decisions enthalten (sonst rendert die
+    Detailseite eine bereits offene Card nicht — per Screenshot gefunden)."""
+    sid = _create(client)
+    with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+        msg = ws.receive_json()
+        assert msg["kind"] == "state"
+        assert "pending_decisions" in msg
+
+
 def test_resolve_unknown_session_404(client: TestClient):
     r = client.post("/sessions/nope/decisions/x", json={"decision": "approve"})
     assert r.status_code == 404

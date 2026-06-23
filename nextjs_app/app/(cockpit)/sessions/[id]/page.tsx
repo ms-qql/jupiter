@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Ampel } from "@/components/cockpit/ampel";
+import { DecisionCard } from "@/components/cockpit/decision-card";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { useNow } from "@/components/cockpit/sessions-provider";
 import { useSessionStream } from "@/hooks/use-session-stream";
@@ -160,6 +161,18 @@ export default function SessionDetailPage({
           </div>
         )}
       </div>
+
+      {/* Offene Decision Cards (PROJ-4): blockieren mitten im Turn auf deine Freigabe. */}
+      {head?.pending_decisions && head.pending_decisions.length > 0 && (
+        <div className="mb-3 flex flex-col gap-2">
+          <p className="text-xs font-medium text-orange-500">
+            Freigabe nötig — die Session wartet auf dich:
+          </p>
+          {head.pending_decisions.map((d) => (
+            <DecisionCard key={d.decision_id} decision={d} showJump={false} />
+          ))}
+        </div>
+      )}
 
       {/* Eingabe IMMER zeigen — an beendeten Sessions setzt eine Nachricht sie fort. */}
       {ended && (

@@ -8,8 +8,23 @@ export type SessionStatus =
   | "starting"
   | "running"
   | "waiting"
+  | "awaiting_approval" // PROJ-4: wartet auf eine Freigabe-Entscheidung
   | "done"
   | "error";
+
+/** Offene Decision Card (PROJ-4) — spiegelt PendingDecisionRead. */
+export interface PendingDecision {
+  decision_id: string;
+  session_id: string;
+  tool_name: string;
+  action: string; // „Was"
+  excerpt: string; // relevanter Ausschnitt (Befehl/Diff)
+  rationale: string; // „Warum"
+  context: { project_path?: string; role?: string | null; phase?: string | null };
+  created_at: string;
+  state: string; // open | resolved | obsolete
+  resolution: string | null;
+}
 
 export interface Session {
   session_id: string;
@@ -28,6 +43,7 @@ export interface Session {
   num_turns: number;
   error: string | null;
   rate_limit: Record<string, unknown> | null;
+  pending_decisions: PendingDecision[];
 }
 
 export interface TranscriptEntry {

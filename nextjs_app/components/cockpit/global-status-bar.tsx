@@ -16,6 +16,12 @@ export function GlobalStatusBar({ sessions }: { sessions: Session[] }) {
         emphasis={c.wartet > 0}
       />
       <Stat
+        label="Freigabe nötig"
+        value={c.freigabe}
+        dot="bg-orange-500"
+        emphasis={c.freigabe > 0}
+      />
+      <Stat
         label="Fehler"
         value={c.fehler}
         dot="bg-red-500"

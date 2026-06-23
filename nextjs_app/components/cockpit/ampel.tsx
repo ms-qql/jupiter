@@ -4,6 +4,7 @@ import type { Ampel as AmpelColor } from "@/lib/status";
 const COLOR: Record<AmpelColor, string> = {
   green: "bg-emerald-500",
   amber: "bg-amber-400",
+  orange: "bg-orange-500",
   red: "bg-red-500",
   gray: "bg-zinc-500",
 };
@@ -11,6 +12,7 @@ const COLOR: Record<AmpelColor, string> = {
 const PULSE: Record<AmpelColor, boolean> = {
   green: true, // arbeitet → pulsiert
   amber: true, // wartet auf dich → pulsiert (stärkstes Signal)
+  orange: true, // Freigabe nötig → pulsiert (blockiert, braucht dich jetzt)
   red: false,
   gray: false,
 };

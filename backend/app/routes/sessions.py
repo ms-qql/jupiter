@@ -174,8 +174,9 @@ async def stream_session(websocket: WebSocket, session_id: str) -> None:
     queue_get: asyncio.Task | None = None
     sock_recv: asyncio.Task | None = None
     try:
-        # Sofort einen Zustands-Snapshot senden, danach live weiterstreamen.
-        await websocket.send_json({"kind": "state", **runtime.state.to_read()})
+        # Sofort einen Zustands-Snapshot senden (inkl. offener Decision Cards),
+        # danach live weiterstreamen.
+        await websocket.send_json({"kind": "state", **runtime.to_read()})
         while True:
             # Auf das nächste Event ODER eine Socket-Aktion (Disconnect) warten,
             # damit getrennte Clients nicht ewig in queue.get() hängen.

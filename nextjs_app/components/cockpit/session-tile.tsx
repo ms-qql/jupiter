@@ -18,7 +18,9 @@ export function SessionTile({
 }) {
   const meta = statusMeta(session.status);
   const isWaiting = session.status === "waiting";
+  const isAwaiting = session.status === "awaiting_approval";
   const isError = session.status === "error";
+  const pendingCount = session.pending_decisions?.length ?? 0;
 
   return (
     <Link
@@ -26,8 +28,9 @@ export function SessionTile({
       className={cn(
         "block rounded-lg border bg-card p-3 transition-colors hover:border-foreground/30",
         isWaiting && "border-amber-400/60 ring-1 ring-amber-400/30",
+        isAwaiting && "border-orange-500/60 ring-1 ring-orange-500/30",
         isError && "border-red-500/60 ring-1 ring-red-500/20",
-        !isWaiting && !isError && "border-border",
+        !isWaiting && !isAwaiting && !isError && "border-border",
       )}
     >
       <div className="flex items-center gap-2">
@@ -41,8 +44,15 @@ export function SessionTile({
       </div>
 
       <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
-        <span className={cn(isWaiting && "font-medium text-amber-500")}>
-          {meta.label}
+        <span
+          className={cn(
+            isWaiting && "font-medium text-amber-500",
+            isAwaiting && "font-medium text-orange-500",
+          )}
+        >
+          {isAwaiting && pendingCount > 0
+            ? `⚠ ${pendingCount} Freigabe${pendingCount > 1 ? "n" : ""} nötig`
+            : meta.label}
         </span>
         {session.role && (
           <>

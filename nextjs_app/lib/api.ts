@@ -66,6 +66,19 @@ export function stopSession(id: string): Promise<{ ok: boolean }> {
   return request(`/sessions/${id}/stop`, { method: "POST" });
 }
 
+/** Decision Card entscheiden (PROJ-4): Freigeben / Ablehnen / Mit Kommentar zurück. */
+export function resolveDecision(
+  sessionId: string,
+  decisionId: string,
+  decision: "approve" | "deny",
+  comment?: string,
+): Promise<{ ok: boolean }> {
+  return request(`/sessions/${sessionId}/decisions/${decisionId}`, {
+    method: "POST",
+    body: JSON.stringify({ decision, comment: comment ?? null }),
+  });
+}
+
 /** ws(s)://…/sessions/{id}/stream — Live-Events nur für die Detailansicht. */
 export function streamUrl(id: string): string {
   const base = API_BASE.replace(/^http/, "ws");

@@ -187,6 +187,32 @@ Neuer Wert **`awaiting_approval`** → Spalte **„Review/Approval"** (orange). 
 
 → Bereit für `/abc-frontend` (DecisionCard + „Review/Approval"-Spalte) und danach `/abc-qa`.
 
+## Implementation Notes — Frontend (abc-frontend, 2026-06-23)
+**Branch:** dev · **Stack:** Next.js 16 (App Router) + shadcn/ui (Cockpit aus PROJ-3) — rein additiv, kein neues Paket.
+
+### Gebaut
+- **`components/cockpit/decision-card.tsx`** (NEU) — die Card: **Bash/Tool-Badge + Aktion** („Was"), **Kontext-Zeile** (Projekt · Phase/Rolle), **Ausschnitt** als `<pre>` (Befehl/Diff, scrollbar — nicht das Log), **„Warum"** (Rationale), Aktionen **Freigeben** / **Ablehnen** / **Mit Kommentar zurück** (klappt eine Textarea aus → Deny mit Begründung) / **In Session springen →** (`showJump`, auf der Detailseite ausgeblendet). Obsolet-Zustand grau + Aktionen deaktiviert. Toast bei Erfolg/Fehler; danach blendet das Polling/WS die Card aus.
+- **`lib/types.ts`** — `SessionStatus` um `awaiting_approval`; neues `PendingDecision`-Interface; `pending_decisions: PendingDecision[]` an `Session`.
+- **`lib/status.ts`** — neue Ampel-Farbe **`orange`**; `statusMeta.awaiting_approval` („Freigabe nötig"); `columnFor` → `awaiting_approval` = **„review"** (füllt PROJ-3s reservierte Spalte); `countStatuses.freigabe`; `railRank` priorisiert `awaiting_approval` ganz oben (braucht dich JETZT).
+- **`components/cockpit/ampel.tsx`** — orange Punkt (pulsiert).
+- **`kanban-board.tsx`** — die **„Review/Approval"-Spalte** rendert jetzt die offenen `DecisionCard`s (statt Platzhalter); orange Hervorhebung + Karten-Zähler.
+- **`session-tile.tsx`** — `awaiting_approval` = orange Ring + „⚠ N Freigabe(n) nötig".
+- **`global-status-bar.tsx`** — Mission-Control-Zähler **„Freigabe nötig"** (orange).
+- **`lib/api.ts`** — `resolveDecision(sessionId, decisionId, "approve"|"deny", comment?)` → `POST /sessions/{id}/decisions/{decision_id}`.
+- **Detailseite** (`sessions/[id]/page.tsx`) — offene Cards inline über der Eingabe (mit `showJump={false}`).
+
+### Im Test gefundener & behobener Backend-Bug (per Screenshot)
+Die Detailseite zeigte eine bereits offene Card **nicht** an: Der **initiale WebSocket-Snapshot** nutzte `runtime.state.to_read()` (ohne `pending_decisions`) und überschrieb damit den vollständigen REST-Load. Fix in `routes/sessions.py`: Snapshot nutzt jetzt `runtime.to_read()` (inkl. Cards). Mit Test `test_ws_initial_snapshot_carries_pending_decisions` abgesichert (Backend jetzt **158 grün**). Zusätzlich kleine Backend-Politur: „Warum" fällt auf den Denk-Block zurück, wenn kein Assistenten-Text vorausging (sonst leer) — im Live-Smoke bestätigt.
+
+### Verifikation
+- **Vitest** `lib/status.test.ts` → **18 grün** (neue Fälle: orange/awaiting_approval-Mapping, review-Spalte, `freigabe`-Zähler, railRank-Priorität). `npm run lint` grün, `next build` grün (TypeScript ok).
+- **Echter visueller End-to-End-Smoke** (Prod-Build + reales Backend + reale Haiku-Session, Playwright-Screenshots): Session löst Bash-Card aus →
+  - **Detailseite:** Card inline mit Bash-Badge, „Shell-Befehl: echo hallo", Kontext, Ausschnitt (`$ echo hallo`), gefülltem „Warum", Freigeben/Ablehnen/Mit Kommentar zurück.
+  - **Board:** orange Kachel „⚠ 1 Freigabe nötig" + Mission-Control „1 Freigabe nötig"; **Kanban „Review/Approval"-Spalte (Zähler 1)** zeigt die Card inkl. „In Session springen →".
+- Hinweis: Betrieb weiterhin **ein** uvicorn-Worker; `JUPITER_HOOK_SELF_URL` muss auf die Backend-Adresse zeigen (Default `:8000`).
+
+→ Bereit für `/abc-qa`.
+
 ## QA Test Results
 _To be added by /qa_
 
