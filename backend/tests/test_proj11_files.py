@@ -214,3 +214,46 @@ def test_clipboard_dir_patch_within_roots(client, root):
 def test_clipboard_dir_patch_outside_roots_400(client):
     res = client.patch("/settings/clipboard-dir", json={"path": "/etc/clip"})
     assert res.status_code == 400
+
+
+# --- Red-Team: Pfad-Härtung ------------------------------------------------
+
+def test_list_outside_roots_rejected(client):
+    assert client.get("/files/list", params={"path": "/etc"}).status_code == 400
+
+
+@pytest.mark.parametrize("rel", ["../../../etc", "..", "sub/../../.."])
+def test_list_traversal_rejected(client, root, rel):
+    res = client.get("/files/list", params={"path": os.path.join(root, rel)})
+    assert res.status_code == 400
+
+
+def test_download_symlink_escape_blocked(client, root):
+    # Symlink INNERHALB der Wurzel, der auf /etc/passwd ZEIGT → realpath bricht aus → 400.
+    link = os.path.join(root, "escape")
+    os.symlink("/etc/passwd", link)
+    res = client.get("/files/download", params={"path": link})
+    assert res.status_code == 400
+
+
+def test_upload_symlink_target_dir_escape_blocked(client, root, tmp_path):
+    # target_dir ist ein Symlink, der aus den Roots zeigt → abgelehnt, kein Schreiben außerhalb.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = os.path.join(root, "outlink")
+    os.symlink(str(outside), link)
+    res = client.post(
+        "/files/upload",
+        files={"files": ("x.png", PNG, "image/png")},
+        data={"target_dir": link},
+    )
+    assert res.status_code == 400
+    assert not os.listdir(outside)  # nichts außerhalb geschrieben
+
+
+def test_rename_traversal_name_rejected(client, root):
+    up = client.post("/files/upload", files={"files": ("r.txt", b"1", "text/plain")},
+                     data={"target_dir": root})
+    res = client.post("/files/rename",
+                      json={"path": up.json()["files"][0]["path"], "new_name": "../escaped.txt"})
+    assert res.status_code == 400

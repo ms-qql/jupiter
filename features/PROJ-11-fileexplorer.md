@@ -1,10 +1,10 @@
 # PROJ-11: Fileexplorer + Drag-and-Drop-Transport
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #15 (+ Clipboard-Paste-Erweiterung)
-**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** ✅ implementiert (2026-06-23)
+**Backend:** ✅ implementiert (2026-06-23) · **Frontend:** ✅ implementiert (2026-06-23) · **QA:** ✅ READY (2026-06-23, 5 Low-Follow-ups)
 
 ## Dependencies
 - Requires: PROJ-1 (Pfad-Scope) — Wiederverwendung der erlaubten Roots / `validate_project_path`-Logik für sicheren Datei-Zugriff.
@@ -233,7 +233,48 @@ Next.js 16 + shadcn/ui, Branch `dev`. Beide Oberflächen über den geteilten Hoo
 - Umbenennen/Neuer-Ordner nutzen native `window.prompt`/`confirm` (kein eigener Dialog) — bewusst schlank.
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-23 · **Branch:** dev · **Stack-Hinweis:** Jupiter ohne JWT/RLS → Security-Fokus = Pfad-Härtung, nicht Tenant-Isolation.
+
+### Automatisierte Tests
+- **Backend:** `tests/test_proj11_files.py` — **28 Tests grün** (21 Funktion + 7 Red-Team).
+- **Regression:** gesamte Backend-Suite **291 grün, 0 Regressionen**.
+- **Frontend:** ESLint sauber · `next build` **erfolgreich** (Routen `/dateien` + `/sessions/[id]` kompiliert, TS-Check grün).
+- **Hinweis:** Interaktive Browser-Flows (Drag-and-Drop/Paste-Gesten) sind statisch + per Build verifiziert; ein **manueller Browser-Smoke** vor Deploy wird empfohlen.
+
+### Acceptance Criteria
+| AC | Ergebnis | Beleg |
+|---|---|---|
+| Baum/Liste innerhalb Roots, Navigation | ✅ | `list_dir` + Explorer (Build) |
+| Upload DnD + Dialog, mehrere Dateien | ✅ | Multiple-Upload, DropZone |
+| Download einzelner Dateien | ✅ | `download` Roundtrip-Test (Ordner-Zip = optional, nicht gebaut) |
+| mkdir / Umbenennen / Löschen (Bestätigung) | ✅ | Tests + Explorer (`confirm` beim Löschen) |
+| **Verschieben (move)** | ⚠️ Teilweise | Backend ✅ getestet; **Explorer-UI fehlt** (Low-5) |
+| Pfad serverseitig geprüft, außerhalb → Fehler | ✅ | Out-of-Roots/Traversal/Symlink-Tests |
+| Große Dateien gestreamt + Größenlimit | ✅ | Streaming-Abbruch-Test |
+| Clipboard-Paste (Strg/Cmd+V), Zeitstempelname | ✅ | `clip-…`/`blob.png`-Tests |
+| Dedizierter Clipboard-Ordner, kurzer Pfad, auto-create | ✅ | Clipboard-Dir-Tests |
+| Pastes default in Clipboard-Ordner | ✅ | Default-Target-Test |
+| Clipboard-Pin + „Pfad kopieren" (Ordner & Datei) | ✅ | Explorer (`copyPath`, Pin) |
+| **Surface B:** Button/Drop am Eingabefeld | ✅ | `SessionClipboardButton` + Textarea-Handler |
+| **Surface B:** DnD + Paste → Upload → Pfad ins Eingabefeld | ✅ | `attachFiles` (Build) |
+| Fortschritt/Erfolg, Text bei Fehler erhalten | ✅ | `uploading`-State; Append lässt getippten Text stehen |
+| Loading/Error/Empty, deutsch | ✅ | Explorer-States |
+
+### Edge Cases
+✅ Traversal/Symlink-Ausbruch geblockt · zu große Datei · Typ nicht erlaubt · namenloser/blob-Paste · mehrere Dateien · Plaintext-Paste (fällt auf normales Einfügen zurück) · Clipboard-Ordner gelöscht (auto-create) · Kollision (auto-unique).
+⚠️ **Kollision beim Explorer-Upload** wird **automatisch umbenannt** (`-1/-2`) statt „Überschreiben/Umbenennen/Abbrechen" abzufragen — sicher (kein Overwrite), aber Abweichung vom Edge-Case (Low-1).
+
+### Befunde (alle Low — kein Critical/High)
+- **Low-1:** Explorer-Upload-Kollision → Auto-Rename statt Nachfrage-Dialog (Abweichung; sicher).
+- **Low-2:** OS-/Permission-Fehler bei upload/mkdir/rename/move ergeben **500** statt freundlicher 4xx-Meldung (Route fängt nur `ValueError`/`FileExistsError`).
+- **Low-3:** Löschbestätigung nennt keine Datei-Anzahl bei nicht-leerem Ordner.
+- **Low-4:** Pfad-Einfügen in die Session-Textarea hängt **am Ende** an (nicht an Cursor-Position).
+- **Low-5:** **Move** ohne Explorer-UI (Backend vorhanden).
+- **Security-Note (Low, by trust model):** Explorer/Download exponieren **alle** Dateien unter `allowed_roots` (inkl. `.env`/Secrets/Quellcode). Akzeptabel im Single-User-/Tailscale-MVP; bei echtem Auth (#21) muss ein Owner-Scope/RLS davor. **Kein** MVP-Blocker.
+- **Info:** Upload-Whitelist lehnt extensionslose Dateien ab (`LICENSE`); via `JUPITER_UPLOAD_ALLOWED_EXTENSIONS` leerbar.
+
+### Produktionsreife: ✅ READY
+Keine Critical/High-Bugs. Backend adversarial abgesichert, Build grün. Die 5 Low-Punkte sind sichere Abweichungen/Nice-to-haves und können als Follow-up adressiert werden. Empfehlung: kurzer manueller Browser-Smoke der beiden interaktiven Flows vor `/abc-deploy`.
 
 ## Deployment
 _To be added by /abc-deploy_
