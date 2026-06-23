@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-22
+**Next Available ID:** PROJ-27
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -35,6 +35,16 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-20 | Spracheingabe / Push-to-Talk (abo-frei) | P1 | Planned | PROJ-9, PROJ-4 | [Spec](PROJ-20-spracheingabe.md) |
 | PROJ-21 | Session-Löschen / Cockpit-Aufräumen | P1 | Planned | PROJ-1, PROJ-14, PROJ-3 | [Spec](PROJ-21-session-loeschen-cockpit-aufraeumen.md) |
 
+## Phase 2 — Skalierung (Orchestrierung & Team)
+
+| ID | Feature | Prio | Status | Abhängigkeiten | Spec |
+|----|---------|------|--------|----------------|------|
+| PROJ-22 | Multi-Agent-Dispatch-Schicht + Vertrag-zuerst/Koordinator | P2 | Planned | PROJ-1, PROJ-3, PROJ-4, PROJ-2, PROJ-9 | [Spec](PROJ-22-multi-agent-dispatch.md) |
+| PROJ-23 | Cross-Agent-Review / Challenge (engine-übergreifend) | P2 | Planned | PROJ-18, PROJ-22, PROJ-4, PROJ-2 | [Spec](PROJ-23-cross-agent-review.md) |
+| PROJ-24 | Vault als geteilter Dienst (auch für eingebettete Apps) | P2 | Planned | PROJ-2, PROJ-15, PROJ-18 | [Spec](PROJ-24-vault-geteilter-dienst.md) |
+| PROJ-25 | Echtes Auth (JWT) + Scope/RLS auf `owner` | P2 | Planned | PROJ-2, PROJ-24 | [Spec](PROJ-25-auth-jwt-scope-rls.md) |
+| PROJ-26 | Marktplatz/Registry für Rollen/Skills/Agenten | P2 | Planned | PROJ-6, PROJ-1, PROJ-10, PROJ-25 | [Spec](PROJ-26-marktplatz-registry.md) |
+
 ## Empfohlene Bau-Reihenfolge (Phase 0)
 1. **PROJ-1** — Engine-Treiber (riskantester Unbekannter; Verifikations-Spike zuerst)
 2. **PROJ-6** — Konstitution (früh, weil sie das Verhalten aller Sessions prägt)
@@ -55,5 +65,11 @@ Abhängigkeits-getrieben; grob: Härtung/Resilienz zuerst, dann Komfort, dann Ef
 7. **PROJ-15** — Vault Stufe 3
 8. **PROJ-18** — Weitere Engines · **PROJ-19** — Effizienz-Ausbau · **PROJ-20** — Spracheingabe
 
-## Roadmap (noch ohne Spec — siehe docs/PRD.md)
-- **P2:** Multi-Agent-Dispatch #17/#18 · Cross-Agent-Review #30 · Vault als geteilter Dienst #14 · echtes Auth/RLS #21 · Registry
+## Empfohlene Bau-Reihenfolge (Phase 2)
+Abhängigkeits-getrieben: Orchestrierungs-Unterbau zuerst, dann Diversität/Review, dann Team/Teilen.
+1. **PROJ-22** — Dispatch-Schicht + Vertrag (Orchestrierungs-Fundament)
+2. **PROJ-18** — Weitere Engines (Voraussetzung für Modell-Diversität; Phase-1-Feature, vor PROJ-23 nötig)
+3. **PROJ-23** — Cross-Agent-Review (braucht Dispatch + zweite Engine)
+4. **PROJ-24** — Vault als geteilter Dienst
+5. **PROJ-25** — echtes Auth (JWT) + Scope/RLS auf `owner`
+6. **PROJ-26** — Marktplatz/Registry
