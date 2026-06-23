@@ -159,6 +159,8 @@ async def reset_session(session_id: str, payload: ResetRequest, request: Request
             seed_context=payload.seed_context,
             initial_prompt=payload.initial_prompt,
         )
+    except RuntimeError as exc:  # bereits zurückgesetzt (1 Strang = 1 Nachfolger)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:  # ungültiger Pfad / Modell der Kind-Session
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:  # claude-Binary weg

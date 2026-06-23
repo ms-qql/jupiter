@@ -111,6 +111,7 @@ class SessionState:
     rate_limit: dict | None = None
     # PROJ-5 — Kontext-Management & Handover.
     parent_session_id: str | None = None  # Reset-Kind-Session → Vorgänger (Staffelstab).
+    child_session_id: str | None = None  # Vorgänger → Reset-Nachfolger (1 Strang = 1 Nachfolger).
     context_known: bool = False  # Treiber-Daten da? sonst Gauge „unbekannt" statt 0 %.
     context_threshold_override_pct: int | None = None  # pro-Session-Schwelle (None → global).
     threshold_warned: bool = False  # one-shot Auto-Vorschlag bei Schwellenüberschreitung.
@@ -150,6 +151,7 @@ class SessionState:
             "error": self.error,
             "rate_limit": self.rate_limit,
             "parent_session_id": self.parent_session_id,
+            "child_session_id": self.child_session_id,
         }
 
 
@@ -581,9 +583,16 @@ class SessionManager:
         """
         old = self._require(session_id)
         old_state = old.state
+        # Ein Strang hat genau EINEN Nachfolger (QA5-1): ein zweiter Reset würde sonst
+        # eine verwaiste, lebende Kind-Session erzeugen. Vor jeder Nebenwirkung prüfen.
+        if old_state.child_session_id is not None:
+            raise RuntimeError(
+                "Diese Session wurde bereits zurückgesetzt "
+                f"(Nachfolger {old_state.child_session_id[:8]})."
+            )
         # Alte Session archivieren: sauber stoppen → DONE → Auto-Log in den Vault (PROJ-2).
         await self.stop(session_id)
-        return await self.create(
+        child = await self.create(
             project_path=old_state.project_path,
             initial_prompt=initial_prompt or _DEFAULT_RESET_PROMPT,
             model=_model_alias(old_state.model),
@@ -593,6 +602,8 @@ class SessionManager:
             owner=old_state.owner,
             parent_session_id=old_state.session_id,
         )
+        old_state.child_session_id = child.state.session_id
+        return child
 
     def transcript_text(self, session_id: str) -> str:
         """Gesamtes Transkript als Klartext (Copy-out)."""

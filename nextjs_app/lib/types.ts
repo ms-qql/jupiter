@@ -51,6 +51,8 @@ export interface Session {
   rate_limit: Record<string, unknown> | null;
   /** PROJ-5: Reset-Kind-Session → Vorgänger (Staffelstab). */
   parent_session_id: string | null;
+  /** PROJ-5: Vorgänger → Reset-Nachfolger (1 Strang = 1 Nachfolger). */
+  child_session_id: string | null;
   pending_decisions: PendingDecision[];
 }
 

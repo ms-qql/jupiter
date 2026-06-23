@@ -182,7 +182,7 @@ Alle Endpunkte sind Single-User-MVP (Owner serverseitig gestempelt, kein JWT —
 
 ## QA Test Results
 **Getestet:** 2026-06-23 · **Branch:** dev · **Tester:** QA/Red-Team
-**Automatisiert:** Backend `pytest` **183 grün** (24 PROJ-5, davon 3 neue Red-Team-Fälle) · Frontend `tsc --noEmit` ✓ · `eslint` ✓ · `vitest` **23 grün** · `next build` ✓.
+**Automatisiert:** Backend `pytest` **185 grün** (26 PROJ-5, inkl. Red-Team + QA5-1-Fix) · Frontend `tsc --noEmit` ✓ · `eslint` ✓ · `vitest` **23 grün** · `next build` ✓.
 **Methodik:** Akzeptanzkriterien gegen Code + automatisierte Tests + dynamische Red-Team-Probe (Manager/TestClient mit FakeDriver). **Nicht** abgedeckt: visuelle Browser-E2E gegen laufenden Stack + echte Claude-Session (→ `/abc-qa-e2e` empfohlen vor Deploy).
 
 ### Akzeptanzkriterien
@@ -214,10 +214,12 @@ Alle Endpunkte sind Single-User-MVP (Owner serverseitig gestempelt, kein JWT —
 ### Bugs
 | ID | Sev | Beschreibung | Status |
 |---|---|---|---|
-| QA5-1 | **Low** | Doppelter `/reset` auf dieselbe (bereits archivierte) Session erzeugt eine zweite Kind-Session; die erste bleibt als **lebende Waise** in der Registry. Client-seitig durch den `resetting`-Guard + Navigation entschärft; serverseitig ungebremst. Empfehlung: Reset auf nicht-archivierte Sessions beschränken oder bei vorhandenem Kind ablehnen. | offen (nicht blockierend) |
+| QA5-1 | **Low** | Doppelter `/reset` auf dieselbe Session erzeugte eine zweite, verwaiste lebende Kind-Session. | ✅ **gefixt** (s. u.) |
+
+**Fix QA5-1 (2026-06-23):** „Ein Strang = ein Nachfolger" erzwungen. Neues Feld `child_session_id` (Vorgänger → Nachfolger). `manager.reset()` lehnt einen zweiten Reset **vor jeder Nebenwirkung** mit `RuntimeError` ab → Route `409`. Frontend blendet den Reset-Button bei vorhandenem Nachfolger aus und zeigt stattdessen „Nachfolger-Session →". Tests: `test_double_reset_conflicts_409`, `test_double_reset_raises_and_leaves_no_orphan`. Backend-Suite **185 grün**, Frontend-Gates grün.
 
 ### Produktionsreife
-**READY (MVP)** — keine Critical/High-Bugs. 1× Low (QA5-1) dokumentiert, nicht blockierend.
+**READY (MVP)** — keine offenen Critical/High/Low-Bugs (QA5-1 gefixt).
 **Empfehlung vor Deploy:** `/abc-qa-e2e` für den Live-Browser-Flow (WS-Notice-Toast, Reset-Navigation zur Kind-Session, Vault-Pointer nach dem Schreiben) gegen laufendes Backend + echte Claude-Session — diese Schicht wurde hier nicht visuell verifiziert.
 
 ## Deployment

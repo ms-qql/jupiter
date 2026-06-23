@@ -88,6 +88,7 @@ class SessionRead(BaseModel):
     error: str | None = None
     rate_limit: dict | None = None
     parent_session_id: str | None = None
+    child_session_id: str | None = None
     pending_decisions: list[PendingDecisionRead] = []
 
 

@@ -34,6 +34,7 @@ function session(overrides: Partial<Session> = {}): Session {
     error: null,
     rate_limit: null,
     parent_session_id: null,
+    child_session_id: null,
     pending_decisions: [],
     ...overrides,
   };

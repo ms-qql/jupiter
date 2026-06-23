@@ -217,6 +217,22 @@ def test_reset_unknown_404(client: TestClient):
     assert client.post("/sessions/nope/reset", json={"seed_context": "x"}).status_code == 404
 
 
+def test_double_reset_conflicts_409(client: TestClient):
+    """QA5-1: zweiter Reset desselben Strangs wird abgelehnt (kein verwaistes Kind)."""
+    sid = _create(client)
+    first = client.post(f"/sessions/{sid}/reset", json={"seed_context": "seed"})
+    assert first.status_code == 201
+    child_id = first.json()["session_id"]
+    # Der Vorgänger zeigt nun auf seinen Nachfolger.
+    assert client.get(f"/sessions/{sid}").json()["child_session_id"] == child_id
+    # Zweiter Reset → 409, kein weiteres Kind.
+    second = client.post(f"/sessions/{sid}/reset", json={"seed_context": "seed2"})
+    assert second.status_code == 409
+    sessions = client.get("/sessions").json()
+    children = [s for s in sessions if s["parent_session_id"] == sid]
+    assert len(children) == 1  # genau EIN Nachfolger pro Strang
+
+
 def test_reset_requires_seed_422(client: TestClient):
     sid = _create(client)
     assert client.post(f"/sessions/{sid}/reset", json={}).status_code == 422
@@ -228,8 +244,22 @@ async def test_reset_manager_level_links_parent():
     rt = await _session(mgr)
     child = await mgr.reset(rt.state.session_id, seed_context="Seed-Kontext-XYZ")
     assert child.state.parent_session_id == rt.state.session_id
+    assert rt.state.child_session_id == child.state.session_id  # Strang verkettet
     assert rt.state.status == DONE  # alt archiviert
     assert "Seed-Kontext-XYZ" in child.state.effective_constitution
+
+
+@pytest.mark.asyncio
+async def test_double_reset_raises_and_leaves_no_orphan():
+    """QA5-1 (Manager-Ebene): zweiter Reset wirft, Registry behält genau ein Kind."""
+    mgr = _mgr()
+    rt = await _session(mgr)
+    child = await mgr.reset(rt.state.session_id, seed_context="s1")
+    before = len(mgr.list())
+    with pytest.raises(RuntimeError):
+        await mgr.reset(rt.state.session_id, seed_context="s2")
+    assert len(mgr.list()) == before  # keine zweite (verwaiste) Kind-Session entstanden
+    assert rt.state.child_session_id == child.state.session_id
 
 
 # --- Red-Team / Edge-Cases (QA PROJ-5) -------------------------------------

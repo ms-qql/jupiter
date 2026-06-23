@@ -141,13 +141,24 @@ export default function SessionDetailPage({
       {head && (
         <div className="flex flex-wrap items-center gap-2 border-b border-border py-2">
           <HandoverDialog sessionId={id} />
-          <ResetSessionButton sessionId={id} numTurns={head.num_turns} />
+          {/* Bereits zurückgesetzte Stränge haben genau einen Nachfolger → kein zweiter Reset. */}
+          {!head.child_session_id && (
+            <ResetSessionButton sessionId={id} numTurns={head.num_turns} />
+          )}
           {head.parent_session_id && (
             <Link
               href={`/sessions/${head.parent_session_id}`}
               className="text-xs text-muted-foreground hover:text-foreground"
             >
               ← Vorgänger-Session
+            </Link>
+          )}
+          {head.child_session_id && (
+            <Link
+              href={`/sessions/${head.child_session_id}`}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Nachfolger-Session →
             </Link>
           )}
         </div>
