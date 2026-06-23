@@ -209,6 +209,22 @@ async def test_double_resolve_raises():
         mgr.resolve_decision(rt.state.session_id, "tu1", approve=True)
 
 
+@pytest.mark.asyncio
+async def test_send_input_blocked_while_decision_pending():
+    """PROJ4-QA-1: Eingabe bei offener Card wird abgelehnt (sonst verkeilt der Stream).
+    Nach dem Entscheiden ist die Eingabe wieder möglich."""
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")
+    task = asyncio.create_task(mgr.request_decision(rt.state.session_id, "tu1", "Bash", {"command": "x"}))
+    await asyncio.sleep(0)
+    with pytest.raises(RuntimeError):
+        await mgr.send_input(rt.state.session_id, "was machst du")
+    # Karte entscheiden → Eingabe wieder erlaubt.
+    mgr.resolve_decision(rt.state.session_id, "tu1", approve=True)
+    await task
+    await mgr.send_input(rt.state.session_id, "weiter geht's")  # kein Fehler mehr
+
+
 # --- REST-Vertrag -----------------------------------------------------------
 
 @pytest.fixture()
@@ -317,3 +333,27 @@ async def test_end_to_end_hook_blocks_until_resolved():
         assert hook_resp.json()["hookSpecificOutput"]["permissionDecision"] == "allow"
         # Board zeigt die Card nicht mehr.
         assert (await ac.get(f"/sessions/{sid}")).json()["pending_decisions"] == []
+
+
+@pytest.mark.asyncio
+async def test_input_rejected_409_while_card_open():
+    """PROJ4-QA-1 (REST): bei offener Card liefert POST /input 409 statt den Stream zu verkeilen."""
+    app = create_app(driver_factory=lambda: FakeDriver())
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        sid = (await ac.post("/sessions", json={"project_path": PROJECT, "initial_prompt": "Hi", "model": "haiku"})).json()["session_id"]
+        hook = asyncio.create_task(
+            ac.post(
+                "/internal/permission",
+                json={"session_id": sid, "tool_name": "Bash", "tool_input": {"command": "x"}, "tool_use_id": "tu1"},
+                headers={"X-Jupiter-Hook-Token": settings.hook_token},
+            )
+        )
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if (await ac.get(f"/sessions/{sid}")).json()["pending_decisions"]:
+                break
+        # Eingabe bei offener Card → 409 (nicht stiller Wedge).
+        assert (await ac.post(f"/sessions/{sid}/input", json={"text": "was machst du"})).status_code == 409
+        # Aufräumen: entscheiden → Hook entsperren.
+        await ac.post(f"/sessions/{sid}/decisions/tu1", json={"decision": "deny"})
+        await hook

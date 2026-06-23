@@ -478,6 +478,14 @@ class SessionManager:
 
     async def send_input(self, session_id: str, text: str) -> None:
         runtime = self._require(session_id)
+        # PROJ-4: Bei offener Decision Card KEINE Eingabe annehmen. Sonst überschriebe
+        # `send_input` den Status (awaiting_approval → running), während die Card-Future
+        # ungelöst weiterhängt, und der Event-Strom der Session verkeilt (Bug PROJ4-QA-1).
+        # Erst entscheiden (Freigeben/Ablehnen/Mit Kommentar zurück), dann weiter eingeben.
+        if runtime.pending:
+            raise RuntimeError(
+                "Offene Freigabe — bitte erst die Decision Card entscheiden, dann weiter eingeben."
+            )
         # Beendete Session (Prozess ist weg) → vor der Eingabe per `claude --resume`
         # fortsetzen, damit der User auch an fertigen Sessions weiterarbeiten kann.
         if not runtime.driver.is_alive:

@@ -260,6 +260,18 @@ Die Detailseite zeigte eine bereits offene Card **nicht** an: Der **initiale Web
 ### Produktionsreife-Entscheidung
 **READY / Approved** (innerhalb des MVP-Scopes) — alle 6 AC + alle Edge Cases bestanden, keine Critical/High-Bugs. **SEC-1 ist ein verbindliches Deploy-Gate** (in `/abc-deploy` abhaken: `/internal` nicht öffentlich + starkes `JUPITER_HOOK_TOKEN`). SEC-2/3 + LOW-1/2 als P1-Härtung notiert.
 
+### Nachtrag — PROJ4-QA-1 (interaktiver Test, 2026-06-23): Eingabe bei offener Card verkeilt die Session — BEHOBEN
+Beim manuellen Test auf einer Live-Instanz gefunden: Schickte man `POST /input`, **während eine Decision Card offen war** (`awaiting_approval`), überschrieb `send_input` den Status (→ `running`), während die Card-Future **ungelöst** weiterhing — Claude brach das Tool ab und arbeitete weiter, aber der Event-Strom war ab da entkoppelt: die Session-Ansicht **verkeilte** (keine weitere Ausgabe sichtbar, bis Neustart). Das ist die **Eskalation von LOW-2** (war als „kurze Desync" unterschätzt).
+
+**Zuordnung:** Auf einem **PROJ-4-only-Build** (`a6e9cad`) deterministisch **reproduziert** → eindeutig ein PROJ-4-Bug, **keine** PROJ-5-Regression.
+
+**Fix:**
+- **Backend** (`manager.send_input`): bei nicht-leerem `runtime.pending` → `RuntimeError` → Route liefert **409** („Erst die offene Freigabe entscheiden"). 
+- **Frontend** (Session-Detail): Eingabefeld + „Senden" **gesperrt**, solange Cards offen sind, mit Hinweis.
+- **Tests:** `test_send_input_blocked_while_decision_pending` (Manager) + `test_input_rejected_409_while_card_open` (REST, blockierender Hook via ASGI). Suite **187 grün**, Frontend Lint/Build/Vitest grün.
+
+Damit ist der Wedge strukturell unmöglich (bei offener Card nur entscheiden, nicht tippen). SEC-2/3 + LOW-1 bleiben P1-Härtung.
+
 ## Deployment
 **Stand 2026-06-23:** Auf **`origin/dev` gepusht** (Commit `7ba28f1`) — **noch NICHT in Produktion**. Status bleibt **Approved** (Prod-Promotion ausstehend).
 

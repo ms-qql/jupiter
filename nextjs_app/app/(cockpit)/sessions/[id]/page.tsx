@@ -106,6 +106,9 @@ export default function SessionDetailPage({
 
   const meta = head ? statusMeta(head.status) : null;
   const ended = head?.status === "done" || head?.status === "error";
+  // PROJ-4: Bei offener Decision Card ist die Eingabe gesperrt — erst entscheiden.
+  // (Sonst verkeilt eine Eingabe mitten in der Freigabe die Session, Bug PROJ4-QA-1.)
+  const hasPending = (head?.pending_decisions?.length ?? 0) > 0;
 
   return (
     <div className="mx-auto flex h-dvh max-w-4xl flex-col p-4 md:p-6">
@@ -248,21 +251,31 @@ export default function SessionDetailPage({
           — eine Nachricht setzt sie fort.
         </p>
       )}
+      {hasPending && (
+        <p className="mb-2 text-xs font-medium text-orange-500">
+          Eingabe gesperrt — bitte erst die offene Freigabe oben entscheiden.
+        </p>
+      )}
       <form onSubmit={handleSend} className="flex items-end gap-2">
         <Textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={
-            ended ? "Nachricht senden, um fortzusetzen…" : "Nachricht an die Session…"
+            hasPending
+              ? "Erst Decision Card entscheiden…"
+              : ended
+                ? "Nachricht senden, um fortzusetzen…"
+                : "Nachricht an die Session…"
           }
           rows={2}
           className="flex-1"
+          disabled={hasPending}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSend(e);
           }}
         />
         <div className="flex flex-col gap-2">
-          <Button type="submit" disabled={!input.trim() || busy}>
+          <Button type="submit" disabled={!input.trim() || busy || hasPending}>
             {ended ? "Fortsetzen" : "Senden"}
           </Button>
           {!ended && (
