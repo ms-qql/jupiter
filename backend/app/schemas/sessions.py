@@ -42,6 +42,31 @@ class RateLimit(BaseModel):
     rateLimitType: str | None = None
 
 
+class PendingDecisionRead(BaseModel):
+    """Offene Decision Card (PROJ-4) — die 5-Sekunden-Entscheidung."""
+
+    decision_id: str
+    session_id: str
+    tool_name: str
+    action: str            # „Was"
+    excerpt: str           # relevanter Ausschnitt (Befehl/Diff)
+    rationale: str         # „Warum"
+    context: dict          # „Kontext" (Projekt/Phase)
+    created_at: str
+    state: str
+    resolution: str | None = None
+
+
+class DecisionResolve(BaseModel):
+    """Body von POST /sessions/{id}/decisions/{decision_id}."""
+
+    decision: Literal["approve", "deny"]
+    comment: str | None = Field(
+        default=None, max_length=MAX_INPUT_CHARS,
+        description="Optionaler Kommentar; bei 'deny' reist er als Begründung zu Claude zurück.",
+    )
+
+
 class SessionRead(BaseModel):
     session_id: str
     owner: str
@@ -59,6 +84,19 @@ class SessionRead(BaseModel):
     num_turns: int
     error: str | None = None
     rate_limit: dict | None = None
+    pending_decisions: list[PendingDecisionRead] = []
+
+
+class PermissionHookRequest(BaseModel):
+    """Payload des Claude-Code PreToolUse-Hooks (intern; extra Felder werden ignoriert)."""
+
+    model_config = {"extra": "ignore"}
+
+    session_id: str
+    tool_name: str
+    tool_input: dict = {}
+    tool_use_id: str | None = None
+    cwd: str | None = None
 
 
 class TranscriptEntryRead(BaseModel):

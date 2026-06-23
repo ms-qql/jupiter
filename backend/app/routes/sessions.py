@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from ..engine.manager import SessionManager
 from ..schemas.sessions import (
     ConstitutionRead,
+    DecisionResolve,
     SessionCreate,
     SessionDetail,
     SessionInput,
@@ -41,12 +42,12 @@ async def create_session(payload: SessionCreate, request: Request) -> dict:
         raise HTTPException(
             status_code=503, detail="Claude-CLI nicht gefunden — ist `claude` installiert/eingeloggt?"
         ) from exc
-    return runtime.state.to_read()
+    return runtime.to_read()
 
 
 @router.get("", response_model=list[SessionRead])
 async def list_sessions(request: Request) -> list[dict]:
-    return [r.state.to_read() for r in _manager(request).list()]
+    return [r.to_read() for r in _manager(request).list()]
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
@@ -54,7 +55,7 @@ async def get_session(session_id: str, request: Request) -> dict:
     runtime = _manager(request).get(session_id)
     if runtime is None:
         raise HTTPException(status_code=404, detail="Session nicht gefunden.")
-    data = runtime.state.to_read()
+    data = runtime.to_read()
     data["transcript"] = [vars(e) for e in runtime.transcript]
     return data
 
@@ -69,6 +70,32 @@ async def send_input(session_id: str, payload: SessionInput, request: Request) -
     except RuntimeError as exc:  # pausiert / nicht aktiv
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True}
+
+
+@router.post("/{session_id}/decisions/{decision_id}", status_code=202)
+async def resolve_decision(
+    session_id: str, decision_id: str, payload: DecisionResolve, request: Request
+) -> dict:
+    """Decision Card entscheiden (PROJ-4): Freigeben / Ablehnen / Mit Kommentar zurück.
+
+    Die wartende Session wird entsperrt und läuft entsprechend weiter oder bricht
+    die Aktion ab.
+    """
+    manager = _manager(request)
+    if manager.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    try:
+        card = manager.resolve_decision(
+            session_id,
+            decision_id,
+            approve=payload.decision == "approve",
+            comment=payload.comment,
+        )
+    except KeyError as exc:  # Card unbekannt (oder bereits aufgelöst/obsolet)
+        raise HTTPException(status_code=404, detail="Decision Card nicht gefunden.") from exc
+    except ValueError as exc:  # bereits entschieden
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "decision": card.to_read()}
 
 
 @router.post("/{session_id}/pause")

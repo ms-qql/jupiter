@@ -46,6 +46,18 @@ class Settings(BaseSettings):
     # Sekunden Kulanz zwischen SIGTERM und SIGKILL beim Stoppen.
     process_stop_grace_seconds: float = 5.0
 
+    # --- Decision Cards / Freigabe-Hook (PROJ-4) ---------------------------
+    # Freigabe-Flow aktivieren: Sessions starten mit dem PreToolUse-Hook.
+    enable_decision_cards: bool = True
+    # Eigene Backend-URL, die der Hook-Subprozess (lokal) erreicht.
+    hook_self_url: str = "http://127.0.0.1:8000"
+    # Geteiltes Geheimnis für den internen Hook-Endpoint (nur localhost-Aufrufe).
+    hook_token: str = "jupiter-local-hook"
+    # Obergrenze, wie lange Claude auf die Entscheidung wartet (Hook-Timeout, Sek.).
+    # Bewusst groß (24 h): kein Timeout-Autoproceed; läuft er ab, greift Claudes
+    # sicherer Default (deny). Edge-Case „Nutzer ignoriert Card lange".
+    hook_timeout_seconds: int = 86_400
+
     # Verzeichnis der Knappheits-Konstitution (PROJ-6): global.md + roles/<rolle>.md.
     constitution_dir: str = _DEFAULT_CONSTITUTION_DIR
 

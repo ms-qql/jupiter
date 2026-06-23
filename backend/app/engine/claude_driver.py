@@ -8,9 +8,8 @@ Wichtige, im Live-Spike (PROJ-1) bestätigte Punkte:
 - `--output-format stream-json` erfordert `--verbose`.
 - Eigene `--session-id` (UUID) → 1:1-Mapping Jupiter-Record ↔ Claude-Session.
 - Multi-turn-Eingabe über stdin als stream-json-User-Message.
-- In `permission-mode=default` werden genehmigungspflichtige Tools headless
-  auto-verweigert, bis PROJ-4 ein `--permission-prompt-tool` liefert (gewolltes
-  sicheres MVP-Verhalten).
+- PROJ-4: ein PreToolUse-Hook (via `--settings`) fängt genehmigungspflichtige
+  Tools ab und fragt den Nutzer (Decision Cards) statt sie headless auto-zu-verweigern.
 """
 from __future__ import annotations
 
@@ -38,6 +37,9 @@ def build_argv(spec: LaunchSpec, claude_bin: str = "claude") -> list[str]:
     ]
     if spec.system_prompt_append:
         argv += ["--append-system-prompt", spec.system_prompt_append]
+    # PROJ-4: Freigabe-Hook (PreToolUse) als session-skopierte Settings einschleusen.
+    if spec.settings_json:
+        argv += ["--settings", spec.settings_json]
     return argv
 
 

@@ -14,9 +14,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from ..config import MVP_ALLOWED_PERMISSION_MODES, VALID_MODELS, settings
+from . import policy
 from .base import EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .constitution import combine_with_extra, resolve_constitution
+from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
 from .events import (
     StreamEvent,
     extract_rate_limit,
@@ -26,9 +28,12 @@ from .events import (
     extract_usage,
     is_error_result,
 )
+from .hooks import build_hook_settings
 
 # Session-Zustände (entsprechen den Kanban-Spalten in PROJ-3).
+# AWAITING_APPROVAL (PROJ-4) → Kanban-Spalte „Review/Approval".
 STARTING, RUNNING, WAITING, DONE, ERROR = "starting", "running", "waiting", "done", "error"
+AWAITING_APPROVAL = "awaiting_approval"
 
 DriverFactory = Callable[[], EngineDriver]
 
@@ -129,6 +134,17 @@ class SessionRuntime:
         # Hook: wird genau EINMAL gefeuert, wenn die Session DONE erreicht (PROJ-2-Autolog).
         self.on_done = on_done
         self._done_fired = False
+        # PROJ-4 — offene Decision Cards (key = decision_id = tool_use_id) + die Futures,
+        # auf die der wartende Hook-Aufruf blockiert. „Warum" = letzter Assistenten-Text.
+        self.pending: dict[str, PendingDecision] = {}
+        self._futures: dict[str, asyncio.Future] = {}
+        self._last_assistant_text: str = ""
+
+    def to_read(self) -> dict:
+        """Lese-Snapshot inkl. offener Decision Cards (für REST-Liste + WS-Broadcast)."""
+        data = self.state.to_read()
+        data["pending_decisions"] = [c.to_read() for c in self.pending.values()]
+        return data
 
     # --- WebSocket-Fan-out -------------------------------------------------
 
@@ -176,6 +192,11 @@ class SessionRuntime:
                     TranscriptEntry("assistant", "text", text, _now().isoformat())
                 )
                 self._broadcast({"kind": "message", "role": "assistant", "text": text})
+            # „Warum" der nächsten Decision Card: jüngste Assistenten-Äußerung —
+            # bevorzugt der Text, sonst der Denk-Block (oft folgt direkt der Tool-Aufruf).
+            reasoning = text or thinking
+            if reasoning:
+                self._last_assistant_text = reasoning
             self._apply_usage(event)
 
         elif event.type == "result":
@@ -191,8 +212,12 @@ class SessionRuntime:
         elif event.type == "rate_limit_event":
             self.state.rate_limit = extract_rate_limit(event)
 
+        # Stirbt/endet die Session, sind offene Cards hinfällig (Edge-Case: „obsolet").
+        if self.state.status in (DONE, ERROR) and self.pending:
+            self.abandon_decisions()
+
         # Nach jedem Event einen Zustands-Snapshot an die UI streamen.
-        self._broadcast({"kind": "state", **self.state.to_read()})
+        self._broadcast({"kind": "state", **self.to_read()})
 
         # Beim Übergang nach DONE genau einmal das Roh-Log in den Vault schreiben (PROJ-2).
         if self.state.status == DONE and not self._done_fired:
@@ -209,6 +234,94 @@ class SessionRuntime:
             self.state.tokens_used += usage.billed_tokens
             if usage.total_cost_usd is not None:
                 self.state.total_cost_usd += float(usage.total_cost_usd)
+
+    # --- Decision Cards / Freigabe (PROJ-4) --------------------------------
+
+    async def request_decision(
+        self, decision_id: str, tool_name: str, tool_input: dict | None
+    ) -> DecisionOutcome:
+        """Vom Freigabe-Hook aufgerufen, bevor ein Tool läuft.
+
+        Lesezugriffe (``policy.requires_card`` = False) → sofortiges ``allow`` ohne Card.
+        Sonst: Card anlegen, Status auf ``awaiting_approval``, und **blockieren**, bis der
+        Nutzer entscheidet (``resolve_decision``) oder die Session stirbt (``abandon``).
+        """
+        if not policy.requires_card(tool_name, tool_input):
+            return DecisionOutcome(behavior="allow", auto=True)
+
+        card = PendingDecision(
+            decision_id=decision_id,
+            session_id=self.state.session_id,
+            tool_name=tool_name,
+            action=policy.summarize_action(tool_name, tool_input),
+            excerpt=policy.extract_excerpt(tool_name, tool_input),
+            rationale=policy.clip_rationale(self._last_assistant_text),
+            context={
+                "project_path": self.state.project_path,
+                "role": self.state.role,
+                "phase": self.state.constitution_source,
+            },
+            created_at=_now().isoformat(),
+        )
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self.pending[decision_id] = card
+        self._futures[decision_id] = fut
+        self.state.status = AWAITING_APPROVAL
+        self.state.last_activity = _now()
+        self._broadcast({"kind": "decision", "event": "opened", "decision": card.to_read()})
+        self._broadcast({"kind": "state", **self.to_read()})
+        return await fut
+
+    def resolve_decision(
+        self, decision_id: str, approve: bool, comment: str | None = None
+    ) -> PendingDecision:
+        """Entscheidung des Nutzers einspielen → entsperrt den wartenden Hook-Aufruf.
+
+        ``approve``  → ``allow`` (Claude führt die Aktion aus).
+        nicht approve → ``deny``; ``comment`` reist als Begründung **inline** zu Claude
+        zurück („Mit Kommentar zurück" = natives Deny mit Begründung).
+        """
+        card = self.pending.get(decision_id)
+        fut = self._futures.get(decision_id)
+        if card is None or fut is None:
+            raise KeyError(decision_id)
+        if card.state != OPEN or fut.done():
+            raise ValueError("Diese Entscheidung wurde bereits getroffen.")
+
+        if approve:
+            card.resolution = "approve"
+            outcome = DecisionOutcome(behavior="allow")
+        else:
+            card.resolution = "deny"
+            reason = (comment or "").strip() or "Vom Nutzer abgelehnt."
+            outcome = DecisionOutcome(behavior="deny", reason=reason)
+        card.state = RESOLVED
+        fut.set_result(outcome)
+        self.pending.pop(decision_id, None)
+        self._futures.pop(decision_id, None)
+        # Keine offene Card mehr → Session läuft weiter (Claude verarbeitet das Resultat).
+        if not self.pending and self.state.status == AWAITING_APPROVAL:
+            self.state.status = RUNNING
+        self.state.last_activity = _now()
+        self._broadcast({"kind": "decision", "event": "resolved", "decision": card.to_read()})
+        self._broadcast({"kind": "state", **self.to_read()})
+        return card
+
+    def abandon_decisions(
+        self, reason: str = "Session beendet — Freigabe hinfällig."
+    ) -> None:
+        """Alle offenen Cards als ``obsolet`` markieren und ihre Futures als ``deny`` auflösen.
+
+        Aufruf, wenn die Session stirbt/gestoppt wird, damit kein Hook-Aufruf ewig hängt.
+        """
+        for decision_id, card in list(self.pending.items()):
+            fut = self._futures.get(decision_id)
+            card.state = OBSOLETE
+            if fut is not None and not fut.done():
+                fut.set_result(DecisionOutcome(behavior="deny", reason=reason))
+            self._broadcast({"kind": "decision", "event": "obsolete", "decision": card.to_read()})
+        self.pending.clear()
+        self._futures.clear()
 
 
 class SessionManager:
@@ -267,6 +380,7 @@ class SessionManager:
             permission_mode=permission_mode,
             initial_prompt=initial_prompt,
             system_prompt_append=effective,
+            settings_json=self._hook_settings(),
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -275,6 +389,19 @@ class SessionManager:
             state.error = str(exc)
             raise
         return runtime
+
+    def _hook_settings(self) -> str | None:
+        """Session-skopierte ``--settings``-JSON für den Freigabe-Hook (PROJ-4).
+
+        ``None`` (Cards deaktiviert) → Session startet ohne Hook, wie vor PROJ-4.
+        """
+        if not settings.enable_decision_cards:
+            return None
+        return build_hook_settings(
+            self_url=settings.hook_self_url,
+            token=settings.hook_token,
+            timeout_seconds=settings.hook_timeout_seconds,
+        )
 
     def get(self, session_id: str) -> SessionRuntime | None:
         return self._sessions.get(session_id)
@@ -317,6 +444,7 @@ class SessionManager:
             initial_prompt="",  # Eingabe kommt direkt danach via send_input
             system_prompt_append=state.effective_constitution,
             resume=True,
+            settings_json=self._hook_settings(),
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -332,7 +460,26 @@ class SessionManager:
         await self._require(session_id).driver.pause()
 
     async def stop(self, session_id: str) -> None:
-        await self._require(session_id).driver.stop()
+        runtime = self._require(session_id)
+        await runtime.driver.stop()
+        # Sicherheitsnetz: offene Cards auflösen (der closed-Event tut das i. d. R. schon).
+        runtime.abandon_decisions("Session gestoppt — Freigabe hinfällig.")
+
+    # --- Decision Cards / Freigabe (PROJ-4) --------------------------------
+
+    async def request_decision(
+        self, session_id: str, decision_id: str, tool_name: str, tool_input: dict | None
+    ) -> DecisionOutcome:
+        """Freigabe-Anfrage des Hooks → blockiert bis zur Entscheidung."""
+        return await self._require(session_id).request_decision(
+            decision_id, tool_name, tool_input
+        )
+
+    def resolve_decision(
+        self, session_id: str, decision_id: str, approve: bool, comment: str | None = None
+    ) -> PendingDecision:
+        """Nutzer-Entscheidung einspielen (Freigeben/Ablehnen/Mit Kommentar zurück)."""
+        return self._require(session_id).resolve_decision(decision_id, approve, comment)
 
     def transcript_text(self, session_id: str) -> str:
         """Gesamtes Transkript als Klartext (Copy-out)."""

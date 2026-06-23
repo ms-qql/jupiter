@@ -30,6 +30,9 @@ class LaunchSpec:
     # Fortsetzen einer bereits beendeten Session: statt `--session-id` (neu anlegen)
     # wird `--resume <session_id>` genutzt — Claude Code lädt die Konversation.
     resume: bool = False
+    # Session-skopierte Settings-JSON (PROJ-4): registriert den PreToolUse-Freigabe-Hook.
+    # Wird via `--settings` durchgereicht; None = ohne Decision Cards (z. B. in Tests).
+    settings_json: str | None = None
 
 
 class EngineDriver(ABC):
