@@ -1,6 +1,6 @@
 # PROJ-7: MD-Reader
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-23
 
@@ -144,22 +144,29 @@ GET /md/file?path=<pfad>                      → liest EINE .md → {path, fron
 **Getestet:** 2026-06-23 · **Branch:** dev · **Tester:** QA Engineer · **Suiten:** Backend `pytest` → **213 grün** (+8 in `test_proj7_qa.py`, keine Regression); Frontend `vitest` → **34 grün + 3 expected-fail** (`markdown-view.security.test.tsx` markiert QA-7.2 via `it.fails`). `eslint`/`next build` grün.
 
 ### Produktionsreife-Entscheidung
-**NOT READY** — 1 **High**-Bug (QA-7.2): Wikilinks **und** Bild-Embeds sind im gerenderten Markdown nicht funktionsfähig. Das bricht AC2 (klickbare Wikilinks) + zwei Edge-Cases. Muss vor dem Deploy gefixt werden → zurück an `/abc-frontend`.
+**READY / Approved** (Re-QA 2026-06-23, nach Fix-Runde) — QA-7.2 (High) + QA-7.3/7.4 (Low) **behoben** und durch aktive Regressionstests belegt; alle 5 AC bestanden. Kein Critical/High mehr offen. **Offen:** nur QA-7.1 (Low, Backend, kein Security-Impact) — nicht deploy-blockierend.
 
-### Akzeptanzkriterien (3/5 bestanden, 1 offen)
+> **Erste QA-Runde (Historie):** NOT READY — QA-7.2 (High): Wikilinks + Bild-Embeds rendern als leerer `<a href="">` (react-markdown strippt das custom URL-Schema). Per `/abc-frontend` gefixt (`urlTransform`), Re-QA unten.
+
+### Akzeptanzkriterien (5/5 bestanden)
 | # | Kriterium | Ergebnis | Nachweis |
 |---|-----------|----------|----------|
 | 1 | MD gerendert (Headings, Listen, Code, **Tabellen**) | ✅ PASS | `markdown-view.security.test.tsx` (Tabelle→`<table>`), Live-Smoke |
-| 2 | `[[Wikilinks]]` klickbar + navigieren | ❌ **FAIL** | QA-7.2 — rendert als leerer `<a href="">` statt Button/Navigation |
+| 2 | `[[Wikilinks]]` klickbar + navigieren | ✅ PASS | Re-QA: existing→`<button>`, missing→`line-through` (`markdown-view.security.test.tsx`, grün nach QA-7.2-Fix) |
 | 3 | Datei-Navigation/Baum | ✅ PASS | `test_ac3_tree_navigation_index`, Live-Index (14 Dateien) |
 | 4 | YAML-Frontmatter sauber (kein Rohtext) | ✅ PASS | `frontmatter-panel.tsx`, Backend liefert geparst getrennt |
 | 5 | **Read-only** (kein Schreibpfad) | ✅ PASS | `test_ac5_read_only_no_write_route` (POST→405) |
 
 ### Edge-Cases
-- ❌ **Wikilink auf nicht-existente Datei → „fehlend"** — von QA-7.2 betroffen (wird nicht markiert).
-- ⚠️ **Sehr große MD → Lazy/Virtualisierung** — nicht umgesetzt (ganze Datei im RAM); für MVP-Größen akzeptiert (QA-7.4, Low).
+- ✅ **Wikilink auf nicht-existente Datei → „fehlend"** — nach QA-7.2-Fix als `line-through`-Span markiert, kein Crash (Test grün).
+- ✅ **Sehr große MD → Lazy/Virtualisierung** — QA-7.4-Fix: Bodies > 400 KB werden mit Hinweis gekürzt (`MAX_RENDER_CHARS`); echte Virtualisierung späterer Seam.
 - ✅ **Nicht-MD angeklickt → Hinweis** — Baum listet nur `.md`; Backend lehnt Nicht-`.md` mit 400 ab.
-- ❌ **Bild-Embed `![[bild.png]]` → Platzhalter** — von QA-7.2 betroffen (rendert als leerer Link, kein Platzhalter-Badge).
+- ✅ **Bild-Embed `![[bild.png]]` → Platzhalter** — nach QA-7.2-Fix Platzhalter-Badge (`border-dashed`), kein `<img>` (Test grün).
+
+### Re-QA (Fix-Runde 2026-06-23)
+- ✅ Backend `pytest` **213 grün** · Frontend `vitest` **38 grün** (inkl. der 3 vormals `it.fails` Wikilink-Tests, jetzt aktiv) · `eslint`/`next build` grün.
+- ✅ XSS-Schutz nach dem `urlTransform`-Fix unverändert: `javascript:`-Links weiterhin neutralisiert (Default-Transform greift für alles außer `wikilink:`/`wikiembed:`), Roh-HTML escaped.
+- ✅ Keine Regression (PROJ-1/2/4/5/6 grün).
 
 ### Security-Audit (Red-Team — MVP: kein JWT/RLS, Fokus Pfad/XSS/DoS)
 - ✅ **Pfad-Traversal Lesen**: `/etc/passwd`, `/etc/shadow`, abs. `.md` außerhalb `allowed_roots`, `..`-Escape → alle **400/ValueError** (`test_qa_md_file_outside_roots_blocked`, Live).
