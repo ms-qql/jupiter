@@ -1,6 +1,6 @@
 # PROJ-7: MD-Reader
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-23
 
@@ -141,7 +141,45 @@ GET /md/file?path=<pfad>                      → liest EINE .md → {path, fron
 **Offen für QA:** Code-Syntax-Highlighting (Plain-`<pre>`, kein Shiki — nice-to-have); Windowing für sehr große Dateien (Seam offen); Suche-UI nicht eingebaut (Backend `/vault/search` vorhanden, P1).
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-06-23 · **Branch:** dev · **Tester:** QA Engineer · **Suiten:** Backend `pytest` → **213 grün** (+8 in `test_proj7_qa.py`, keine Regression); Frontend `vitest` → **34 grün + 3 expected-fail** (`markdown-view.security.test.tsx` markiert QA-7.2 via `it.fails`). `eslint`/`next build` grün.
+
+### Produktionsreife-Entscheidung
+**NOT READY** — 1 **High**-Bug (QA-7.2): Wikilinks **und** Bild-Embeds sind im gerenderten Markdown nicht funktionsfähig. Das bricht AC2 (klickbare Wikilinks) + zwei Edge-Cases. Muss vor dem Deploy gefixt werden → zurück an `/abc-frontend`.
+
+### Akzeptanzkriterien (3/5 bestanden, 1 offen)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | MD gerendert (Headings, Listen, Code, **Tabellen**) | ✅ PASS | `markdown-view.security.test.tsx` (Tabelle→`<table>`), Live-Smoke |
+| 2 | `[[Wikilinks]]` klickbar + navigieren | ❌ **FAIL** | QA-7.2 — rendert als leerer `<a href="">` statt Button/Navigation |
+| 3 | Datei-Navigation/Baum | ✅ PASS | `test_ac3_tree_navigation_index`, Live-Index (14 Dateien) |
+| 4 | YAML-Frontmatter sauber (kein Rohtext) | ✅ PASS | `frontmatter-panel.tsx`, Backend liefert geparst getrennt |
+| 5 | **Read-only** (kein Schreibpfad) | ✅ PASS | `test_ac5_read_only_no_write_route` (POST→405) |
+
+### Edge-Cases
+- ❌ **Wikilink auf nicht-existente Datei → „fehlend"** — von QA-7.2 betroffen (wird nicht markiert).
+- ⚠️ **Sehr große MD → Lazy/Virtualisierung** — nicht umgesetzt (ganze Datei im RAM); für MVP-Größen akzeptiert (QA-7.4, Low).
+- ✅ **Nicht-MD angeklickt → Hinweis** — Baum listet nur `.md`; Backend lehnt Nicht-`.md` mit 400 ab.
+- ❌ **Bild-Embed `![[bild.png]]` → Platzhalter** — von QA-7.2 betroffen (rendert als leerer Link, kein Platzhalter-Badge).
+
+### Security-Audit (Red-Team — MVP: kein JWT/RLS, Fokus Pfad/XSS/DoS)
+- ✅ **Pfad-Traversal Lesen**: `/etc/passwd`, `/etc/shadow`, abs. `.md` außerhalb `allowed_roots`, `..`-Escape → alle **400/ValueError** (`test_qa_md_file_outside_roots_blocked`, Live).
+- ✅ **Symlink-Escape**: `.md`-Symlink aus der Wurzel heraus → im Index übersprungen, Lesen via realpath-Guard geblockt (`test_symlink_escape_skipped_in_index`).
+- ✅ **`project=`-Param-Missbrauch**: `../`-Ausbruch aus `allowed_roots` → 400 (`test_qa_project_param_traversal_blocked`).
+- ✅ **XSS via Markdown**: Roh-`<script>`/`<img onerror>` werden **escaped** (react-markdown ohne `rehype-raw`, kein `dangerouslySetInnerHTML`); `javascript:`-Links neutralisiert (`markdown-view.security.test.tsx`).
+- ✅ **DoS**: Index überspringt `node_modules`/`.git`/… + cappt bei 10 000 Dateien; Datei-Lesen lädt genau eine Datei.
+- ℹ️ **Beobachtung (by design, single-user MVP)**: Lese-Scope = **`allowed_roots`-weit** für `.md` — jede `.md` unter `/home/dev/projects` + `/home/dev/tools` ist per absolutem Pfad lesbar, und `project=` darf auf jede erlaubte Wurzel zeigen (`test_qa_project_param_can_target_other_allowed_root`, `test_qa_file_in_base_but_outside_listed_sources_is_reachable`). Akzeptabel im Single-User-MVP; bei echtem Multi-User (#21/#14) einzugrenzen.
+
+### Findings
+| ID | Sev | Befund | Empfehlung |
+|----|-----|--------|------------|
+| QA-7.2 | **High** | `react-markdown` strippt das custom URL-Schema `wikilink:`/`wikiembed:` über seinen Default-`urlTransform` zu `""`. Der `a`-Renderer landet dadurch im Extern-Link-Zweig → Wikilinks navigieren nicht, fehlende Ziele werden nicht markiert, Embeds zeigen keinen Platzhalter (alle als leerer `<a href="">`). Bricht AC2 + 2 Edge-Cases. | In `markdown-view.tsx` einen `urlTransform` setzen, der `wikilink:`/`wikiembed:` durchlässt (sonst `defaultUrlTransform`). Danach die 3 `it.fails` in `markdown-view.security.test.tsx` zu `it` zurückbauen. → `/abc-frontend` |
+| QA-7.3 | Low | Der `a`-Renderer spreadet den remark-`node`-Prop auf das DOM-`<a>` (`node="[object Object]"` im Markup / React-Warnung). | `node` aus den `props` destrukturieren und verwerfen (zusammen mit QA-7.2 fixen). |
+| QA-7.1 | Low | `/md/file` akzeptiert **CWD-relative** Pfade, obwohl der Contract „absolut" sagt → CWD-abhängiges Verhalten (200 im Repo-CWD, 400 sonst). **Kein** Security-Impact (Guard hält: `../`-Escape → 400 in beiden CWDs, `test_qa71_relative_path_cannot_escape_roots`). | In `_validate_md_file` Nicht-absolute Pfade explizit ablehnen (`if not os.path.isabs(path): raise ValueError`). |
+| QA-7.4 | Low | Kein Streaming/Windowing für sehr große MD (ganzer Body im RAM/DOM). | Für MVP akzeptiert; später Virtualisierung (Seam offen, analog QA-2.2). |
+
+### Regression
+- ✅ Backend 213 grün — PROJ-1/2/4/5/6 unverändert; SessionRail-/HandoverDialog-Edits sind rein additiv (kein Shared-Shell-Bruch).
+- ✅ `next build` grün, `/doku` prerendered; bestehende Routen unberührt.
 
 ## Deployment
 _To be added by /deploy_
