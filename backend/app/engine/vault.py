@@ -38,6 +38,61 @@ _MAX_SEARCH_HITS = 100
 _EXCERPT_CHARS = 160
 _MAX_FILE_BYTES = 2_000_000  # Dateien darüber bei der Suche überspringen.
 
+# PROJ-19 (#23) — Pointer/RAG: längere, gerankte Ausschnitte statt First-Hit.
+_RAG_SNIPPET_CHARS = 400
+_RAG_TOP_N_MAX = 20
+_RAG_MAX_POSITIONS = 2000  # Treffer-Positionen je Datei kappen (DoS-Schutz).
+# Mini-Stoppwörter (DE/EN) — verhindern, dass Allerweltswörter das Ranking dominieren.
+_STOPWORDS = frozenset(
+    "der die das und oder ein eine einen dem den des ist sind war auf für mit von "
+    "im in zu zum zur als auch nicht wie was wer wo wann warum welche welcher "
+    "the and for with from this that are was you your what how why".split()
+)
+
+
+def _rag_terms(query: str) -> list[str]:
+    """Query in suchbare Terme zerlegen (lowercase, ≥2 Zeichen, ohne Stoppwörter, dedupliziert)."""
+    raw = re.split(r"[^a-z0-9äöüß]+", (query or "").lower())
+    seen: dict[str, None] = {}
+    for t in raw:
+        if len(t) >= 2 and t not in _STOPWORDS:
+            seen.setdefault(t, None)
+    return list(seen)
+
+
+def _best_window(text_lower: str, terms: list[str], width: int) -> tuple[int, int]:
+    """Dichtestes Fenster der Breite ``width`` → (Start-Offset, Treffer im Fenster).
+
+    Sammelt alle Term-Positionen und schiebt ein Fenster darüber; liefert den Start
+    des Fensters mit den meisten Treffern, damit der Ausschnitt dort landet, wo die
+    Query-Begriffe gehäuft auftreten (statt am ersten zufälligen Vorkommen).
+    """
+    positions: list[int] = []
+    for term in terms:
+        start = 0
+        while True:
+            idx = text_lower.find(term, start)
+            if idx == -1:
+                break
+            positions.append(idx)
+            start = idx + len(term)
+            if len(positions) >= _RAG_MAX_POSITIONS:
+                break
+    if not positions:
+        return 0, 0
+    positions.sort()
+    best_pos, best_count, right = positions[0], 1, 0
+    for left in range(len(positions)):
+        if right < left:
+            right = left
+        while right + 1 < len(positions) and positions[right + 1] - positions[left] <= width:
+            right += 1
+        count = right - left + 1
+        if count > best_count:
+            best_count, best_pos = count, positions[left]
+    # Fenster leicht vor den ersten Cluster-Treffer setzen → etwas Kontext davor.
+    return max(0, best_pos - width // 4), best_count
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -212,6 +267,103 @@ class VaultService:
                     return hits
         hits.sort(key=lambda h: h["path"])
         return hits
+
+    # --- Pointer/RAG (PROJ-19 #23) -----------------------------------------
+
+    def relevant_snippets(
+        self, query: str, top_n: int = 5, snippet_chars: int = _RAG_SNIPPET_CHARS, subdir: str = ""
+    ) -> list[dict]:
+        """Gerankte, relevante Ausschnitte statt Volltext (Pointer/RAG).
+
+        Im Gegensatz zu :meth:`search` (erster Substring-Treffer je Datei) wird hier
+        mehr-termig gesucht, je Datei der **dichteste** Ausschnitt gewählt und über
+        Dateien hinweg nach Relevanz sortiert (mehr getroffene Query-Begriffe zuerst,
+        dann Gesamthäufigkeit). Liefert ``[{path, line, snippet, score, terms_matched,
+        full_chars}]`` — ``full_chars`` ist die Volltext-Größe der Datei (für die
+        Kontext-Ersparnis-Messung). Leere Liste = kein Treffer (Caller-Fallback).
+        """
+        terms = _rag_terms(query)
+        if not terms:
+            return []
+        top_n = max(1, min(top_n, _RAG_TOP_N_MAX))
+        base = self._resolve_read(subdir) if subdir else self.vault_root
+        scored: list[dict] = []
+        for dirpath, _dirs, files in os.walk(base):
+            for name in files:
+                if not name.endswith(".md"):
+                    continue
+                full = os.path.join(dirpath, name)
+                try:
+                    if os.path.getsize(full) > _MAX_FILE_BYTES:
+                        continue
+                    with open(full, encoding="utf-8") as fh:
+                        text = fh.read()
+                except OSError:
+                    continue
+                lower = text.lower()
+                counts = {t: lower.count(t) for t in terms}
+                total = sum(counts.values())
+                if total == 0:
+                    continue
+                matched = sum(1 for t in terms if counts[t])
+                # Mehr getroffene Begriffe dominieren die Häufigkeit (distinct zuerst).
+                score = matched * 1000 + total
+                start, _ = _best_window(lower, terms, snippet_chars)
+                excerpt = " ".join(text[start : start + snippet_chars].split())
+                scored.append(
+                    {
+                        "path": self._rel(full),
+                        "line": text.count("\n", 0, start) + 1,
+                        "snippet": excerpt,
+                        "score": score,
+                        "terms_matched": matched,
+                        "full_chars": len(text),
+                    }
+                )
+        scored.sort(key=lambda s: (-s["score"], s["path"]))
+        return scored[:top_n]
+
+    def rag_preview(
+        self,
+        query: str,
+        top_n: int = 5,
+        snippet_chars: int = _RAG_SNIPPET_CHARS,
+        *,
+        curated: bool = False,
+    ) -> dict:
+        """:meth:`relevant_snippets` + Mess-/Fallback-Hülle für die Route.
+
+        ``curated=True`` grenzt auf den kuratierten ``Knowledge/``-Bereich ein
+        (analog :meth:`search_curated`). Macht die Kontext-Ersparnis sichtbar
+        (AC „messbar geringerer Verbrauch"): ``context_chars`` (Summe der Snippets)
+        vs. ``fulltext_chars`` (Volltext der Top-N-Dateien). ``fallback=True``
+        signalisiert „kein relevanter Ausschnitt" → der Caller lädt größeren
+        Ausschnitt/Volltext mit Hinweis (Edge Case).
+        """
+        subdir = self._curated_subdir if curated else ""
+        snippets = self.relevant_snippets(query, top_n, snippet_chars, subdir)
+        context_chars = sum(len(s["snippet"]) for s in snippets)
+        fulltext_chars = sum(s["full_chars"] for s in snippets)
+        reduction = (
+            round(100.0 * (1.0 - context_chars / fulltext_chars), 1)
+            if fulltext_chars > 0
+            else 0.0
+        )
+        fallback = not snippets
+        return {
+            "query": query,
+            "snippets": snippets,
+            "fallback": fallback,
+            "reason": (
+                "Kein relevanter Ausschnitt gefunden — Caller sollte auf größeren "
+                "Ausschnitt/Volltext zurückfallen."
+                if fallback
+                else None
+            ),
+            "context_chars": context_chars,
+            "fulltext_chars": fulltext_chars,
+            "reduction_pct": reduction,
+        }
 
     # --- Schreiben ---------------------------------------------------------
 

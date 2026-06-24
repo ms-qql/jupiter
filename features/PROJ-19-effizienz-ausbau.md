@@ -196,9 +196,18 @@ Hauptsession delegiert "Fazit-Aufgabe" (viel lesen/suchen, wenig zurück)
 
 **Frontend-Anbindung (offen, bewusst):** Das Dashboard aggregiert weiterhin client-seitig aus dem sessions-provider (steht bereits, kein Extra-Request). Die `/usage`-Endpunkte sind die kanonische, getestete Quelle für die echte historische Summe; das Umstellen des Dashboards (mit Fallback auf die Client-Aggregation = „kein Hard-Fail") ist ein sauberer Folgeschritt, nicht Teil dieses Backend-Commits, um die per-Feature-Stagung nicht zu vermischen.
 
+### Sub-Phase 2 — Pointer/RAG (#23) — ✅ Backend fertig (Branch `dev`)
+- **`VaultService.relevant_snippets(query, top_n, snippet_chars, subdir)`** (`backend/app/engine/vault.py`) — gerankte, mehr-termige Auswahl statt First-Hit-Substring (`search`): je Datei das **dichteste** Fenster (`_best_window`, Sliding-Window über Term-Positionen), über Dateien sortiert nach getroffenen Begriffen (`terms_matched ×1000 + Gesamthäufigkeit`). Liefert `{path, line, snippet, score, terms_matched, full_chars}`. Term-Zerlegung `_rag_terms` (lowercase, ≥2 Zeichen, DE/EN-Stoppwörter raus).
+- **`VaultService.rag_preview(query, top_n, *, curated)`** — Mess-/Fallback-Hülle: `context_chars` (Snippets) vs. `fulltext_chars` (Volltext der Top-N) + `reduction_pct` → macht die Kontext-Ersparnis **messbar** (AC). `fallback=True` + `reason`, wenn kein Treffer → Caller fällt auf größeren Ausschnitt/Volltext zurück (Edge Case). `curated=True` grenzt auf `Knowledge/` ein (analog `search_curated`).
+- **Route `GET /vault/rag/preview?q=&top_n=&scope=all|curated`** (`routes/vault.py`) → `VaultRagPreview`. Read-only, kein JWT (vgl. übrige Vault-Routen). Reine Datei-I/O, keine neue Erhebung.
+- **Schemas:** `VaultRagSnippet` + `VaultRagPreview` (`schemas/vault.py`).
+- **Wiederverwendung:** baut auf der vorhandenen Vault-Such-Infrastruktur auf (Walk, `_MAX_FILE_BYTES`-Cap, `_resolve_read`-Pfadhärtung) — keine neue Vektor-DB (Schnittstelle aber austauschbar, s. Tech-Design).
+- **Tests:** `backend/tests/test_proj19_rag.py` (7 Fälle: Terme, dichtestes Fenster, Ranking, Leer-Treffer, Ersparnis-Messung, Fallback, Endpunkt) grün; volle Suite **566 passed**, keine Regression.
+
 ### Offen (nächste Sub-Phasen)
 - Sub-Phase 1 **Frontend↔Backend-Anbindung** (optional, s. o.).
-- Sub-Phase 2 **Pointer/RAG (#23)**, 3 **Prompt-Caching (#27)**, 4 **Späher-Agenten (#26)** — laut Tech-Design.
+- Sub-Phase 2 **Frontend**: RAG-Vorschau im UI (optional — Endpunkt liefert bereits Debug-/Sichtbarkeit).
+- Sub-Phase 3 **Prompt-Caching (#27)**, 4 **Späher-Agenten (#26)** — laut Tech-Design.
 
 ## QA Test Results
 _To be added by /abc-qa_

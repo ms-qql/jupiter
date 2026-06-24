@@ -55,3 +55,25 @@ class VaultSearchHit(BaseModel):
 class VaultSearchResult(BaseModel):
     query: str
     hits: list[VaultSearchHit]
+
+
+# --- PROJ-19 (#23): Pointer/RAG --------------------------------------------
+
+
+class VaultRagSnippet(BaseModel):
+    path: str = Field(..., description="Vault-relativer Pfad (zugleich Pointer/Backlink).")
+    line: int
+    snippet: str = Field(..., description="Dichtester relevanter Ausschnitt (statt Volltext).")
+    score: int = Field(..., description="Relevanz: getroffene Begriffe ×1000 + Gesamthäufigkeit.")
+    terms_matched: int
+    full_chars: int = Field(..., description="Volltext-Größe der Datei (für die Ersparnis-Messung).")
+
+
+class VaultRagPreview(BaseModel):
+    query: str
+    snippets: list[VaultRagSnippet]
+    fallback: bool = Field(..., description="True = kein relevanter Ausschnitt → Caller lädt Volltext.")
+    reason: str | None = None
+    context_chars: int = Field(..., description="Summe der gelieferten Snippet-Zeichen (RAG).")
+    fulltext_chars: int = Field(..., description="Volltext-Zeichen der Top-N-Dateien (Baseline).")
+    reduction_pct: float = Field(..., description="Kontext-Ersparnis ggü. Volltext in Prozent.")
