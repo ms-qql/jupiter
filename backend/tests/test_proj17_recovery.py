@@ -184,11 +184,48 @@ async def test_pure_vault_candidate_handover(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pure_vault_log_only_blocked(monkeypatch):
+    """Log ohne Frontmatter-Pfad und ohne auflösbaren Projektnamen → blockiert."""
     mgr, vault, svc = await _setup(monkeypatch)
-    vault.write(type="session_log", session_id="ghost2", title="p", body="## Claude\n\nirgendwas\n")
+    vault.write(
+        type="session_log", session_id="ghost2", title="nicht-existentes-projekt-xyz",
+        body="## Claude\n\nirgendwas\n",
+    )
     c = next(x for x in svc.candidates() if x["session_id"] == "ghost2")
     assert c["source"] == "log"
     assert c["restore_blocked"] is True  # kein Projektpfad rekonstruierbar
+
+
+@pytest.mark.asyncio
+async def test_pure_vault_log_with_frontmatter_path(monkeypatch):
+    """PROJ-17-Fix: Session-Log trägt ``project_path`` im Frontmatter → reiner
+    Vault-Wiederaufbau (Live-Index weg) kann den Strang wiederherstellen."""
+    mgr, vault, svc = await _setup(monkeypatch)
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="x", model="haiku")
+    sid = rt.state.session_id
+    vault.write_session_log(rt.state, "## Claude\n\nweiter so\n")
+    mgr._sessions.pop(sid)  # In-Memory komplett weg → nur noch Vault.
+
+    c = next(x for x in svc.candidates() if x["session_id"] == sid)
+    assert c["source"] == "log"
+    assert c["project_path"] == PROJECT  # aus dem Frontmatter rekonstruiert
+    assert c["restore_blocked"] is False
+    child = await svc.restore(sid)
+    assert child.state.parent_session_id == sid
+
+
+@pytest.mark.asyncio
+async def test_pure_vault_log_path_resolved_by_name(monkeypatch):
+    """Altbestand ohne Frontmatter-Pfad: Projektname → existierendes Verzeichnis
+    unter ``allowed_roots`` (Backfill). ``jupiter`` existiert unter /home/dev/projects."""
+    mgr, vault, svc = await _setup(monkeypatch)
+    vault.write(
+        type="session_log", session_id="ghost-name", title="jupiter",
+        body="## Claude\n\nirgendwas\n",
+    )
+    c = next(x for x in svc.candidates() if x["session_id"] == "ghost-name")
+    assert c["source"] == "log"
+    assert c["project_path"] == PROJECT
+    assert c["restore_blocked"] is False
 
 
 # --- Restore (Staffelstab) + Idempotenz -----------------------------------

@@ -194,15 +194,25 @@ class RecoveryService:
             if not _is_orphan_strand(rt.state):
                 return None
             return self._candidate_from_state(rt.state)
-        source, body, created, warning = self._load_source(session_id)
+        source, body, created, warning, frontmatter = self._load_source(session_id)
         if source == "incomplete":
             return None  # nur Vault, aber weder Handover noch Log → nichts zu zeigen.
-        project_path = self._PROJECT_RE.search(body or "")
-        project_path = project_path.group(1) if project_path else None
+        # Projektpfad rekonstruieren, stärkste Quelle zuerst:
+        #  1. Handover-Body (``Projektpfad: `…```),
+        #  2. Frontmatter ``project_path`` (Session-Log trägt es seit PROJ-17),
+        #  3. Projektname → existierendes Verzeichnis unter ``allowed_roots`` (Backfill
+        #     für Altbestand ohne ``project_path`` im Frontmatter).
+        m = self._PROJECT_RE.search(body or "")
+        project_name = frontmatter.get("project_name") or frontmatter.get("title")
+        if m:
+            project_path = m.group(1)
+        else:
+            project_path = frontmatter.get("project_path") or self._resolve_by_name(project_name)
+        project_name = project_name or _pname(project_path)
         return self._build(
             session_id,
             project_path=project_path,
-            project_name=_pname(project_path),
+            project_name=project_name,
             abc_phase=None,
             source=source,
             body=body,
@@ -211,8 +221,26 @@ class RecoveryService:
             state=None,
         )
 
+    @staticmethod
+    def _resolve_by_name(project_name: str | None) -> str | None:
+        """Altbestand ohne Frontmatter-Pfad: Projektname → existierendes Verzeichnis.
+
+        Sucht ``<root>/<name>`` über die konfigurierten ``allowed_roots`` und gibt nur
+        einen TATSÄCHLICH existierenden Ordner zurück (nie geraten) — existiert keiner,
+        bleibt die Recovery wie bisher blockiert.
+        """
+        if not project_name:
+            return None
+        from ..config import settings
+
+        for root in getattr(settings, "allowed_roots", []):
+            cand = os.path.join(root, project_name)
+            if os.path.isdir(cand):
+                return cand
+        return None
+
     def _candidate_from_state(self, s) -> dict:
-        source, body, created, warning = self._load_source(s.session_id)
+        source, body, created, warning, _frontmatter = self._load_source(s.session_id)
         return self._build(
             s.session_id,
             project_path=s.project_path,
@@ -284,15 +312,17 @@ class RecoveryService:
 
     # --- Vault-Lookup ------------------------------------------------------
 
-    def _load_source(self, session_id: str) -> tuple[str, str | None, str | None, str | None]:
-        """Beste verfügbare Quelle: (source, body, created_iso, warning)."""
+    def _load_source(
+        self, session_id: str
+    ) -> tuple[str, str | None, str | None, str | None, dict]:
+        """Beste verfügbare Quelle: (source, body, created_iso, warning, frontmatter)."""
         h = self._find_latest(session_id, "Handovers")
         if h is not None:
-            return "handover", h["body"], h["created"], self._handover_warning(h["body"])
+            return "handover", h["body"], h["created"], self._handover_warning(h["body"]), h["frontmatter"]
         log = self._find_latest(session_id, "Sessions")
         if log is not None:
-            return "log", log["body"], log["created"], None
-        return "incomplete", None, None, None
+            return "log", log["body"], log["created"], None, log["frontmatter"]
+        return "incomplete", None, None, None, {}
 
     def _find_latest(self, session_id: str, subdir: str) -> dict | None:
         """Jüngste Datei in ``subdir`` mit passendem ``session_id`` im Frontmatter.
@@ -311,9 +341,10 @@ class RecoveryService:
                 continue
             if str(data.get("frontmatter", {}).get("session_id") or "") != session_id:
                 continue
-            created = str(data.get("frontmatter", {}).get("created") or f.get("modified") or "")
+            fm = data.get("frontmatter", {})
+            created = str(fm.get("created") or f.get("modified") or "")
             if best is None or created > best["created"]:
-                best = {"body": data.get("body") or "", "created": created}
+                best = {"body": data.get("body") or "", "created": created, "frontmatter": fm}
         return best
 
     @staticmethod
