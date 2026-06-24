@@ -4,8 +4,10 @@ import {
   canReanimate,
   columnFor,
   contextLabel,
+  costLabel,
   countStatuses,
   countTerminal,
+  engineShowsCost,
   formatDuration,
   gaugeColor,
   isTerminalStatus,
@@ -62,6 +64,21 @@ const ALL: SessionStatus[] = [
   "done",
   "error",
 ];
+
+describe("PROJ-18 — Kosten-Degradation (engine-agnostische Sicht)", () => {
+  it("nur Claude liefert echte Kosten → engineShowsCost", () => {
+    expect(engineShowsCost("claude")).toBe(true);
+    expect(engineShowsCost("openai")).toBe(false);
+    expect(engineShowsCost("openrouter")).toBe(false);
+    expect(engineShowsCost("ollama")).toBe(false);
+  });
+  it("costLabel: Claude zeigt $-Betrag, Fremd-Engine „n/v“", () => {
+    expect(costLabel("claude", 0.123)).toBe("$0.123");
+    expect(costLabel("claude", 0)).toBe("$0.000");
+    expect(costLabel("openai", 0)).toBe("n/v");
+    expect(costLabel("openrouter", 0)).toBe("n/v");
+  });
+});
 
 describe("statusMeta — Ampel-Mapping (AC: Ampel-Kacheln)", () => {
   it("startet/arbeitet → grün", () => {

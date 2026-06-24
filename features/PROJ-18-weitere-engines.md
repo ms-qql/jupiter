@@ -190,7 +190,7 @@ GET/POST /sessions/{id}/...    → unverändert (start/input/pause/stop/transcri
 
 **Bekannte Einschränkung:** Der „Werkzeuge"-Tab liegt innerhalb des Session-Boards und ist daher nur sichtbar, wenn ≥1 Session existiert (Empty-State zeigt vorher nur den Start-Hinweis). Reicht für die AC; ein immer sichtbares Panel wäre ein kleiner Folge-Schliff.
 
-## QA Test Results
+## QA Test Results — Runde 1 (Backend)
 
 **Tested:** 2026-06-24
 **Backend:** pytest gegen den **committeten** Stand (HEAD `1c9c5a7`, isolierte Worktree) — env `Dashboard`
@@ -280,13 +280,58 @@ progress_timeout_seconds: int = Field(..., gt=0, description="Kein Fortschritt >
 - Echter Turn gegen reale `OPENAI_API_KEY`/`OPENROUTER_API_KEY`-Schlüssel (Stream + Usage end-to-end).
 - OpenRouter empfiehlt die Header `HTTP-Referer` + `X-Title`; der Treiber sendet sie nicht. Ohne sie funktioniert OpenRouter i. d. R., kann aber Einschränkungen erfahren — beim Real-Smoke prüfen, ggf. als kleine Treiber-Ergänzung nachziehen.
 
-### Summary
-- **Acceptance Criteria (Backend-Scope):** 5/8 voll bestanden (AC-1,2,5*,7,8); 3 teilweise (AC-3,4,6) — backendseitig erfüllt, **Frontend-Anteil noch nicht gebaut**.
-- **Bugs Found:** 2 — **beide behoben (2026-06-24)**. BUG-1 (Critical, *außerhalb* PROJ-18 / PROJ-27) ✅, BUG-2 (Low, PROJ-18) ✅ inkl. Regressionstest. + 1 informativer Security-Hinweis (iFrame-URL-Schema → Frontend-CSP).
-- **Tests nach Fix:** PROJ-18-Suite **27 passed**, Gesamtsuite **498 passed**.
+### Summary (Backend)
+- **Acceptance Criteria (Backend-Scope):** 5/8 voll bestanden (AC-1,2,5*,7,8); 3 teilweise (AC-3,4,6) — backendseitig erfüllt; Frontend-Anteil siehe Runde 2.
+- **Bugs Found:** 2 — **beide behoben (2026-06-24)**. BUG-1 (Critical, *außerhalb* PROJ-18 / PROJ-27) ✅, BUG-2 (Low, PROJ-18) ✅ inkl. Regressionstest.
+- **Tests nach Fix:** PROJ-18-Suite **27 passed**.
 - **Security:** Pass (secret-frei, keine Shell-Injection, kein neuer DB-/Auth-Vektor).
-- **Production Ready (Backend):** Backend-Lieferumfang ist **solide, grün, ohne offene Bugs**. Die **Gesamt-Feature** bleibt dennoch **NICHT deploybar**, solange die Frontend-Deliverables (iFrame-Tab/Launch-Button/Engine-Selector/„n/v"-Degradation) fehlen.
-- **Recommendation:** PROJ-18-**Backend ist abgenommen** (keine Critical/High/Low offen). Status der Gesamt-Feature bleibt **In Review** bis `/abc-frontend 18` (Frontend) + `/abc-qa-e2e` (Real-Smoke gegen echte Keys) erledigt sind.
+- **Production Ready (Backend):** solide, grün, ohne offene Bugs.
+
+---
+
+## QA Test Results — Runde 2 (Frontend)
+
+**Tested:** 2026-06-24 · **Stack:** Next.js 16 + shadcn/ui (Base UI) · **Tester:** QA Engineer (AI)
+**Scope:** PROJ-18-Frontend (Engine-Selector, iFrame-Tab, Launch-Button, „n/v"-Degradation, Werkzeuge-Tab).
+
+### Automatisierte Tests
+- **Frontend (Vitest): 75 passed** (64 vorher + **11 neue PROJ-18-Tests**): `costLabel`/`engineShowsCost` (2), `LaunchButton` (3), `EmbedTab` (3), `SessionTile`-Degradation (3).
+- **`next build` grün** (TypeScript + Lint im Build), **ESLint** der geänderten Dateien sauber, `tsc --noEmit` ohne neue Fehler (einziger Rest: vorbestehender, fremder `md-tree.test.ts`).
+- **PROJ-18-Backend-Suite weiterhin 27/27 grün** — keine Regression durch die Frontend-Arbeit.
+
+### Acceptance Criteria (Frontend) — jetzt erfüllt
+- [x] **AC-3 iFrame:** `EmbedTab` rendert iFrame mit `src` + `sandbox` aus dem Profil; **immer** Launch-Fallback („In neuem Tab öffnen") für X-Frame-Options/CSP-Verweigerung (Render-Test verifiziert).
+- [x] **AC-4 Launch-Button:** Web-URL → neuer Tab (`rel=noopener`); lokaler Befehl → „Befehl kopieren"; `javascript:`-Ziel wird **nicht** als Link geöffnet (Test verifiziert).
+- [x] **AC-5 Degradation:** Fremd-Engine → Kosten „n/v" + Engine-Badge; Claude unverändert ($-Betrag, kein Badge); Engine ohne Token-Daten → Kontext „unbekannt" (Render-Tests verifiziert).
+- [x] **AC-6 Engine-Auswahl im Launcher:** Selector im „Neue Session"-Dialog (Default „Claude Max"); nicht verfügbare Engines ausgegraut + deutscher Setup-Hinweis; Modell-Liste folgt dem Profil; Fallback auf Claude bei `/engines`-Fehler.
+
+### Security-Review (Frontend)
+- [x] **Kein Secret im Client:** Engine-Selector/Tools nutzen nur `GET /engines` (secret-frei); kein API-Key erreicht das Frontend.
+- [x] **Kein XSS-Absprung über Launch:** nur `http(s)`-Ziele werden geöffnet; `javascript:`/Befehle landen im Kopier-Pfad (Test).
+- [i] **iFrame-`sandbox` optional:** fehlt `sandbox` im Profil, läuft die eingebettete App ohne Sandbox. Quelle ist die operator-kontrollierte `engines.yaml` (kein User-Input) → kein praktischer Vektor; Empfehlung: im Beispiel/Doku `sandbox` als Best Practice führen.
+
+### Bugs / Befunde (Frontend)
+- **Keine Critical/High/Medium.**
+- **BUG-3 (Low, Known Limitation):** Der „Werkzeuge"-Tab liegt innerhalb des Session-Boards → nur sichtbar, wenn ≥1 Session existiert. Reicht für die AC; ein immer sichtbares Panel wäre ein Folge-Schliff.
+
+### ⚠️ Branch-weite Regression (NICHT PROJ-18 — gehört zu PROJ-27)
+Beim Gesamt-Suite-Lauf auf `dev` fallen **3 stabile Tests** — **alle in PROJ-27** (Liveness), PROJ-18 ist sauber:
+- `test_proj27_liveness.py::test_put_liveness_live` — **`PUT /settings/liveness` liefert 422 statt 200** (echter PROJ-27-Bug: Schema/Route weist eine gültige Nutzlast ab).
+- `test_proj27_qa.py::test_bug1_long_toolcall_*` (2×) — `xfail(strict)`-Tests, die **nichtdeterministisch XPASSen** → Test-Isolations-/Reihenfolge-Problem (PROJ-27; eigentlicher Fix als **PROJ-32** geplant). Bei zufälliger Reihenfolge eskaliert die Pollution auf bis zu ~23 Fehler quer durch fremde Dateien (z. B. `test_proj8_gantt`), die isoliert grün sind.
+
+→ **Aktion für den PROJ-27-Owner**, nicht PROJ-18. Blockiert aber einen sauberen Branch-weiten Suite-Lauf/Deploy, solange offen.
+
+### Empfehlung
+- **PROJ-18 (Backend + Frontend) ist abgenommen** — keine Critical/High/Medium-Bugs; Code-Level grün.
+- **Vor Deploy:** `/abc-qa-e2e` (realer Turn gegen echte `OPENAI_API_KEY`/`OPENROUTER_API_KEY` — die Unit-/Integrationstests mocken HTTP) **und** die PROJ-27-Reds fixen (sonst ist `dev` nicht sauber deploybar).
+
+---
+
+## Gesamtbewertung PROJ-18 (nach Runde 2)
+- **Acceptance Criteria gesamt:** 8/8 erfüllt (Backend + Frontend), durch Tests verifiziert.
+- **Bugs:** BUG-1 (PROJ-27) ✅, BUG-2 (PROJ-18) ✅ — beide behoben; **keine offenen Critical/High/Medium in PROJ-18**. BUG-3 (Low, Werkzeuge-Tab-Sichtbarkeit) als Folge-Schliff notiert.
+- **Tests:** Backend PROJ-18 **27/27**, Frontend **75/75** (inkl. 11 neue).
+- **Production-Ready:** **PROJ-18 abgenommen (Approved).** Vor einem `dev`-Deploy noch nötig (nicht PROJ-18): `/abc-qa-e2e` (Real-Smoke gegen echte Keys) **und** die 3 PROJ-27-Reds (`PUT /settings/liveness` 422 + xfail-strict-Flakiness).
 
 ## Deployment
 _To be added by /abc-deploy_
