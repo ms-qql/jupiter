@@ -235,6 +235,8 @@ export interface LivenessLimits {
   enabled_auto_reanimation: boolean;
   /** Kein Fortschritt seit > X s → Zustand „hängt" (analog Watchdog-Stillstand). */
   progress_timeout_seconds: number;
+  /** PROJ-32: höhere Geduld, solange ein Tool läuft (langer Build/Test ist kein Hänger). */
+  tool_in_flight_timeout_seconds: number;
   /** Frequenz des Hintergrund-Auswerters (s). */
   poll_interval_seconds: number;
   /** Max. automatische Reanimations-Versuche; danach nur noch der manuelle Knopf. */

@@ -175,6 +175,19 @@ Backend-lastig. Empfehlung: **`/abc-backend 32`** (Flag + Reset, `derive_livenes
 
 **Nächster Schritt:** `/abc-frontend 32` (ein Zahlenfeld im Liveness-Tab), danach `/abc-qa 32`.
 
+## Implementierungsnotizen — Frontend (2026-06-24, `/abc-frontend`, Next.js, Branch `dev`)
+
+**Status:** Frontend implementiert + geprüft (Vitest **75 grün**, ESLint sauber, TypeScript fehlerfrei bis auf den vorbestehenden `md-tree.test.ts`-Fehler aus PROJ-10). Bereit für `/abc-qa`.
+
+**Geänderte Dateien (minimal — ein Feld im bestehenden Liveness-Tab aus PROJ-27):**
+- `nextjs_app/lib/types.ts` — `LivenessLimits` um `tool_in_flight_timeout_seconds: number` ergänzt (spiegelt `LivenessLimitsPut`).
+- `nextjs_app/components/cockpit/liveness-control.tsx` — neues Zahlenfeld „In-Flight-Timeout (Tool läuft)" direkt unter dem Fortschritts-Timeout (gleiche Validierung `min 1`, deutscher Hinweistext) + in `extractLimits` aufgenommen.
+- `lib/api.ts` unverändert: `getLiveness`/`setLiveness` senden/empfangen die ganze `LivenessLimits` → das neue Feld reist automatisch mit.
+
+**Verhalten:** Das Feld lädt den Server-Wert (Default 600), validiert > 0 und wird über `PUT /settings/liveness` live übernommen — identisches Muster wie die übrigen Liveness-Schwellen.
+
+**Nächster Schritt:** `/abc-qa 32` (AC + Edge Cases gegen Back- und Frontend; danach das PROJ-27-False-Positive-AC final gegenchecken → PROJ-27 auf Approved).
+
 ## QA Test Results
 _To be added by /abc-qa_
 

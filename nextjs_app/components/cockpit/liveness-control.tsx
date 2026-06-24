@@ -34,6 +34,14 @@ const FIELDS: {
     hint: "Kein Fortschritt seit > X s → Zustand „hängt“ (analog Watchdog-Stillstand).",
   },
   {
+    key: "tool_in_flight_timeout_seconds",
+    label: "In-Flight-Timeout (Tool läuft)",
+    unit: "s",
+    min: 1,
+    autoOnly: false,
+    hint: "Höhere Geduld, solange ein Tool läuft (langer Build/Test ist kein Hänger). Erst bei Überschreiten gilt es als „hängt“.",
+  },
+  {
     key: "poll_interval_seconds",
     label: "Poll-Intervall",
     unit: "s",
@@ -184,6 +192,7 @@ function extractLimits(s: LivenessSetting): LivenessLimits {
   return {
     enabled_auto_reanimation: s.enabled_auto_reanimation,
     progress_timeout_seconds: s.progress_timeout_seconds,
+    tool_in_flight_timeout_seconds: s.tool_in_flight_timeout_seconds,
     poll_interval_seconds: s.poll_interval_seconds,
     max_auto_attempts: s.max_auto_attempts,
     backoff_seconds: s.backoff_seconds,
