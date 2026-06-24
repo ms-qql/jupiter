@@ -1,6 +1,6 @@
 # PROJ-32: Fortschritts-Signal aus Tool-Aktivität (kein False-„hängt" bei langen Tools)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -188,8 +188,48 @@ Backend-lastig. Empfehlung: **`/abc-backend 32`** (Flag + Reset, `derive_livenes
 
 **Nächster Schritt:** `/abc-qa 32` (AC + Edge Cases gegen Back- und Frontend; danach das PROJ-27-False-Positive-AC final gegenchecken → PROJ-27 auf Approved).
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (2026-06-24, `/abc-qa`, Branch `dev`)
+
+**Ergebnis: 9/9 Acceptance Criteria ✅ · alle Edge Cases abgedeckt · Security sauber · KEINE Critical/High/Medium → produktionsreif.**
+Suiten: **Backend 525 passed** (17 PROJ-32: 10 Dev + 7 QA), **Frontend 75 passed** (Vitest), ESLint sauber, tsc fehlerfrei (außer vorbestehender `md-tree.test.ts`-Fehler aus PROJ-10).
+
+### Acceptance Criteria
+| # | Kriterium | Status | Nachweis |
+|---|---|---|---|
+| 1 | Tool-Start zählt als Fortschritt | ✅ | `test_record_marks_in_flight_and_resets_progress`, `test_request_decision_marks_in_flight`, `test_bug1_fix_toolcall_counts_as_progress` |
+| 2 | Langer Tool-Call → kein False-„hängt" | ✅ | `test_long_tool_in_flight_is_active`, `test_bug1_long_toolcall_should_stay_active` |
+| 3 | Separater In-Flight-Timeout (600 s; > 600 → hängt) | ✅ | `test_tool_in_flight_beyond_higher_timeout_is_hanging`, `test_in_flight_threshold_boundary`, `test_store_includes_tool_in_flight_default` |
+| 4 | Idle **ohne** Tool unverändert (180 s) | ✅ | `test_idle_without_tool_still_hangs_at_normal_timeout` |
+| 5 | Amok-Watchdog unberührt (Loop/Schreibrate) | ✅ | `test_record_preserves_loop_and_write_counters`, `test_loop_detection_not_masked_by_progress`, `test_write_rate_not_masked_by_progress` |
+| 6 | Geteilte Uhr, eine Buchhaltung | ✅ | `record()` füttert dasselbe `_last_progress`, das PROJ-16-Gate + PROJ-27-Poll lesen; Loop-Test belegt Unabhängigkeit der Deques |
+| 7 | Konfigurierbar + live (`> 0`) | ✅ | Store-Default/Validierung + GET/PUT-Round-Trip + String/fehlend → 422 |
+| 8 | Legitime Wartestellung weiter „aktiv" | ✅ | unveränderter Pfad; `test_derive_awaiting_approval_is_active_despite_idle` (PROJ-27) grün |
+| 9 | Deutsche Texte/Logs; keine Regression | ✅ | 525+75 grün; UI-/Config-Texte deutsch |
+
+### Edge Cases
+- **Echter Tool-Hänger (> 600 s)** → wird doch „hängt" → Auto-Reanimierung/Knopf greifen (`test_in_flight_threshold_boundary`). ✅
+- **Tool endet, dann echter Stillstand** → In-Flight-Fenster endet bei `note_progress`/`feed_usage`, Normaltimeout greift wieder (`test_in_flight_window_ends_after_tool_finishes`). ✅ — Red-Team „Dauer-Freibrief" widerlegt.
+- **Bypass-Mode** → `record()` läuft vor dem Bypass-Zweig → in-flight auch im Bypass gesetzt (`test_request_decision_marks_in_flight` nutzt `bypassPermissions`). ✅
+- **Schnell aufeinanderfolgende Tool-Calls** → jeder `record()` resettet die Uhr, in-flight bleibt. ✅
+- **Backend-Neustart-Orphans** → unverändert „tot" (PROJ-14/27), kein In-Flight über Restart. ✅
+
+### Security / Red-Team
+- **Kein Maskieren der Reißleine:** Eine durchdrehende Session (Token-Flut, identische Tool-Schleife, exzessive Writes) wird vom Amok-Watchdog **weiterhin gestoppt** — das Fortschritts-Signal aus Tool-Aktivität füttert nur `_last_progress`, nicht die Schutz-Deques (verifiziert). Das ist der zentrale Sicherheitsaspekt des Features. ✅
+- **Config-Eingaben:** `tool_in_flight_timeout_seconds` als String/0/negativ/fehlend → **422** (Pydantic `gt=0`, Set-Vertrag). YAML-Store: defekt/0 → Default-Fallback. ✅
+- Keine neue Auth-/Tenant-Fläche (Jupiter-Override: kein JWT/RLS/MinIO). ✅
+
+### Findings
+**Keine Critical/High/Medium.** Info/Low:
+1. **Boolean statt Tool-Zähler** (Info): „in-flight" ist ein einzelnes Flag; bei parallelen Tool-Calls bleibt es bis zum nächsten `assistant`/`result`-Event AN — für die Timeout-Wahl ausreichend (kein Per-Tool-Tracking nötig), wie im Design entschieden.
+2. **In-Flight-Timeout default 600 s** (Info): grob; in der Praxis ggf. an reale Build-/Test-Laufzeiten anpassen (live über den Settings-Tab).
+
+### Cross-Feature — PROJ-27 BUG-1 behoben & verifiziert
+Das blockierende PROJ-27-QA-Finding **BUG-1** (False-Positive „hängt" bei langem Tool) ist durch PROJ-32 **behoben**; die zuvor als `xfail(strict)` markierten PROJ-27-QA-Tests verifizieren jetzt den Fix (grün). **Empfehlung:** PROJ-27 in seiner Session final gegenchecken (`/abc-qa 27`) und von *In Review* auf *Approved* setzen.
+
+**Produktionsreife: JA** (0 Critical/High).
+
+## Deployment
+_To be added by /abc-deploy_
 
 ## Deployment
 _To be added by /abc-deploy_
