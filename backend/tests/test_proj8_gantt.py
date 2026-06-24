@@ -12,8 +12,9 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
-from app.engine import abc_phases
+from app.engine import abc_phases, policy
 from app.engine.manager import AWAITING_APPROVAL, SessionManager
+from app.engine.policy import PolicyStore
 from app.main import create_app
 
 from .fakes import FakeDriver
@@ -194,6 +195,82 @@ async def test_spec_edit_provides_fallback_feature_via_hook():
     await asyncio.sleep(0)
     assert rt.state.abc_feature == "8"
     mgr.resolve_decision(rt.state.session_id, "tu1", approve=True)
+    await task
+
+
+# --- PROJ-30: Phasen-Erkennung im bypassPermissions-Modus -------------------
+
+# Kanonische Skill-Kette über ALLE 8 Phasen (Schwerpunkt der Regression: qa, deploy).
+_PHASE_SKILLS = [
+    ("abc-brainstorm", "brainstorm"),
+    ("abc-requirements", "requirements"),
+    ("abc-architecture", "architecture"),
+    ("abc-frontend", "frontend"),
+    ("abc-backend", "backend"),
+    ("abc-qa", "qa"),
+    ("abc-deploy", "deploy"),
+    ("abc-document", "document"),
+]
+
+
+@pytest.mark.asyncio
+async def test_bypass_recognizes_all_phases_without_cards(tmp_path, monkeypatch):
+    """PROJ-30: Im bypassPermissions-Modus mit deaktiviertem Phasen-Gate laufen Skill-
+    Aufrufe ohne Decision Card durch — die Phase MUSS trotzdem erkannt werden (alle 8
+    Phasen, inkl. qa/deploy). Beobachtung ist von der Card-Kontrolle entkoppelt."""
+    p = tmp_path / "policy.yaml"
+    p.write_text("phase_gate:\n  enabled: false\n  transitions: []\n", encoding="utf-8")
+    monkeypatch.setattr(policy, "policy_store", PolicyStore(str(p)))
+
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku",
+                          permission_mode="bypassPermissions")
+    for i, (skill, phase) in enumerate(_PHASE_SKILLS):
+        out = await mgr.request_decision(
+            rt.state.session_id, f"tu{i}", "Skill", {"skill": skill, "args": "30"}
+        )
+        assert out.behavior == "allow"  # keine blockierende Card im Bypass
+        assert rt.pending == {}, f"{skill}: es darf keine Card entstehen"
+        assert rt.state.abc_phase == phase, f"{skill}: aktuelle Phase falsch"
+        assert rt.state.abc_phase_reached == phase, f"{skill}: erreichte Phase falsch"
+    # Schwerpunkt: qa UND deploy wurden unterwegs korrekt erkannt.
+    assert rt.state.abc_feature == "30"
+    assert rt.state.abc_phase_reached == "document"  # monoton bis ans Ende
+
+
+@pytest.mark.asyncio
+async def test_bypass_qa_deploy_recognized_even_while_gate_blocks(tmp_path, monkeypatch):
+    """PROJ-30: Bei aktivem Phasen-Gate (Default) pausiert die qa/deploy-Card im Bypass die
+    Tool-Ausführung — die Phase im Gantt rückt aber SOFORT vor (entkoppelte Erkennung),
+    statt einzufrieren, bis jemand die Card auflöst."""
+    p = tmp_path / "policy.yaml"
+    p.write_text("phase_gate:\n  enabled: true\n  transitions: []\n", encoding="utf-8")
+    monkeypatch.setattr(policy, "policy_store", PolicyStore(str(p)))
+
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku",
+                          permission_mode="bypassPermissions")
+    rt.state.abc_phase = "backend"
+    rt.state.abc_phase_reached = "backend"
+
+    # backend→qa: Gate feuert (bypass-fest), aber qa ist sofort erkannt.
+    task = asyncio.create_task(
+        mgr.request_decision(rt.state.session_id, "qa", "Skill", {"skill": "abc-qa", "args": "30"})
+    )
+    await asyncio.sleep(0)
+    assert rt.pending["qa"].card_type == "phase_transition"
+    assert rt.state.abc_phase == "qa" and rt.state.abc_phase_reached == "qa"
+    mgr.resolve_decision(rt.state.session_id, "qa", approve=True)
+    await task
+
+    # qa→deploy: dito, deploy sofort sichtbar.
+    task = asyncio.create_task(
+        mgr.request_decision(rt.state.session_id, "dep", "Skill", {"skill": "abc-deploy", "args": "30"})
+    )
+    await asyncio.sleep(0)
+    assert rt.pending["dep"].card_type == "phase_transition"
+    assert rt.state.abc_phase == "deploy" and rt.state.abc_phase_reached == "deploy"
+    mgr.resolve_decision(rt.state.session_id, "dep", approve=True)
     await task
 
 
