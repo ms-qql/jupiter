@@ -158,11 +158,79 @@ export interface VaultSearchResult {
   hits: VaultSearchHit[];
 }
 
+// --- PROJ-19 (#28/#27): Token-/Kosten-Dashboard (Backend-Antworten) ---------
+
+export type UsageRange = "today" | "7d" | "30d" | "all";
+export type UsageCostStatus = "complete" | "partial" | "none";
+
+/** Eine Verbrauchs-Gruppe (je Modell bzw. Projekt) aus GET /usage/summary. */
+export interface UsageGroupRead {
+  key: string;
+  label: string;
+  tokens: number;
+  cost_usd: number;
+  cost_status: UsageCostStatus;
+  session_count: number;
+}
+
+/** Antwort von GET /usage/summary. */
+export interface UsageSummaryRead {
+  range: UsageRange;
+  session_count: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  cost_status: UsageCostStatus;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cache_hit_ratio: number;
+  by_model: UsageGroupRead[];
+  by_project: UsageGroupRead[];
+}
+
+/** Eine Session-Zeile aus GET /usage/drilldown. */
+export interface UsageDrilldownRow {
+  session_id: string;
+  project_path: string;
+  project_name: string | null;
+  model: string;
+  engine: string;
+  role: string | null;
+  abc_phase: string | null;
+  tokens_used: number;
+  total_cost_usd: number;
+  cost_status: UsageCostStatus;
+  created_at: string | null;
+}
+
+/** Antwort von GET /usage/drilldown. */
+export interface UsageDrilldownRead {
+  range: UsageRange;
+  rows: UsageDrilldownRow[];
+}
+
 /** Globale Kontext-Schwelle + erlaubter Bereich (PROJ-5). */
 export interface ThresholdSetting {
   threshold_pct: number;
   min_pct: number;
   max_pct: number;
+}
+
+// --- PROJ-20: Spracheingabe / Push-to-Talk ---------------------------------
+
+/** Antwort von POST /transcription — Transkript + welche Engine es erzeugt hat. */
+export interface TranscriptionResult {
+  transcript: string;
+  provider: string; // "faster-whisper" | "groq"
+}
+
+/** GET/PATCH /settings/transcription — Quelle der Transkription (PROJ-20).
+ *  Standard ist self-hosted (use_groq=false). Groq nur wählbar, wenn ein Key
+ *  konfiguriert ist (groq_available=true). */
+export interface TranscriptionSetting {
+  use_groq: boolean;
+  groq_available: boolean;
+  model: string;
+  language: string;
 }
 
 // --- PROJ-10: Trust-Policy (abgestuftes, konfigurierbares Vertrauen) --------

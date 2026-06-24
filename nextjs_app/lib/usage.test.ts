@@ -5,8 +5,13 @@ import {
   formatCost,
   formatTokens,
   rangeStartMs,
+  summaryFromBackend,
 } from "@/lib/usage";
-import type { Session } from "@/lib/types";
+import type {
+  Session,
+  UsageDrilldownRead,
+  UsageSummaryRead,
+} from "@/lib/types";
 
 // Minimaler Session-Stub — nur die fürs Dashboard relevanten Felder.
 function makeSession(over: Partial<Session>): Session {
@@ -118,6 +123,58 @@ describe("aggregateUsage", () => {
     );
     expect(sum.byProject[0].label).toBe("beta"); // 7 > 5
     expect(sum.byProject[1].label).toBe("Alpha");
+  });
+});
+
+describe("aggregateUsage Cache", () => {
+  it("summiert Cache-Tokens und berechnet die Treffer-Quote", () => {
+    const sum = aggregateUsage(
+      [
+        makeSession({ cache_read_tokens: 900, cache_creation_tokens: 100 }),
+        makeSession({ cache_read_tokens: 0, cache_creation_tokens: 0 }),
+      ],
+      "all",
+      NOW,
+    );
+    expect(sum.cacheReadTokens).toBe(900);
+    expect(sum.cacheHitRatio).toBe(90);
+  });
+});
+
+describe("summaryFromBackend", () => {
+  it("adaptiert snake_case-Backend-Antwort auf die UsageSummary-Sicht", () => {
+    const summary: UsageSummaryRead = {
+      range: "7d",
+      session_count: 2,
+      total_tokens: 1500,
+      total_cost_usd: 0.75,
+      cost_status: "partial",
+      cache_read_tokens: 800,
+      cache_creation_tokens: 200,
+      cache_hit_ratio: 80,
+      by_model: [
+        { key: "Opus", label: "Opus", tokens: 1000, cost_usd: 0.5, cost_status: "complete", session_count: 1 },
+      ],
+      by_project: [
+        { key: "/p/a", label: "Alpha", tokens: 1500, cost_usd: 0.75, cost_status: "partial", session_count: 2 },
+      ],
+    };
+    const drill: UsageDrilldownRead = {
+      range: "7d",
+      rows: [
+        {
+          session_id: "s1", project_path: "/p/a", project_name: "Alpha", model: "opus",
+          engine: "claude", role: null, abc_phase: "backend", tokens_used: 1000,
+          total_cost_usd: 0.5, cost_status: "complete", created_at: null,
+        },
+      ],
+    };
+    const view = summaryFromBackend(summary, drill);
+    expect(view.totalTokens).toBe(1500);
+    expect(view.cacheHitRatio).toBe(80);
+    expect(view.byModel[0].costUsd).toBe(0.5);
+    expect(view.rows[0].roleOrPhase).toBe("Backend"); // abc_phase → Label
+    expect(view.rows[0].project).toBe("Alpha");
   });
 });
 

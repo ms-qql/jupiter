@@ -5,8 +5,8 @@
 // Usage-Daten"). Alle Funktionen sind seiteneffektfrei und nehmen `nowMs` als
 // Parameter, damit sie deterministisch testbar bleiben.
 
-import { engineShowsCost, modelLabel, projectName } from "@/lib/status";
-import type { Session } from "@/lib/types";
+import { engineShowsCost, modelLabel, phaseLabel, projectName } from "@/lib/status";
+import type { Session, UsageDrilldownRead, UsageSummaryRead } from "@/lib/types";
 
 export type UsageRange = "today" | "7d" | "30d" | "all";
 
@@ -32,16 +32,47 @@ export interface UsageGroup {
   sessionCount: number;
 }
 
+/** Eine Drilldown-Zeile — gemeinsame Sicht für Client-Aggregation UND Backend-Antwort. */
+export interface UsageRow {
+  sessionId: string;
+  project: string;
+  roleOrPhase: string;
+  model: string;
+  tokens: number;
+  costUsd: number;
+  costStatus: CostStatus;
+}
+
 export interface UsageSummary {
   range: UsageRange;
   sessionCount: number;
   totalTokens: number;
   totalCostUsd: number;
   costStatus: CostStatus;
+  /** PROJ-19 (#27): Prompt-Cache-Sichtbarkeit. */
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  cacheHitRatio: number; // % (read / (read+creation))
   byModel: UsageGroup[];
   byProject: UsageGroup[];
-  /** Für die Drilldown-Tabelle: nach Tokens absteigend sortierte Sessions. */
-  sessions: Session[];
+  /** Für die Drilldown-Tabelle: nach Tokens absteigend. */
+  rows: UsageRow[];
+}
+
+function roleOrPhase(role: string | null, phase: string | null): string {
+  return role?.trim() || (phase ? phaseLabel(phase) : null) || "—";
+}
+
+function sessionToRow(s: Session): UsageRow {
+  return {
+    sessionId: s.session_id,
+    project: s.project_name?.trim() || projectName(s.project_path),
+    roleOrPhase: roleOrPhase(s.role, s.abc_phase),
+    model: s.model,
+    tokens: s.tokens_used,
+    costUsd: s.total_cost_usd,
+    costStatus: engineShowsCost(s.engine) ? "complete" : "none",
+  };
 }
 
 /** Untergrenze (ms) des gewählten Zeitraums. „today" = ab lokaler Mitternacht. */
@@ -124,12 +155,19 @@ export function aggregateUsage(
         ? "complete"
         : "partial";
 
+  const cacheReadTokens = scoped.reduce((sum, s) => sum + (s.cache_read_tokens || 0), 0);
+  const cacheCreationTokens = scoped.reduce((sum, s) => sum + (s.cache_creation_tokens || 0), 0);
+  const cacheTotal = cacheReadTokens + cacheCreationTokens;
+
   return {
     range,
     sessionCount: scoped.length,
     totalTokens,
     totalCostUsd,
     costStatus,
+    cacheReadTokens,
+    cacheCreationTokens,
+    cacheHitRatio: cacheTotal > 0 ? round1((100 * cacheReadTokens) / cacheTotal) : 0,
     byModel: groupBy(scoped, (s) => ({
       key: modelLabel(s.model),
       label: modelLabel(s.model),
@@ -138,7 +176,50 @@ export function aggregateUsage(
       const label = s.project_name?.trim() || projectName(s.project_path);
       return { key: s.project_path, label };
     }),
-    sessions: [...scoped].sort((a, b) => b.tokens_used - a.tokens_used),
+    rows: [...scoped].sort((a, b) => b.tokens_used - a.tokens_used).map(sessionToRow),
+  };
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+/** Adaptiert die Backend-Antworten (`/usage/summary` + `/usage/drilldown`, snake_case)
+ *  auf dieselbe `UsageSummary`-Sicht wie die Client-Aggregation. So rendert das
+ *  Dashboard quellen-unabhängig; der Backend-Pfad liefert zusätzlich die echte
+ *  historische Summe + die Cache-Quote. */
+export function summaryFromBackend(
+  summary: UsageSummaryRead,
+  drilldown: UsageDrilldownRead,
+): UsageSummary {
+  const mapGroup = (g: UsageSummaryRead["by_model"][number]): UsageGroup => ({
+    key: g.key,
+    label: g.label,
+    tokens: g.tokens,
+    costUsd: g.cost_usd,
+    costStatus: g.cost_status,
+    sessionCount: g.session_count,
+  });
+  return {
+    range: summary.range,
+    sessionCount: summary.session_count,
+    totalTokens: summary.total_tokens,
+    totalCostUsd: summary.total_cost_usd,
+    costStatus: summary.cost_status,
+    cacheReadTokens: summary.cache_read_tokens,
+    cacheCreationTokens: summary.cache_creation_tokens,
+    cacheHitRatio: summary.cache_hit_ratio,
+    byModel: summary.by_model.map(mapGroup),
+    byProject: summary.by_project.map(mapGroup),
+    rows: drilldown.rows.map((r) => ({
+      sessionId: r.session_id,
+      project: r.project_name?.trim() || projectName(r.project_path),
+      roleOrPhase: roleOrPhase(r.role, r.abc_phase),
+      model: r.model,
+      tokens: r.tokens_used,
+      costUsd: r.total_cost_usd,
+      costStatus: r.cost_status,
+    })),
   };
 }
 

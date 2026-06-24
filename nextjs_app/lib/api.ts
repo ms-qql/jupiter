@@ -26,8 +26,13 @@ import type {
   LivenessLimits,
   LivenessSetting,
   ThresholdSetting,
+  TranscriptionResult,
+  TranscriptionSetting,
   TrustPolicy,
   UploadResult,
+  UsageDrilldownRead,
+  UsageRange,
+  UsageSummaryRead,
   VaultSearchResult,
   VaultWriteResult,
   WatchdogLimits,
@@ -102,6 +107,28 @@ export function createSession(body: SessionCreate): Promise<Session> {
  *  Speist den Engine-Selector im „Neue Session"-Dialog und das Werkzeuge-Panel. */
 export function getEngines(signal?: AbortSignal): Promise<EnginesOverview> {
   return request<EnginesOverview>("/engines", { signal });
+}
+
+// --- PROJ-19 (#28/#27): Token-/Kosten-Dashboard ----------------------------
+
+/** Verbrauchs-Aggregat (Tokens/Kosten gesamt + je Modell/Projekt + Cache-Quote). */
+export function getUsageSummary(
+  range: UsageRange,
+  signal?: AbortSignal,
+): Promise<UsageSummaryRead> {
+  return request<UsageSummaryRead>(`/usage/summary?range=${range}`, { signal });
+}
+
+/** Session-Drilldown (nach Tokens absteigend), optional nach Modell/Projekt gefiltert. */
+export function getUsageDrilldown(
+  range: UsageRange,
+  opts?: { model?: string; project?: string },
+  signal?: AbortSignal,
+): Promise<UsageDrilldownRead> {
+  const params = new URLSearchParams({ range });
+  if (opts?.model) params.set("model", opts.model);
+  if (opts?.project) params.set("project", opts.project);
+  return request<UsageDrilldownRead>(`/usage/drilldown?${params.toString()}`, { signal });
 }
 
 export function sendInput(id: string, text: string): Promise<{ ok: boolean }> {
@@ -493,4 +520,48 @@ export function restoreRecovery(
  *  zu löschen (Audit bleibt). 204 → void. */
 export function dismissRecovery(sessionId: string): Promise<void> {
   return request<void>(`/recovery/${sessionId}/dismiss`, { method: "POST" });
+}
+
+// --- PROJ-20: Spracheingabe / Push-to-Talk ---------------------------------
+
+/** Audio transkribieren — multipart, daher eigenes fetch (kein JSON-Content-Type
+ *  wie bei `request`). Engine-Wahl (self-hosted/Groq) entscheidet das Backend
+ *  anhand der Settings. Audio wird serverseitig nicht gespeichert. */
+export async function transcribeAudio(
+  audio: Blob,
+  language?: string,
+): Promise<TranscriptionResult> {
+  const fd = new FormData();
+  fd.append("audio", audio, "aufnahme.webm");
+  if (language) fd.append("language", language);
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}/transcription`, { method: "POST", body: fd });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (!resp.ok) {
+    redirectToLoginOn401(resp.status);
+    let detail = `Fehler ${resp.status}`;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(detail, resp.status);
+  }
+  return (await resp.json()) as TranscriptionResult;
+}
+
+export function getTranscriptionSettings(signal?: AbortSignal): Promise<TranscriptionSetting> {
+  return request<TranscriptionSetting>("/settings/transcription", { signal });
+}
+
+/** Cloud-Fallback (Groq) bewusst an/aus. 400, wenn use_groq=true ohne Key. */
+export function setTranscriptionSettings(useGroq: boolean): Promise<TranscriptionSetting> {
+  return request<TranscriptionSetting>("/settings/transcription", {
+    method: "PATCH",
+    body: JSON.stringify({ use_groq: useGroq }),
+  });
 }

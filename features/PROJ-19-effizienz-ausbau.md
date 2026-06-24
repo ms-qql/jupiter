@@ -219,6 +219,15 @@ Hauptsession delegiert "Fazit-Aufgabe" (viel lesen/suchen, wenig zurück)
 - **Schemas:** `ScoutRequest` / `ScoutResult` (`schemas/agents.py`). Registrierung: `app.state.scout = ScoutService(vault)` + Router in `main.py`.
 - **Tests:** `backend/tests/test_proj19_scout.py` (6 Fälle: RAG-Kontext+günstiges Modell, Datei-Pointer inkl. fehlend, Modell-Override/Eskalation, dünnes-Fazit-Flag, Endpunkt, Feature-Flag-503) grün; volle Suite **579 passed**, keine Regression; Route registriert.
 
+### Frontend-Politur (Dashboard ↔ Backend + Cache) — ✅ fertig (Branch `dev`)
+- **Verbrauch-Tab an `/usage` angebunden:** `usage-dashboard.tsx` holt `getUsageSummary(range)` + `getUsageDrilldown(range)` (neue Client-Funktionen in `lib/api.ts`) und nutzt die **echte historische Summe** des Backends. Bei Nichterreichbarkeit **stiller Fallback** auf die Client-Aggregation aus dem sessions-provider (kein Hard-Fail, AC „bricht auf heutiges Verhalten zurück") + dezenter Hinweis „Live-Aggregation (ohne Verlauf)". Range-Guard verhindert das Anzeigen stale Backend-Daten beim Zeitraum-Wechsel.
+- **Cache-Treffer sichtbar:** neue Kennzahl-Karte „Cache-Treffer" (`cache_hit_ratio` % + „… aus Cache"), „n/v" ohne Cache-Daten — erfüllt die #27-Sichtbarkeit nun auch im UI.
+- **Vereinheitlichung:** `lib/usage.ts` liefert eine gemeinsame `UsageSummary`-Sicht (inkl. `UsageRow` + Cache-Feldern) für **beide** Quellen; `summaryFromBackend()` adaptiert die snake_case-Antwort. Rendering quellen-unabhängig (gleiche Karten/Balken/Tabelle).
+- **Backend-Typen** (`UsageSummaryRead`/`UsageDrilldownRead` etc.) in `lib/types.ts`.
+- **Tests:** `lib/usage.test.ts` um Cache-Aggregation + `summaryFromBackend`-Adapter erweitert; volle Frontend-Suite **86 passed**, Lint + Typecheck sauber.
+
+> Weiterhin optional/offen: eigenständige RAG-Vorschau-UI (#23) und Späher-Auslöser-UI (#26) — Endpunkte stehen, aber kein Cockpit-Bedarf im MVP.
+
 ### Status: Backend aller 4 Mechanismen fertig
 Alle vier Effizienz-Mechanismen sind backend-seitig implementiert, getestet und einzeln abschaltbar. **Offen (optionale Frontend-Politur):**
 - Sub-Phase 1: Dashboard auf `/usage`-Endpunkte umstellen (Fallback auf Client-Aggregation).
