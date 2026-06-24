@@ -1,6 +1,6 @@
 # PROJ-33: Session-Lifecycle-Härtung (Restart-Resilienz + prozess-verifiziertes Liveness)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -188,8 +188,47 @@ PROJ-33 wird bewusst auf **`main`** weitergebaut (Nutzer-Entscheidung 2026-06-24
 
 **Nächster Schritt:** `/abc-qa 33`.
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (2026-06-24, `/abc-qa`, Branch `main`)
+
+**Ergebnis: 8/8 Acceptance Criteria ✅ · alle Edge Cases ✅ · Security sauber · KEINE Critical/High/Medium → produktionsreif.**
+Suiten: **Backend 550 passed** (21 PROJ-33: 7 is_alive + 8 Drain/Resume + 6 QA), **Frontend 75 passed**, ESLint sauber, tsc fehlerfrei (außer vorbestehendem `md-tree.test.ts`).
+
+### Acceptance Criteria
+| # | Kriterium | Status | Nachweis |
+|---|---|---|---|
+| 1 | Prozess-verifiziertes `is_alive` (kein Geister-„aktiv") | ✅ | `test_proj33_is_alive` (7, inkl. rc=None+toter PID→False) |
+| 2 | Graceful Drain beim Shutdown | ✅ | `test_drain_marks_active_sessions`, `test_drain_skips_terminal_sessions` |
+| 3 | Auto-Resume beim Startup | ✅ | `test_auto_resume_resumes_only_drained`, `test_resumed_session_accepts_input` |
+| 4 | Kein Resume-Sturm | ✅ | `test_auto_resume_failure_clears_flag_no_storm` (1 Versuch), Crash wird nicht resumt |
+| 5 | In-flight-Turn nicht verloren (claude --resume) | ✅ | `test_resumed_session_accepts_input` (Session wieder nutzbar) |
+| 6 | Selbst-Restart-Gate (bypass-fest) | ✅ | `test_self_restart_gate_fires_even_in_bypass`, `_approve_allows`, `harmless_not_gated`, `_is_self_restart`-Unit |
+| 7 | Harter Crash degradiert sauber | ✅ | `test_rehydrate_crash_orphan_is_not_resume_candidate` (Verwaist, kein Resume) |
+| 8 | Legitime Wartestellung weiter „aktiv"; deutsche Texte; keine Regression | ✅ | PROJ-27-Suite grün; 550+75 grün |
+
+### Edge Cases
+- **Drain≠Crash:** nur `drained_at` → Auto-Resume; Crash (kein Flag) → Verwaist. ✅
+- **Resume scheitert:** `drained_at` gelöscht (genau ein Versuch) → kein Sturm bei wiederholtem Neustart. ✅
+- **Session-Limit beim Resume:** Limit=1 + 2 gedrainte → genau 1 fortgesetzt, die andere behält ihr Flag (kein Bypass). ✅ (`test_auto_resume_respects_session_limit`)
+- **Terminale Session:** wird nicht gedraint (kein `drained_at`). ✅
+- **Bypass-Mode:** Self-Restart-Gate feuert auch im `bypassPermissions`. ✅
+- **Harmloses Kommando:** läuft im Bypass durch, keine Card. ✅
+
+### Security / Red-Team
+- **Bypass-feste Selbst-Restart-Reißleine** (zentraler Schutz): ein Agent kann den eigenen Host/Backend **nicht still** neustarten (auch nicht im Bypass) → keine Selbst-/Flotten-Tötung ohne Freigabe. ✅
+- **Kein Session-Limit-Bypass** über Auto-Resume. ✅
+- **Kein selbstverschuldeter Resume-Sturm** (drained_at-Einmal-Versuch + Crash≠Drain). ✅
+- **Geister-`is_alive` geschlossen** (eine tote Session maskiert sich nicht mehr als „aktiv"). ✅
+
+### Findings
+**Keine Critical/High/Medium.** Info/Low:
+1. **Self-Restart-Erkennung ist Muster-basiert** (Substring auf dem Bash-Kommando) — Defense-in-Depth, **kein** Sandbox: ein bewusst verschleiertes Kommando (z. B. in ein Skript schreiben und ausführen) kann es umgehen. Für den realen Fehlerfall (Agent ruft `systemctl restart`/`deploy.sh` direkt) ausreichend; Verschärfung später möglich.
+2. **`KillMode=mixed`** ist eine Deployment-Empfehlung (human-gated), im Code nicht erzwungen — ohne sie ist das Drain-Fenster knapper.
+3. **SIGKILL/OOM** überspringt den Drain (kein lifespan-Shutdown) → korrekt als Crash-Orphan behandelt (Fallback Recovery), kein Auto-Resume.
+
+**Produktionsreife: JA** (0 Critical/High).
+
+## Deployment
+_To be added by /abc-deploy_
 
 ## Deployment
 _To be added by /abc-deploy_
