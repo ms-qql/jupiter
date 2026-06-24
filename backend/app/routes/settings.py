@@ -9,12 +9,14 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from ..config import THRESHOLD_MAX_PCT, THRESHOLD_MIN_PCT, clamp_threshold, settings
-from ..engine import policy, watchdog
+from ..engine import liveness, policy, watchdog
 from ..engine.abc_phases import ABC_PHASES
 from ..engine.files import FileService
 from ..schemas.settings import (
     ClipboardDirPatch,
     ClipboardDirRead,
+    LivenessLimitsPut,
+    LivenessSettingRead,
     PolicyPreviewRead,
     ThresholdSettingPatch,
     ThresholdSettingRead,
@@ -116,5 +118,22 @@ async def put_watchdog(payload: WatchdogLimitsPut) -> dict:
     """Limits ersetzen — Pydantic erzwingt > 0 (422); in YAML geschrieben, **live** aktiv."""
     try:
         return watchdog.watchdog_store.save(payload.model_dump())
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Liveness + Auto-Reanimierung (PROJ-27) -------------------------------
+
+@router.get("/liveness", response_model=LivenessSettingRead)
+async def get_liveness() -> dict:
+    """Aktuelle Liveness-Schwellen + Herkunft/Warnung (live aus der Datei)."""
+    return liveness.liveness_store.snapshot()
+
+
+@router.put("/liveness", response_model=LivenessSettingRead)
+async def put_liveness(payload: LivenessLimitsPut) -> dict:
+    """Schwellen ersetzen — Pydantic erzwingt die Wertebereiche; in YAML geschrieben, **live** aktiv."""
+    try:
+        return liveness.liveness_store.save(payload.model_dump())
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

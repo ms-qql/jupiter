@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   ABC_PHASES,
+  canReanimate,
   columnFor,
   contextLabel,
+  costLabel,
   countStatuses,
   countTerminal,
+  engineShowsCost,
   formatDuration,
   gaugeColor,
   isTerminalStatus,
+  livenessMeta,
   modelLabel,
   phaseIndex,
   projectName,
@@ -23,6 +27,7 @@ function session(overrides: Partial<Session> = {}): Session {
     project_path: "/home/dev/projects/jupiter",
     model: "haiku",
     permission_mode: "default",
+    engine: "claude",
     role: null,
     constitution_source: null,
     status: "running",
@@ -44,6 +49,9 @@ function session(overrides: Partial<Session> = {}): Session {
     abc_phase_reached: null,
     abc_feature: null,
     pending_decisions: [],
+    liveness: "aktiv",
+    liveness_auto_attempts: 0,
+    liveness_last_result: null,
     ...overrides,
   };
 }
@@ -56,6 +64,21 @@ const ALL: SessionStatus[] = [
   "done",
   "error",
 ];
+
+describe("PROJ-18 — Kosten-Degradation (engine-agnostische Sicht)", () => {
+  it("nur Claude liefert echte Kosten → engineShowsCost", () => {
+    expect(engineShowsCost("claude")).toBe(true);
+    expect(engineShowsCost("openai")).toBe(false);
+    expect(engineShowsCost("openrouter")).toBe(false);
+    expect(engineShowsCost("ollama")).toBe(false);
+  });
+  it("costLabel: Claude zeigt $-Betrag, Fremd-Engine „n/v“", () => {
+    expect(costLabel("claude", 0.123)).toBe("$0.123");
+    expect(costLabel("claude", 0)).toBe("$0.000");
+    expect(costLabel("openai", 0)).toBe("n/v");
+    expect(costLabel("openrouter", 0)).toBe("n/v");
+  });
+});
 
 describe("statusMeta — Ampel-Mapping (AC: Ampel-Kacheln)", () => {
   it("startet/arbeitet → grün", () => {
@@ -239,5 +262,20 @@ describe("gaugeColor — PROJ-5", () => {
   });
   it("grün im grünen Bereich", () => {
     expect(gaugeColor(10, 85)).toBe("bg-emerald-500");
+  });
+});
+
+describe("Liveness-Helfer — PROJ-27", () => {
+  it("livenessMeta: nur „aktiv“ pulsiert (verifizierter Heartbeat)", () => {
+    expect(livenessMeta("aktiv")).toEqual({ label: "Aktiv", color: "emerald", pulse: true });
+    expect(livenessMeta("hängt")).toEqual({ label: "Hängt", color: "amber", pulse: false });
+    expect(livenessMeta("tot")).toEqual({ label: "Beendet", color: "zinc", pulse: false });
+  });
+  it("canReanimate: nur hängende/tote Sessions zeigen den Knopf", () => {
+    expect(canReanimate("hängt")).toBe(true);
+    expect(canReanimate("tot")).toBe(true);
+    expect(canReanimate("aktiv")).toBe(false);
+    expect(canReanimate(null)).toBe(false);
+    expect(canReanimate(undefined)).toBe(false);
   });
 });

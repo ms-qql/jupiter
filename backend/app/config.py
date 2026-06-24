@@ -16,6 +16,17 @@ _DEFAULT_POLICY_PATH = str(Path(__file__).resolve().parent.parent / "config" / "
 # NICHT existieren — fehlt/defekt → eingebaute konservative Defaults (nie „kein Watchdog").
 _DEFAULT_WATCHDOG_PATH = str(Path(__file__).resolve().parent.parent / "config" / "watchdog.yaml")
 
+# Standard-Ort der Engine-Registry (PROJ-18): backend/config/engines.yaml. Muss NICHT
+# existieren — fehlt/defekt → nur die eingebaute Claude-Engine (rückwärtskompatibel).
+# Hier werden weitere CLI-Engines, iFrame-Einbettungen und Launch-Einträge OHNE
+# Codeänderung registriert (live editierbar, mtime-geprüft wie Policy/Watchdog).
+_DEFAULT_ENGINES_PATH = str(Path(__file__).resolve().parent.parent / "config" / "engines.yaml")
+
+# Standard-Ort der Liveness-Schwellen (PROJ-27): backend/config/liveness.yaml. Muss
+# NICHT existieren — fehlt/defekt → eingebaute konservative Defaults (nie „kein Liveness";
+# Auto-Reanimierung mit hartem Limit). Live mtime-geprüft wie Policy/Watchdog.
+_DEFAULT_LIVENESS_PATH = str(Path(__file__).resolve().parent.parent / "config" / "liveness.yaml")
+
 # Im MVP unterstützte Modell-Aliase (werden 1:1 an `claude --model` durchgereicht).
 VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
 
@@ -116,6 +127,15 @@ class Settings(BaseSettings):
     # Fortschritt, identische Tool-Calls, Schreibrate) als Reißleine. Wird live
     # mtime-geprüft (editierbar ohne Neustart). Fehlt/kaputt → konservative Defaults.
     watchdog_config_path: str = _DEFAULT_WATCHDOG_PATH
+
+    # Engine-Registry-Datei (PROJ-18): weitere CLI-Engines / iFrames / Launch-Einträge.
+    # Live mtime-geprüft; fehlt/kaputt → nur die eingebaute Claude-Engine (kein Crash).
+    engines_config_path: str = _DEFAULT_ENGINES_PATH
+
+    # Liveness-Schwellen-Datei (PROJ-27): Fortschritts-Timeout, Poll-Frequenz, Auto-
+    # Reanimierungs-Versuche/Backoff + globaler An/Aus-Schalter. Live mtime-geprüft;
+    # fehlt/kaputt → konservative Defaults (nie „kein Liveness").
+    liveness_config_path: str = _DEFAULT_LIVENESS_PATH
 
     # Hal-Vault (PROJ-2): Lese-/Such-Wurzel = GANZER Vault; geschrieben wird NUR im
     # Jupiter-Unterbaum (Agentic OS/Jupiter), ohne die PARA-Struktur zu verändern.

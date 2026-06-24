@@ -1,0 +1,29 @@
+# Verifizierter Liveness-Indikator + Auto-Reanimierung — Schwellen (PROJ-27).
+# Dokumentierte Vorlage; NICHT geladen. Zum Aktivieren nach
+# `backend/config/liveness.yaml` kopieren (live mtime-Reload, kein Neustart).
+# Fehlt/defekt die Laufzeit-Datei → diese Defaults greifen eingebaut (nie „kein
+# Liveness"). Editierbar auch über den Settings-Tab „Liveness".
+
+# Globaler Schalter der automatischen Reanimierung. true = Hänger werden automatisch
+# (innerhalb Limit/Backoff) reanimiert. false = nur Indikator + manueller Knopf.
+enabled_auto_reanimation: true
+
+# Kein Fortschritt seit > X Sekunden → Zustand „hängt" (analog Watchdog max_idle_seconds).
+# Fortschritt = neuer Assistenten-Output / Result / Tool-Start (PROJ-16-Uhr, PROJ-32).
+# Legitime Wartestellung (Eingabe/Decision Card/Watchdog-Pause) zählt NICHT als Stillstand.
+progress_timeout_seconds: 180
+
+# PROJ-32: höhere Geduld, SOLANGE ein Tool läuft (langer Build/Test/Explore ist kein
+# Hänger — Jupiter sieht währenddessen keinen Event-Strom). Wird auch diese überschritten,
+# gilt der Tool-Call doch als „hängt" (Auto-Reanimierung/Knopf greifen). Muss > 0 sein.
+tool_in_flight_timeout_seconds: 600
+
+# Frequenz des Hintergrund-Auswerters (Sekunden). Niedrig halten — er pollt nur.
+poll_interval_seconds: 15
+
+# Max. automatische Reanimations-Versuche pro Hänger-Episode. Danach bleibt nur der
+# manuelle „Reaktivieren"-Knopf (kein Reanimations-Sturm bei wirklich toten Sessions).
+max_auto_attempts: 2
+
+# Wartezeit zwischen automatischen Versuchen (Sekunden). 0 = kein Backoff.
+backoff_seconds: 30

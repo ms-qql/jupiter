@@ -1,6 +1,6 @@
 // Verbindliches Mapping Status → Ampel → Kanban-Spalte (siehe PROJ-3 Tech-Design).
 
-import type { AbcPhase, Session, SessionStatus } from "./types";
+import type { AbcPhase, Liveness, Session, SessionStatus } from "./types";
 
 export type Ampel = "green" | "amber" | "orange" | "red" | "gray";
 
@@ -34,6 +34,29 @@ export function isTerminalStatus(status: SessionStatus): boolean {
 /** Anzahl terminaler (= löschbarer) Sessions — für den „Aufräumen (N)"-Button. */
 export function countTerminal(sessions: Session[]): number {
   return sessions.filter((s) => isTerminalStatus(s.status)).length;
+}
+
+// PROJ-27: Liveness (verifizierter Heartbeat) ---------------------------------
+
+export interface LivenessMeta {
+  label: string; // deutscher Klartext
+  color: "emerald" | "amber" | "zinc";
+  pulse: boolean; // pulsiert nur, wenn wirklich aktiv
+}
+
+export const LIVENESS_META: Record<Liveness, LivenessMeta> = {
+  aktiv: { label: "Aktiv", color: "emerald", pulse: true },
+  hängt: { label: "Hängt", color: "amber", pulse: false },
+  tot: { label: "Beendet", color: "zinc", pulse: false },
+};
+
+export function livenessMeta(liveness: Liveness): LivenessMeta {
+  return LIVENESS_META[liveness] ?? LIVENESS_META.tot;
+}
+
+/** Reanimierungs-Kandidat (Reaktivieren-Knopf zeigen): nur „hängt"/„tot". */
+export function canReanimate(liveness: Liveness | null | undefined): boolean {
+  return liveness === "hängt" || liveness === "tot";
 }
 
 // Kanban-Spalten (AC: Arbeitet / Wartet auf dich / Review/Approval / Fertig).
@@ -155,6 +178,17 @@ export function modelLabel(model: string): string {
 /** Füllstand-Label: „unbekannt", solange der Treiber keine Token-Daten lieferte (PROJ-5). */
 export function contextLabel(pct: number, known: boolean): string {
   return known ? `${Math.round(pct)}%` : "unbekannt";
+}
+
+/** PROJ-18: Nur der Claude-Treiber liefert echte Kosten; andere Engines (OpenAI/CLI)
+ *  haben keine Kosten-Extraktion → die Anzeige degradiert sauber zu „n/v". */
+export function engineShowsCost(engine: string): boolean {
+  return engine === "claude";
+}
+
+/** Kosten-Label der Kachel: „$x.xxx" für Claude, sonst „n/v" (engine-agnostische Degradation). */
+export function costLabel(engine: string, totalCostUsd: number): string {
+  return engineShowsCost(engine) ? `$${totalCostUsd.toFixed(3)}` : "n/v";
 }
 
 /** Farbklasse des Kontext-Balkens: rot ab Schwelle, amber kurz davor, sonst grün (PROJ-5). */

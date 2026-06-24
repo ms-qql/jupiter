@@ -12,6 +12,14 @@ export type SessionStatus =
   | "done"
   | "error";
 
+/** PROJ-27: verifizierter Liveness-Zustand — nicht „läuft die Uhr", sondern „lebt der
+ *  Prozess wirklich + Fortschritt". „aktiv" (lebt + Fortschritt/legitime Wartestellung),
+ *  „hängt" (lebt, aber kein Fortschritt), „tot" (beendet/verwaist). */
+export type Liveness = "aktiv" | "hängt" | "tot";
+
+/** PROJ-27: Rückmeldung des letzten (Auto-/manuellen) Reanimations-Versuchs. */
+export type LivenessResult = "läuft_wieder" | "fehlgeschlagen" | null;
+
 /** Offene Decision Card (PROJ-4) — spiegelt PendingDecisionRead. */
 export interface PendingDecision {
   decision_id: string;
@@ -62,6 +70,9 @@ export interface Session {
   project_path: string;
   model: string;
   permission_mode: string;
+  /** PROJ-18: welche Engine die Session fährt (Default „claude"). Steuert die
+   *  Degradation engine-spezifischer Anzeigen (z. B. Kosten → „n/v"). */
+  engine: string;
   role: string | null;
   constitution_source: string | null;
   status: SessionStatus;
@@ -92,6 +103,12 @@ export interface Session {
   /** PROJ-8: Feature-Referenz, z. B. „8" (aus Skill-Arg/berührtem Spec). */
   abc_feature: string | null;
   pending_decisions: PendingDecision[];
+  /** PROJ-27: verifizierter Heartbeat (aktiv/hängt/tot) — eigenes Signal neben der Ampel. */
+  liveness: Liveness;
+  /** PROJ-27: bisher unternommene automatische Reanimierungs-Versuche dieser Episode. */
+  liveness_auto_attempts: number;
+  /** PROJ-27: Ergebnis des letzten Reanimations-Versuchs (für die UI-Rückmeldung). */
+  liveness_last_result: LivenessResult;
 }
 
 /** PROJ-8: kanonische ABC-Workflow-Phasen (spiegelt backend/app/engine/abc_phases.py). */
@@ -209,6 +226,31 @@ export interface WatchdogSetting extends WatchdogLimits {
   warning: string | null;
 }
 
+// --- PROJ-27: Verifizierter Liveness-Indikator + Auto-Reanimierung ----------
+
+/** Konfigurierbare Liveness-Schwellen (editierbarer Teil von GET/PUT /settings/liveness).
+ *  Spiegelt backend/app/schemas/settings.py LivenessLimitsPut. */
+export interface LivenessLimits {
+  /** Globaler Schalter der Automatik. Aus → nur Indikator + manueller Knopf. */
+  enabled_auto_reanimation: boolean;
+  /** Kein Fortschritt seit > X s → Zustand „hängt" (analog Watchdog-Stillstand). */
+  progress_timeout_seconds: number;
+  /** PROJ-32: höhere Geduld, solange ein Tool läuft (langer Build/Test ist kein Hänger). */
+  tool_in_flight_timeout_seconds: number;
+  /** Frequenz des Hintergrund-Auswerters (s). */
+  poll_interval_seconds: number;
+  /** Max. automatische Reanimations-Versuche; danach nur noch der manuelle Knopf. */
+  max_auto_attempts: number;
+  /** Wartezeit zwischen automatischen Versuchen (s); 0 = kein Backoff. */
+  backoff_seconds: number;
+}
+
+/** Gesamte Liveness-Config (GET /settings/liveness) — Schwellen + Herkunft/Warnung. */
+export interface LivenessSetting extends LivenessLimits {
+  source: string;
+  warning: string | null;
+}
+
 // --- PROJ-7: MD-Reader (read-only) -----------------------------------------
 
 /** Lese-Quelle des MD-Readers — spiegelt backend/app/schemas/md.py MdSource. */
@@ -271,11 +313,49 @@ export interface SessionDetail extends Session {
 export interface SessionCreate {
   project_path: string;
   initial_prompt: string;
-  model: ModelName;
+  /** Modell — bei Claude „haiku|sonnet|opus", bei anderen Engines ein freier
+   *  Profil-Modellname (z. B. „gpt-4o-mini"). */
+  model: string;
   permission_mode?: PermissionMode;
   role?: string | null;
   /** PROJ-8: sprechendes Projekt-Label; ohne Angabe nutzt das Backend den Basename. */
   project_name?: string | null;
+  /** PROJ-18: Ziel-Engine (Default „claude", wenn weggelassen). */
+  engine?: string;
+}
+
+// --- PROJ-18: Weitere Engines + iFrame/Launch ------------------------------
+
+/** Integrations-Tiefe eines Registry-Eintrags: steuerbare Session, eingebettete
+ *  Web-App (iFrame) oder reiner externer Startknopf. */
+export type EngineKind = "engine" | "iframe" | "launch";
+
+/** Ein Eintrag aus GET /engines (spiegelt backend/app/schemas/engines.py EngineRead).
+ *  Engine-agnostisch + secret-frei: kein API-Key, kein argv. */
+export interface EngineRead {
+  key: string;
+  label: string;
+  kind: EngineKind;
+  /** nur bei kind=engine: „claude" | „generic_cli" | „openai". */
+  driver: string | null;
+  /** false → ausgrauen; `unavailable_reason` trägt den deutschen Setup-Hinweis. */
+  available: boolean;
+  unavailable_reason: string | null;
+  models: string[];
+  default_model: string | null;
+  capabilities: string[];
+  /** iFrame-Quelle (kind=iframe). */
+  url: string | null;
+  sandbox: string | null;
+  /** Launch-Ziel (kind=launch). */
+  target: string | null;
+}
+
+/** Antwort von GET /engines — alle Engines/iFrames/Launch-Einträge + Herkunft/Warnung. */
+export interface EnginesOverview {
+  engines: EngineRead[];
+  source: string;
+  warning: string | null;
 }
 
 // --- PROJ-9: Smart Launcher -------------------------------------------------
@@ -347,4 +427,39 @@ export interface DeleteResult {
 /** Clipboard-Ordner (GET/PATCH /settings/clipboard-dir). */
 export interface ClipboardDir {
   path: string;
+}
+
+// --- PROJ-17: Recovery über den Vault --------------------------------------
+
+/** Quelle, aus der der „Hier ging's weiter"-Vorschlag eines Kandidaten stammt
+ *  (stärkste zuerst): kuratierter Handover > Auto-Session-Log > nur Index-Metadaten. */
+export type RecoverySource = "handover" | "log" | "incomplete";
+
+/** Ein nach Reboot/Crash wiederherstellbarer Strang — spiegelt das geplante
+ *  backend/app/schemas/recovery.py RecoveryCandidate. Read-only Sicht über
+ *  Live-Index (PROJ-14) + Vault (PROJ-2/PROJ-5); kein neues Persistenz-Schema. */
+export interface RecoveryCandidate {
+  /** Verwaiste Vorgänger-Session, an die wiederangeknüpft wird (parent). */
+  session_id: string;
+  project_path: string;
+  project_name: string | null;
+  /** Weiteste bekannte ABC-Phase des Strangs (null = unbekannt). */
+  abc_phase: AbcPhase | null;
+  /** Zeitpunkt des jüngsten Handovers/letzter Aktivität (ISO) — null bei reiner Index-Quelle. */
+  last_handover_at: string | null;
+  /** Woraus der Vorschlag gebaut wurde (steuert das Quellen-Badge). */
+  source: RecoverySource;
+  /** „Hier ging's weiter": verdichtete offene Punkte aus dem Handover/Log. */
+  suggestion: string;
+  /** Wiederherstellen blockiert (z. B. Projektpfad existiert nicht mehr). */
+  restore_blocked: boolean;
+  /** Klartext-Grund der Blockade (nur wenn restore_blocked). */
+  blocked_reason: string | null;
+  /** Hinweis bei beschädigtem/halbem Handover (sonst null) — UI zeigt Warnung. */
+  warning: string | null;
+}
+
+/** Antwort von GET /recovery — die Liste wiederherstellbarer Stränge. */
+export interface RecoveryListResult {
+  candidates: RecoveryCandidate[];
 }

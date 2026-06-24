@@ -23,9 +23,12 @@ from ..config import (
     settings,
 )
 from ..db import NullSessionIndexRepository, SessionIndexRepository
-from . import abc_phases, curation, policy, watchdog
+from . import abc_phases, curation, liveness, policy, watchdog
 from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
+from .generic_cli_driver import GenericCliDriver
+from .openai_driver import OpenAIDriver
+from .registry import DRIVER_OPENAI, EngineProfile, engine_registry
 from .constitution import combine_with_extra, resolve_constitution
 from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
 from .handover import build_handover_md, build_title
@@ -67,6 +70,20 @@ class SessionActiveError(RuntimeError):
 
     Die Route übersetzt das in HTTP 409 mit deutscher Meldung.
     """
+
+
+class SessionAliveError(RuntimeError):
+    """PROJ-27: Reanimierung abgelehnt, weil die Session bereits lebt (aktiv).
+
+    Die Route übersetzt das in HTTP 409 — eine laufende Session braucht keine
+    Reanimierung (nur „hängt"/„tot" sind Kandidaten).
+    """
+
+
+class EngineUnavailableError(RuntimeError):
+    """PROJ-18: Start abgelehnt, weil die gewählte Engine nicht verfügbar ist
+    (fehlende CLI / fehlender API-Key). Die Route übersetzt das in HTTP 503 mit
+    deutscher Meldung; Claude bleibt unabhängig nutzbar."""
 
 # Default-Auftakt der Reset-Kind-Session, wenn der Nutzer keinen eigenen Prompt gibt.
 # Der verdichtete Handover liegt als System-Kontext (Seed) bereits an.
@@ -122,6 +139,9 @@ class SessionState:
     project_path: str
     model: str
     permission_mode: str
+    # PROJ-18: welche Engine diese Session fährt (Default „claude"). Bestimmt den
+    # Treiber bei Resume/Rehydrierung; engine-spezifische Anzeigen degradieren sauber.
+    engine: str = "claude"
     role: str | None = None
     constitution_source: str | None = None
     effective_constitution: str = ""
@@ -147,6 +167,9 @@ class SessionState:
     abc_feature: str | None = None  # Feature-Referenz, z. B. „8" (aus Skill-Arg/berührtem Spec).
     # PROJ-10: zuletzt aufgerufener Skill (für Skill-Kontext der Trust-Policy).
     current_skill: str | None = None
+    # PROJ-17: aus der Recovery-Ansicht verworfen (kein Recovery-Kandidat mehr).
+    # Der Vault-Eintrag/das Log bleibt unberührt — nur die Sicht blendet ihn aus.
+    recovery_dismissed: bool = False
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -168,6 +191,7 @@ class SessionState:
             "project_path": self.project_path,
             "model": self.model,
             "permission_mode": self.permission_mode,
+            "engine": self.engine,
             "role": self.role,
             "constitution_source": self.constitution_source,
             "status": self.status,
@@ -226,11 +250,46 @@ class SessionRuntime:
         # PROJ-16: Amok-Watchdog — Sliding-Window-Monitor (Tokens/Zeit, Stillstand,
         # Schleife, Schreibrate). Liest die Limits live aus dem Modul-Singleton.
         self.watchdog = watchdog.WatchdogMonitor(watchdog.watchdog_store)
+        # PROJ-27: Auto-Reanimierungs-Buchhaltung (Versuche/Backoff/Ergebnis). Den
+        # Fortschritt misst weiterhin der Watchdog-Monitor — hier nur „wann reanimieren".
+        self.liveness = liveness.LivenessMonitor()
+
+    def derive_liveness(self, timeout: float | None = None) -> str:
+        """PROJ-27: verifizierter Liveness-Zustand — frisch aus vorhandenen Signalen.
+
+        Keine eigene Zustandsmaschine: Prozess-Leben (PID/Treiber) + Status +
+        Fortschritts-Uhr (PROJ-16) ergeben den Zustand bei jedem Aufruf neu — so
+        kann er nicht gegen die echte Prozess-Realität driften.
+        """
+        s = self.state
+        # Terminal oder nicht mehr steuerbar (auch verwaist nach Restart) → tot/beendet.
+        if s.status in (DONE, ERROR) or not self.driver.is_alive:
+            return liveness.LIVENESS_DEAD
+        # Legitime Wartestellung (Eingabe / Decision Card / Watchdog-Pause) ≠ Hänger.
+        if s.status in (WAITING, AWAITING_APPROVAL):
+            return liveness.LIVENESS_ACTIVE
+        # STARTING/RUNNING bei lebendem Prozess: die Fortschritts-Uhr entscheidet.
+        if timeout is None:
+            timeout = liveness.liveness_store.config()["progress_timeout_seconds"]
+        # PROJ-32: Läuft gerade ein Tool (langer Build/Test/Explore), gilt die höhere
+        # In-Flight-Geduld statt des normalen Timeouts — ein einzelner langer Tool-Call
+        # ist kein Hänger. Wird auch diese überschritten (Tool produziert ewig nichts),
+        # greift die reguläre Hänger-Erkennung/Auto-Reanimierung wie gehabt.
+        if self.watchdog.tool_in_flight:
+            timeout = liveness.liveness_store.config()["tool_in_flight_timeout_seconds"]
+        if self.watchdog.seconds_since_progress() > timeout:
+            return liveness.LIVENESS_HANGING
+        return liveness.LIVENESS_ACTIVE
 
     def to_read(self) -> dict:
         """Lese-Snapshot inkl. offener Decision Cards (für REST-Liste + WS-Broadcast)."""
         data = self.state.to_read()
         data["pending_decisions"] = [c.to_read() for c in self.pending.values()]
+        # PROJ-27: verifizierter Heartbeat reist im vorhandenen Snapshot mit (kein Extra-
+        # Endpoint nötig). Frisch abgeleitet, damit auch ohne Event aktuell.
+        data["liveness"] = self.derive_liveness()
+        data["liveness_auto_attempts"] = self.liveness.auto_attempts
+        data["liveness_last_result"] = self.liveness.last_result
         return data
 
     def _maybe_persist(self) -> None:
@@ -755,8 +814,12 @@ class SessionManager:
         driver_factory: DriverFactory | None = None,
         vault=None,
         repo: SessionIndexRepository | None = None,
+        engine_factory: Callable[[EngineProfile], EngineDriver] | None = None,
     ) -> None:
         self._driver_factory: DriverFactory = driver_factory or (lambda: ClaudeCodeDriver())
+        # PROJ-18: Treiber-Quelle für NICHT-Claude-Engines (generic_cli / openai). Tests
+        # injizieren hier einen Fake, sonst werden die echten Treiber aus dem Profil gebaut.
+        self._engine_factory = engine_factory
         self._sessions: dict[str, SessionRuntime] = {}
         # Optionaler VaultService (PROJ-2): rohe Session-Logs am Ende persistieren.
         self._vault = vault
@@ -767,6 +830,20 @@ class SessionManager:
         self._create_lock = asyncio.Lock()
         # Referenzen auf laufende best-effort-Persist-Tasks (gegen vorzeitiges GC).
         self._persist_tasks: set[asyncio.Task] = set()
+
+    # --- PROJ-18: Engine → Treiber ----------------------------------------
+
+    def _make_driver(self, profile: EngineProfile | None) -> EngineDriver:
+        """Wählt den Treiber zur Engine. Claude → injizierbare ``driver_factory``
+        (Tests/FakeDriver); sonst der Profil-Treiber (oder eine injizierte
+        ``engine_factory`` für Tests)."""
+        if profile is None or profile.is_claude:
+            return self._driver_factory()
+        if self._engine_factory is not None:
+            return self._engine_factory(profile)
+        if profile.driver == DRIVER_OPENAI:
+            return OpenAIDriver(profile)
+        return GenericCliDriver(profile)
 
     # --- PROJ-14: Limit + Persistenz --------------------------------------
 
@@ -788,6 +865,7 @@ class SessionManager:
             "project_name": s.project_name,
             "model": s.model,
             "permission_mode": s.permission_mode,
+            "engine": s.engine,
             "role": s.role,
             "status": s.status,
             "pid": runtime.driver.pid,
@@ -801,6 +879,7 @@ class SessionManager:
             "abc_phase": s.abc_phase,
             "abc_phase_reached": s.abc_phase_reached,
             "abc_feature": s.abc_feature,
+            "recovery_dismissed": 1 if s.recovery_dismissed else 0,
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -894,6 +973,7 @@ class SessionManager:
             project_path=row.get("project_path") or "",
             model=row.get("model") or settings.default_model,
             permission_mode=row.get("permission_mode") or settings.default_permission_mode,
+            engine=row.get("engine") or "claude",
             role=row.get("role"),
             status=row.get("status") or DONE,
             created_at=_dt(row.get("created_at")),
@@ -907,6 +987,7 @@ class SessionManager:
             abc_phase=row.get("abc_phase"),
             abc_phase_reached=row.get("abc_phase_reached"),
             abc_feature=row.get("abc_feature"),
+            recovery_dismissed=bool(row.get("recovery_dismissed")),
         )
 
     async def create(
@@ -921,15 +1002,38 @@ class SessionManager:
         owner: str | None = None,
         parent_session_id: str | None = None,
         project_name: str | None = None,
+        engine: str | None = None,
     ) -> SessionRuntime:
-        model = model or settings.default_model
-        permission_mode = permission_mode or settings.default_permission_mode
-        if model not in VALID_MODELS:
-            raise ValueError(f"Unbekanntes Modell '{model}'. Erlaubt: {sorted(VALID_MODELS)}.")
-        if permission_mode not in MVP_ALLOWED_PERMISSION_MODES:
+        # PROJ-18: Engine-Profil auflösen (Default = eingebaute Claude-Engine). iFrame/
+        # Launch-Einträge sind KEINE steuerbaren Sessions → klar ablehnen.
+        profile = engine_registry.get(engine)
+        if profile is None:
+            raise ValueError(f"Unbekannte Engine '{engine}'.")
+        if not profile.is_session_engine:
             raise ValueError(
-                f"permission_mode '{permission_mode}' ist im MVP nicht erlaubt. "
-                f"Erlaubt: {sorted(MVP_ALLOWED_PERMISSION_MODES)} (Safety-Net bis PROJ-4/#19)."
+                f"Engine '{profile.key}' ist {profile.kind} (Einbettung/Startknopf), "
+                "keine steuerbare Session."
+            )
+        # Verfügbarkeit vorab prüfen (fehlende CLI / fehlender API-Key) → klare 503-Meldung,
+        # statt mitten im Start zu crashen. Claude bleibt unabhängig nutzbar.
+        available, reason = profile.availability()
+        if not available:
+            raise EngineUnavailableError(reason or f"Engine '{profile.key}' nicht verfügbar.")
+
+        model = model or profile.default_model or settings.default_model
+        permission_mode = permission_mode or settings.default_permission_mode
+        if profile.is_claude:
+            if model not in VALID_MODELS:
+                raise ValueError(f"Unbekanntes Modell '{model}'. Erlaubt: {sorted(VALID_MODELS)}.")
+            if permission_mode not in MVP_ALLOWED_PERMISSION_MODES:
+                raise ValueError(
+                    f"permission_mode '{permission_mode}' ist im MVP nicht erlaubt. "
+                    f"Erlaubt: {sorted(MVP_ALLOWED_PERMISSION_MODES)} (Safety-Net bis PROJ-4/#19)."
+                )
+        elif not profile.valid_model(model):
+            raise ValueError(
+                f"Modell '{model}' ist für Engine '{profile.key}' nicht konfiguriert. "
+                f"Erlaubt: {profile.models}."
             )
         real_path = validate_project_path(project_path)
 
@@ -945,6 +1049,7 @@ class SessionManager:
             project_path=real_path,
             model=model,
             permission_mode=permission_mode,
+            engine=profile.key,
             role=resolved.role,
             constitution_source=resolved.source,
             effective_constitution=effective,
@@ -952,7 +1057,7 @@ class SessionManager:
             # PROJ-8: sprechendes Gantt-Label; ohne Angabe der Verzeichnis-Basename.
             project_name=(project_name or "").strip() or os.path.basename(real_path) or real_path,
         )
-        driver = self._driver_factory()
+        driver = self._make_driver(profile)
         runtime = SessionRuntime(
             state, driver, on_done=self._write_session_log, on_persist=self._persist
         )
@@ -975,7 +1080,9 @@ class SessionManager:
             permission_mode=permission_mode,
             initial_prompt=initial_prompt,
             system_prompt_append=effective,
-            settings_json=self._hook_settings(),
+            # PROJ-18: der Freigabe-Hook (PROJ-4) ist Claude-Code-spezifisch; andere
+            # Engines kennen keinen PreToolUse-Hook → keine Settings-JSON.
+            settings_json=self._hook_settings() if profile.is_claude else None,
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -1043,18 +1150,24 @@ class SessionManager:
         und denselben Konstitutions-Kontext. Eingaben folgen via ``send_input``.
         """
         state = runtime.state
-        driver = self._driver_factory()
+        # PROJ-18: passenden Treiber zur Engine bauen. Nur Claude unterstützt echtes
+        # `--resume` (lädt die Konversation); generic_cli/openai starten frisch (die
+        # bisherige Konversation ist beim Nicht-Claude-Treiber nicht persistent → sauber
+        # degradiert: ein neuer Prozess/Chat mit derselben Session-ID + Konstitution).
+        profile = engine_registry.get(state.engine)
+        is_claude = profile is not None and profile.is_claude
+        driver = self._make_driver(profile)
         runtime.driver = driver
         runtime._done_fired = False  # erlaubt erneutes Vault-Log beim nächsten DONE
         spec = LaunchSpec(
             session_id=state.session_id,
             project_path=state.project_path,
-            model=_model_alias(state.model),
+            model=_model_alias(state.model) if is_claude else state.model,
             permission_mode=state.permission_mode,
             initial_prompt="",  # Eingabe kommt direkt danach via send_input
             system_prompt_append=state.effective_constitution,
-            resume=True,
-            settings_json=self._hook_settings(),
+            resume=is_claude,
+            settings_json=self._hook_settings() if is_claude else None,
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -1065,7 +1178,105 @@ class SessionManager:
         state.status = RUNNING
         state.error = None
         state.last_activity = _now()
+        # PROJ-27: Resume IST Fortschritt — Fortschritts-Uhr zurücksetzen, sonst gilt die
+        # frisch fortgesetzte Session sofort wieder als „hängt" (alte Stillstands-Zeit).
+        runtime.watchdog.note_progress()
         self._persist(runtime)  # PROJ-14: rehydrierte/fortgesetzte Session läuft wieder.
+
+    # --- Liveness + Reanimierung (PROJ-27) ---------------------------------
+
+    async def reanimate(self, session_id: str) -> SessionRuntime:
+        """Manuelles „Reaktivieren" einer hängenden/toten Session.
+
+        Nutzt denselben ``claude --resume``-Pfad wie die Automatik (ein Mechanismus).
+        - Lebt die Session bereits (aktiv/wartend) → ``SessionAliveError`` (409): nichts
+          zu reanimieren.
+        - Hält die Session aktuell KEINEN aktiven Slot (terminal/verwaist), prüft die
+          Reanimierung das Session-Limit (PROJ-14) — kein Bypass über Resume.
+        Der manuelle Eingriff setzt das Auto-Versuchs-Budget zurück (frischer Anlauf).
+        """
+        runtime = self._require(session_id)
+        if runtime.derive_liveness() == liveness.LIVENESS_ACTIVE:
+            raise SessionAliveError("Session läuft bereits — eine Reanimierung ist nicht nötig.")
+        # Terminal → Reanimierung belegt einen NEUEN Slot: Limit prüfen (PROJ-14).
+        if runtime.state.status not in ACTIVE_STATES:
+            limit = self.max_parallel_sessions
+            if self.active_count() >= limit:
+                raise SessionLimitError(
+                    f"Limit erreicht: maximal {limit} gleichzeitige Sessions. "
+                    "Bitte eine laufende Session beenden, bevor reanimiert wird."
+                )
+        try:
+            await self._reanimate_once(runtime)
+        except Exception:  # Resume fehlgeschlagen → Ergebnis sichtbar, Fehler weiterreichen.
+            runtime.liveness.mark_result(success=False)
+            runtime._broadcast({"kind": "state", **runtime.to_read()})
+            raise
+        runtime.liveness.reset()  # manueller Eingriff → frisches Auto-Budget
+        runtime.liveness.mark_result(success=True)
+        runtime._broadcast({"kind": "state", **runtime.to_read()})
+        return runtime
+
+    async def _reanimate_once(self, runtime: SessionRuntime) -> None:
+        """Einen lebenden, aber hängenden Prozess sauber beenden und neu fortsetzen.
+
+        Lebt der alte Prozess noch (Hänger), wird er zuerst best-effort gestoppt, damit
+        kein verwaister Geister-Prozess weiter Tokens verbrennt; danach übernimmt ein
+        frischer ``--resume``-Treiber. Bei toten/verwaisten Sessions ist der Stop ein No-op.
+        """
+        if runtime.driver.is_alive:
+            try:
+                await runtime.driver.stop()
+            except Exception as exc:  # noqa: BLE001 — best-effort, blockiert die Reanimierung nicht.
+                logger.warning(
+                    "Stoppen des hängenden Prozesses fehlgeschlagen (Session %s): %s",
+                    runtime.state.session_id, exc,
+                )
+        await self._resume(runtime)
+
+    async def evaluate_liveness_once(self) -> None:
+        """Ein Tick des hintergrund-getriebenen Liveness-Auswerters (PROJ-27).
+
+        Leitet je Session den verifizierten Zustand ab, reanimiert hängende Sessions
+        automatisch (innerhalb Limit/Backoff, sofern global aktiviert) und streamt nur
+        echte Zustandswechsel — auch für komplett stillstehende Sessions, die nie ein
+        Tool-Gate erreichen (genau die Lücke, die der Watchdog allein nicht schließt).
+        """
+        cfg = liveness.liveness_store.config()
+        timeout = cfg["progress_timeout_seconds"]
+        auto_on = cfg["enabled_auto_reanimation"]
+        max_attempts = cfg["max_auto_attempts"]
+        backoff = cfg["backoff_seconds"]
+        for runtime in list(self._sessions.values()):
+            live = runtime.derive_liveness(timeout)
+            if live == liveness.LIVENESS_ACTIVE and runtime.liveness.auto_attempts:
+                # Echter Fortschritt nach einem Hänger → Auto-Budget zurücksetzen.
+                runtime.liveness.reset()
+            elif (
+                live == liveness.LIVENESS_HANGING
+                and auto_on
+                and runtime.liveness.may_auto_attempt(max_attempts)
+            ):
+                # Hänger = aktive Session (Slot belegt) → Resume belegt KEINEN neuen Slot;
+                # das Session-Limit (PROJ-14) bleibt strukturell gewahrt.
+                await self._auto_reanimate(runtime)
+                live = runtime.derive_liveness(timeout)
+            if live != runtime.liveness.last_broadcast_state:
+                runtime.liveness.last_broadcast_state = live
+                runtime._broadcast({"kind": "state", **runtime.to_read()})
+
+    async def _auto_reanimate(self, runtime: SessionRuntime) -> None:
+        """Ein automatischer Reanimations-Versuch (gezählt, mit Backoff, nie fatal)."""
+        backoff = liveness.liveness_store.config()["backoff_seconds"]
+        sid = runtime.state.session_id
+        try:
+            await self._reanimate_once(runtime)
+            success = True
+            logger.info("Auto-Reanimierung erfolgreich (Session %s).", sid)
+        except Exception as exc:  # noqa: BLE001 — Fehlversuch wird gezählt, Loop bleibt am Leben.
+            success = False
+            logger.warning("Auto-Reanimierung fehlgeschlagen (Session %s): %s", sid, exc)
+        runtime.liveness.record_attempt(backoff, success=success)
 
     async def pause(self, session_id: str) -> None:
         await self._require(session_id).driver.pause()
@@ -1241,9 +1452,81 @@ class SessionManager:
             owner=old_state.owner,
             parent_session_id=old_state.session_id,
             project_name=old_state.project_name,  # PROJ-8: Kind erbt das Projekt-Label.
+            engine=old_state.engine,  # PROJ-18: Staffelstab bleibt auf derselben Engine.
         )
         old_state.child_session_id = child.state.session_id
         return child
+
+    async def recover(
+        self,
+        session_id: str,
+        *,
+        seed_context: str,
+        initial_prompt: str | None = None,
+        project_path: str | None = None,
+        model: str | None = None,
+        permission_mode: str | None = None,
+        role: str | None = None,
+        owner: str | None = None,
+        project_name: str | None = None,
+    ) -> SessionRuntime:
+        """PROJ-17: einen verwaisten/aus dem Vault rekonstruierten Strang wieder als
+        Live-Session aufnehmen — wie ``reset()``, aber OHNE ``stop()`` (der alte Strang
+        ist bereits terminal/verwaist) und mit serverseitig verdichtetem Seed.
+
+        Idempotent (1 Strang = 1 Nachfolger): existiert schon eine Session, deren
+        ``parent_session_id`` auf diesen Strang zeigt, wird abgebrochen (→ 409). Das
+        deckt sowohl In-Memory-Verwaiste (mit ``child_session_id``) als auch reine
+        Vault-Kandidaten ab. Liegt der alte Strang noch im Speicher, werden seine
+        Metadaten übernommen; sonst müssen sie (Projektpfad etc.) übergeben werden.
+        """
+        if any(r.state.parent_session_id == session_id for r in self._sessions.values()):
+            raise RuntimeError("Dieser Strang wurde bereits wiederhergestellt.")
+        engine = "claude"  # PROJ-18: reine Vault-Kandidaten → Default-Engine.
+        old = self._sessions.get(session_id)
+        if old is not None:
+            s = old.state
+            project_path = s.project_path
+            model = s.model
+            permission_mode = s.permission_mode
+            role = s.role
+            owner = s.owner
+            project_name = s.project_name
+            engine = s.engine
+        if not project_path:
+            raise ValueError(
+                "Projektpfad nicht rekonstruierbar — Wiederherstellung nicht möglich."
+            )
+        child = await self.create(
+            project_path=project_path,
+            initial_prompt=initial_prompt or _DEFAULT_RESET_PROMPT,
+            model=_model_alias(model or settings.default_model),
+            permission_mode=permission_mode or settings.default_permission_mode,
+            role=role,
+            extra_system_prompt=seed_context,
+            owner=owner,
+            parent_session_id=session_id,
+            project_name=project_name,
+            engine=engine,
+        )
+        if old is not None:
+            old.state.child_session_id = child.state.session_id
+            self._persist(old)  # Staffelstab-Verknüpfung spiegeln (best-effort).
+        return child
+
+    def mark_recovery_dismissed(self, session_id: str) -> bool:
+        """PROJ-17: einen verwaisten Strang aus der Recovery-Ansicht ausblenden.
+
+        Setzt nur das Flag (Status/Log bleiben unberührt) und spiegelt es best-effort
+        in den Live-Index, damit das Verwerfen einen Neustart überdauert. ``True``,
+        wenn der Strang im Speicher lag (sonst übernimmt der RecoveryService die
+        In-Process-Ausblendung für reine Vault-Kandidaten)."""
+        runtime = self._sessions.get(session_id)
+        if runtime is None:
+            return False
+        runtime.state.recovery_dismissed = True
+        self._persist(runtime)
+        return True
 
     def transcript_text(self, session_id: str) -> str:
         """Gesamtes Transkript als Klartext (Copy-out)."""

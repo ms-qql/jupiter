@@ -5,6 +5,7 @@ import type {
   ClipboardDir,
   DeleteResult,
   DirListing,
+  EnginesOverview,
   FileEntry,
   HandoverPreview,
   LaunchSuggestion,
@@ -17,10 +18,13 @@ import type {
   PhaseGateConfig,
   PolicyPreview,
   PolicyRule,
+  RecoveryListResult,
   RootEntry,
   Session,
   SessionCreate,
   SessionDetail,
+  LivenessLimits,
+  LivenessSetting,
   ThresholdSetting,
   TrustPolicy,
   UploadResult,
@@ -92,6 +96,14 @@ export function createSession(body: SessionCreate): Promise<Session> {
   });
 }
 
+// --- PROJ-18: Engine-Registry ----------------------------------------------
+
+/** Alle konfigurierten Engines/iFrames/Launch-Einträge + Verfügbarkeit (secret-frei).
+ *  Speist den Engine-Selector im „Neue Session"-Dialog und das Werkzeuge-Panel. */
+export function getEngines(signal?: AbortSignal): Promise<EnginesOverview> {
+  return request<EnginesOverview>("/engines", { signal });
+}
+
 export function sendInput(id: string, text: string): Promise<{ ok: boolean }> {
   return request(`/sessions/${id}/input`, {
     method: "POST",
@@ -101,6 +113,15 @@ export function sendInput(id: string, text: string): Promise<{ ok: boolean }> {
 
 export function stopSession(id: string): Promise<{ ok: boolean }> {
   return request(`/sessions/${id}/stop`, { method: "POST" });
+}
+
+// --- PROJ-27: Liveness + Reanimieren ---------------------------------------
+
+/** Hängende/tote Session manuell reaktivieren (claude --resume-Pfad). Liefert den
+ *  aktualisierten Session-Zustand. 409 = läuft bereits · 429 = Session-Limit greift
+ *  · 503 = Resume/CLI-Fehler (→ ApiError.status). */
+export function reanimateSession(id: string): Promise<Session> {
+  return request<Session>(`/sessions/${id}/reanimate`, { method: "POST" });
 }
 
 // --- PROJ-21: Session-Löschen / Cockpit-Aufräumen --------------------------
@@ -251,6 +272,21 @@ export function getWatchdog(signal?: AbortSignal): Promise<WatchdogSetting> {
  *  übernommen (kein Neustart, laufende Sessions bleiben ununterbrochen). */
 export function setWatchdog(limits: WatchdogLimits): Promise<WatchdogSetting> {
   return request<WatchdogSetting>("/settings/watchdog", {
+    method: "PUT",
+    body: JSON.stringify(limits),
+  });
+}
+
+// --- PROJ-27: Liveness-Schwellen + Auto-Reanimierung -----------------------
+
+/** Aktuelle Liveness-Schwellen lesen (Timeout/Poll/Versuche/Backoff + Herkunft/Warnung). */
+export function getLiveness(signal?: AbortSignal): Promise<LivenessSetting> {
+  return request<LivenessSetting>("/settings/liveness", { signal });
+}
+
+/** Liveness-Schwellen ersetzen — serverseitig validiert und LIVE übernommen. */
+export function setLiveness(limits: LivenessLimits): Promise<LivenessSetting> {
+  return request<LivenessSetting>("/settings/liveness", {
     method: "PUT",
     body: JSON.stringify(limits),
   });
@@ -429,4 +465,32 @@ export function setClipboardDir(path: string): Promise<ClipboardDir> {
     method: "PATCH",
     body: JSON.stringify({ path }),
   });
+}
+
+// --- PROJ-17: Recovery über den Vault --------------------------------------
+
+/** Nach Reboot/Crash wiederherstellbare Stränge (verwaist + ohne Nachfolger).
+ *  Read-only Sicht über Live-Index + Vault; der Seed wird serverseitig gebaut. */
+export function listRecovery(signal?: AbortSignal): Promise<RecoveryListResult> {
+  return request<RecoveryListResult>("/recovery", { signal });
+}
+
+/** Strang wiederherstellen: startet eine Kind-Session mit dem (serverseitig aus
+ *  Handover/Log verdichteten) Seed als System-Kontext, verknüpft via
+ *  parent_session_id (wie PROJ-5). Idempotent: 1 Strang = 1 Nachfolger
+ *  (Zweitversuch → 409 → ApiError.status). */
+export function restoreRecovery(
+  sessionId: string,
+  initialPrompt?: string,
+): Promise<Session> {
+  return request<Session>(`/recovery/${sessionId}/restore`, {
+    method: "POST",
+    body: JSON.stringify({ initial_prompt: initialPrompt ?? null }),
+  });
+}
+
+/** Kandidat verwerfen: aus der Recovery-Ansicht entfernen, OHNE den Vault-Eintrag
+ *  zu löschen (Audit bleibt). 204 → void. */
+export function dismissRecovery(sessionId: string): Promise<void> {
+  return request<void>(`/recovery/${sessionId}/dismiss`, { method: "POST" });
 }

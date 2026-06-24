@@ -13,6 +13,7 @@ function session(overrides: Partial<Session> = {}): Session {
     project_path: "/home/dev/projects/jupiter",
     model: "haiku",
     permission_mode: "default",
+    engine: "claude",
     role: null,
     constitution_source: null,
     status: "running",
@@ -34,6 +35,9 @@ function session(overrides: Partial<Session> = {}): Session {
     abc_phase_reached: null,
     abc_feature: null,
     pending_decisions: [],
+    liveness: "aktiv",
+    liveness_auto_attempts: 0,
+    liveness_last_result: null,
     ...overrides,
   };
 }

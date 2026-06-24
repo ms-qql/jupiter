@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { contextLabel, formatDuration, isTerminalStatus, modelLabel, projectName, statusMeta } from "@/lib/status";
+import { canReanimate, contextLabel, costLabel, formatDuration, isTerminalStatus, modelLabel, projectName, statusMeta } from "@/lib/status";
 import type { Session } from "@/lib/types";
 import { Ampel } from "./ampel";
 import { ContextGauge } from "./context-gauge";
 import { DeleteSessionButton } from "./delete-session-button";
+import { HeartbeatDot } from "./heartbeat-dot";
+import { ReanimateButton } from "./reanimate-button";
 import { ThresholdBadge } from "./threshold-badge";
 
 export function SessionTile({
@@ -39,12 +41,27 @@ export function SessionTile({
     >
       <div className="flex items-center gap-2">
         <Ampel color={meta.ampel} />
+        {/* PROJ-27: verifizierter Heartbeat neben der Status-Ampel — deckt auf, wenn eine
+            „arbeitet"-Ampel in Wahrheit hängt. */}
+        <HeartbeatDot
+          liveness={session.liveness}
+          autoAttempts={session.liveness_auto_attempts}
+        />
         <span className="min-w-0 flex-1 truncate font-medium">
           {projectName(session.project_path)}
         </span>
         <Badge variant="secondary" className="shrink-0 text-[10px]">
           {modelLabel(session.model)}
         </Badge>
+        {/* PROJ-18: Nicht-Claude-Engine sichtbar machen (engine-agnostische Sicht). */}
+        {session.engine !== "claude" && (
+          <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
+            {session.engine}
+          </Badge>
+        )}
+        {canReanimate(session.liveness) && (
+          <ReanimateButton sessionId={session.session_id} />
+        )}
         {isTerminal && (
           <DeleteSessionButton
             sessionId={session.session_id}
@@ -91,7 +108,9 @@ export function SessionTile({
             {session.threshold_warning ? (
               <ThresholdBadge thresholdPct={session.context_fill_threshold_pct} compact />
             ) : (
-              <span className="tabular-nums">${session.total_cost_usd.toFixed(3)}</span>
+              <span className="tabular-nums">
+                {costLabel(session.engine, session.total_cost_usd)}
+              </span>
             )}
           </div>
           <ContextGauge

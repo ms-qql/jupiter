@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..config import MAX_INPUT_CHARS
 
 ModelName = Literal["haiku", "sonnet", "opus"]
+CLAUDE_MODELS: frozenset[str] = frozenset({"haiku", "sonnet", "opus"})
 # QA-1: `plan` bleibt gesperrt. `bypassPermissions` ist auf Nutzerwunsch wählbar
 # (Vollautonomie) — ACHTUNG: umgeht die Decision-Card-Freigaben (siehe config.py).
 PermissionMode = Literal["default", "acceptEdits", "bypassPermissions"]
@@ -18,8 +19,17 @@ class SessionCreate(BaseModel):
     initial_prompt: str = Field(
         ..., min_length=1, max_length=MAX_INPUT_CHARS, description="Erster Auftrag an die Session."
     )
-    model: ModelName = "sonnet"
+    model: str = Field(
+        default="sonnet",
+        description="Modell. Für Claude: haiku/sonnet/opus. Für andere Engines: ein "
+        "im Engine-Profil konfigurierter Modellname (serverseitig geprüft).",
+    )
     permission_mode: PermissionMode = "default"
+    engine: str = Field(
+        default="claude",
+        pattern=r"^[A-Za-z0-9_-]{1,64}$",
+        description="Engine-Schlüssel aus der Registry (PROJ-18). Default 'claude'.",
+    )
     role: str | None = Field(
         default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$",
         description="Optionale Rolle für den Konstitutions-Override (PROJ-6).",
@@ -33,6 +43,17 @@ class SessionCreate(BaseModel):
         description="Sprechendes Projekt-Label für die Gantt-Zeile (PROJ-8); "
         "ohne Angabe wird der Verzeichnis-Basename genutzt.",
     )
+
+    @model_validator(mode="after")
+    def _validate_claude_model(self) -> "SessionCreate":
+        """Für die Claude-Engine bleibt die strikte Modell-Whitelist (→ 422, PROJ-1-QA).
+        Fremde Engines erlauben beliebige Modellnamen; deren Gültigkeit prüft der
+        Manager gegen das Engine-Profil (PROJ-18)."""
+        if self.engine == "claude" and self.model not in CLAUDE_MODELS:
+            raise ValueError(
+                f"Unbekanntes Claude-Modell '{self.model}'. Erlaubt: {sorted(CLAUDE_MODELS)}."
+            )
+        return self
 
 
 class SessionInput(BaseModel):
@@ -89,6 +110,7 @@ class SessionRead(BaseModel):
     project_path: str
     model: str
     permission_mode: str
+    engine: str = "claude"  # PROJ-18: welche Engine die Session fährt (Default „claude").
     role: str | None = None
     constitution_source: str | None = None
     status: str
@@ -111,6 +133,13 @@ class SessionRead(BaseModel):
     abc_phase_reached: str | None = None
     abc_feature: str | None = None
     pending_decisions: list[PendingDecisionRead] = []
+    # PROJ-27 — verifizierter Liveness-Indikator + Auto-Reanimierung.
+    # liveness: "aktiv" (lebt + Fortschritt/legitime Wartestellung) | "hängt" (lebt, kein
+    # Fortschritt) | "tot" (beendet/verwaist). liveness_last_result: "läuft_wieder" |
+    # "fehlgeschlagen" | None — Rückmeldung des letzten Reanimations-Versuchs.
+    liveness: str = "aktiv"
+    liveness_auto_attempts: int = 0
+    liveness_last_result: str | None = None
 
 
 class PermissionHookRequest(BaseModel):

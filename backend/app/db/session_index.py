@@ -45,6 +45,8 @@ COLUMNS: tuple[str, ...] = (
     "abc_phase",
     "abc_phase_reached",
     "abc_feature",
+    # PROJ-17: Recovery — Strang aus der Recovery-Ansicht verworfen (Vault-Log bleibt).
+    "recovery_dismissed",
 )
 
 SCHEMA_SQL = """
@@ -67,10 +69,18 @@ CREATE TABLE IF NOT EXISTS session_index (
     child_session_id  TEXT,
     abc_phase         TEXT,
     abc_phase_reached TEXT,
-    abc_feature       TEXT
+    abc_feature       TEXT,
+    recovery_dismissed INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 """
+
+# Nachzügler-Spalten (für bereits bestehende DBs ohne diese Spalte). ``CREATE TABLE
+# IF NOT EXISTS`` legt sie bei einer alten Datei nicht nach → leichtgewichtige
+# host-native Migration via ``ALTER TABLE … ADD COLUMN`` (idempotent).
+_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("recovery_dismissed", "INTEGER DEFAULT 0"),
+)
 
 
 @runtime_checkable
@@ -136,6 +146,10 @@ class SqliteSessionIndexRepository:
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
+            existing = {r["name"] for r in conn.execute("PRAGMA table_info(session_index)")}
+            for col, ddl in _MIGRATIONS:
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE session_index ADD COLUMN {col} {ddl}")
 
     def _upsert_sync(self, row: dict) -> None:
         cols = ", ".join(COLUMNS)

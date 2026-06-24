@@ -5,6 +5,9 @@
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -13,28 +16,55 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import SessionIndexRepository, build_session_index_repo
+from .engine import liveness
 from .engine.base import EngineDriver
 from .engine.files import FileService
 from .engine.launcher import LauncherService
 from .engine.manager import SessionManager
 from .engine.md_reader import MdReaderService
+from .engine.recovery import RecoveryService
 from .engine.vault import VaultService
 from .routes import (
     constitution,
+    engines,
     files,
     md,
     permission,
     projects,
+    recovery,
     sessions,
     settings as settings_routes,
     vault,
 )
 
 
+logger = logging.getLogger(__name__)
+
+
+async def _liveness_loop(app: FastAPI) -> None:
+    """PROJ-27: niedrigfrequenter Hintergrund-Poll für den verifizierten Liveness-Zustand.
+
+    Schließt die Lücke des Watchdogs, der nur am Tool-Gate auswertet: eine komplett
+    stillstehende Session erreicht nie ein Gate, wird aber hier als „hängt" erkannt und
+    (sofern aktiviert) automatisch reanimiert. Defensiv — ein Fehler je Tick wird
+    geloggt, der Loop lebt weiter; die Frequenz kommt live aus der Liveness-Config.
+    """
+    while True:
+        interval = liveness.liveness_store.config()["poll_interval_seconds"]
+        try:
+            await asyncio.sleep(interval)
+            await app.state.manager.evaluate_liveness_once()
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001 — Poll-Tick nie fatal (Loop überlebt).
+            logger.warning("Liveness-Poll-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
+
+
 def create_app(
     driver_factory: Callable[[], EngineDriver] | None = None,
     vault_service: VaultService | None = None,
     session_index_repo: SessionIndexRepository | None = None,
+    engine_factory: Callable[..., EngineDriver] | None = None,
 ) -> FastAPI:
     # PROJ-14: Live-Index-Repository (SQLite, host-nativ). Tests können eine
     # eigene/In-Memory-Variante einschleusen; ohne Angabe greift die Settings-Factory.
@@ -49,8 +79,15 @@ def create_app(
             await app.state.manager.rehydrate()
         except Exception:  # noqa: BLE001 — Persistenz ist best-effort, App startet trotzdem.
             pass
-        yield
-        await repo.close()
+        # PROJ-27: Hintergrund-Auswerter starten (erkennt Hänger ohne Tool-Gate).
+        liveness_task = asyncio.create_task(_liveness_loop(app))
+        try:
+            yield
+        finally:
+            liveness_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await liveness_task
+            await repo.close()
 
     app = FastAPI(title="Jupiter", version="0.1.0", lifespan=lifespan)
     # CORS für das Browser-Frontend (PROJ-3 Cockpit). Origins via JUPITER_CORS_ORIGINS
@@ -69,8 +106,13 @@ def create_app(
     app.state.files = FileService()
     app.state.session_index_repo = repo
     app.state.manager = SessionManager(
-        driver_factory=driver_factory, vault=vault_service, repo=repo
+        driver_factory=driver_factory,
+        vault=vault_service,
+        repo=repo,
+        engine_factory=engine_factory,
     )
+    # PROJ-17: Recovery-Sicht über Live-Index (verwaiste Stränge) + Vault (Handover/Log).
+    app.state.recovery = RecoveryService(app.state.manager, vault_service)
     app.include_router(sessions.router)
     app.include_router(constitution.router)
     app.include_router(vault.router)
@@ -79,6 +121,8 @@ def create_app(
     app.include_router(settings_routes.router)
     app.include_router(files.router)
     app.include_router(projects.router)
+    app.include_router(recovery.router)
+    app.include_router(engines.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:
