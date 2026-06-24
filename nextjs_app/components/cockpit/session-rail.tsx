@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
   formatDuration,
+  isTerminalStatus,
   projectName,
   railRank,
   statusMeta,
@@ -18,6 +19,7 @@ import {
 import type { Session } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
 import { Ampel } from "./ampel";
+import { DeleteSessionButton } from "./delete-session-button";
 import { NewSessionDialog } from "./new-session-dialog";
 import { useNow, useSessions } from "./sessions-provider";
 
@@ -173,6 +175,7 @@ function RailItem({
 }) {
   const meta = statusMeta(session.status);
   const role = session.role?.trim();
+  const isTerminal = isTerminalStatus(session.status);
   return (
     <Link
       href={`/sessions/${session.session_id}`}
@@ -191,9 +194,17 @@ function RailItem({
           {role ? `${role} · ${meta.label}` : meta.label}
         </div>
       </div>
-      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-        {formatDuration(session.created_at, now)}
-      </span>
+      {isTerminal ? (
+        <DeleteSessionButton
+          sessionId={session.session_id}
+          projectName={projectName(session.project_path)}
+          className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+        />
+      ) : (
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {formatDuration(session.created_at, now)}
+        </span>
+      )}
     </Link>
   );
 }
