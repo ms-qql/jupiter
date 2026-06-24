@@ -22,6 +22,20 @@ export function statusMeta(status: SessionStatus): StatusMeta {
   return STATUS_META[status] ?? { ampel: "gray", label: status };
 }
 
+/**
+ * Terminal = löschbar (PROJ-21): `done`, `error` und verwaiste Sessions (kommen
+ * vom Backend i. d. R. als `error` an). Aktive Stati bleiben unlöschbar.
+ * Der Server bleibt autoritativ — diese Hilfe steuert nur die UI-Sichtbarkeit.
+ */
+export function isTerminalStatus(status: SessionStatus): boolean {
+  return status === "done" || status === "error";
+}
+
+/** Anzahl terminaler (= löschbarer) Sessions — für den „Aufräumen (N)"-Button. */
+export function countTerminal(sessions: Session[]): number {
+  return sessions.filter((s) => isTerminalStatus(s.status)).length;
+}
+
 // Kanban-Spalten (AC: Arbeitet / Wartet auf dich / Review/Approval / Fertig).
 export type ColumnKey = "arbeitet" | "wartet" | "review" | "fertig";
 

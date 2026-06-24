@@ -12,6 +12,10 @@ _DEFAULT_CONSTITUTION_DIR = str(Path(__file__).resolve().parent.parent / "consti
 # existieren — fehlt sie, gilt der konservative Default (rückwärtskompatibel zu PROJ-4).
 _DEFAULT_POLICY_PATH = str(Path(__file__).resolve().parent.parent / "config" / "policy.yaml")
 
+# Standard-Ort der Watchdog-Limits (PROJ-16): backend/config/watchdog.yaml. Muss
+# NICHT existieren — fehlt/defekt → eingebaute konservative Defaults (nie „kein Watchdog").
+_DEFAULT_WATCHDOG_PATH = str(Path(__file__).resolve().parent.parent / "config" / "watchdog.yaml")
+
 # Im MVP unterstützte Modell-Aliase (werden 1:1 an `claude --model` durchgereicht).
 VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
 
@@ -108,12 +112,23 @@ class Settings(BaseSettings):
     # → konservativer Default + sichtbare Warnung.
     policy_config_path: str = _DEFAULT_POLICY_PATH
 
+    # Watchdog-Limits-Datei (PROJ-16): vier Schwellen (Tokens/Zeit, Laufzeit-ohne-
+    # Fortschritt, identische Tool-Calls, Schreibrate) als Reißleine. Wird live
+    # mtime-geprüft (editierbar ohne Neustart). Fehlt/kaputt → konservative Defaults.
+    watchdog_config_path: str = _DEFAULT_WATCHDOG_PATH
+
     # Hal-Vault (PROJ-2): Lese-/Such-Wurzel = GANZER Vault; geschrieben wird NUR im
     # Jupiter-Unterbaum (Agentic OS/Jupiter), ohne die PARA-Struktur zu verändern.
     vault_root: str = "/home/dev/tools/Hal"
     vault_jupiter_subdir: str = "Agentic OS/Jupiter"
     # Roh-Session-Logs beim Session-Ende automatisch in den Vault schreiben (Grundlage #8/#9).
     vault_autolog: bool = True
+
+    # --- Kuratierung / Vault Stufe 3 (PROJ-15) ---------------------------
+    # Ereignisgetriebene Wissens-Vorschläge: erkannte Marker (Bug gelöst / ADR /
+    # Sackgasse) im Session-Stream erzeugen eine nicht-blockierende Vorschlags-Card.
+    # False → kein Marker-Scan (wie vor PROJ-15).
+    enable_curation: bool = True
 
     # --- MD-Reader (PROJ-7) ----------------------------------------------
     # Standard-„Projekt"-Quelle des read-only MD-Readers (Feature-Specs unter

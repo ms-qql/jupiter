@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -22,7 +23,7 @@ from ..config import (
     settings,
 )
 from ..db import NullSessionIndexRepository, SessionIndexRepository
-from . import abc_phases, policy
+from . import abc_phases, curation, policy, watchdog
 from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .constitution import combine_with_extra, resolve_constitution
@@ -58,6 +59,13 @@ class SessionLimitError(RuntimeError):
     """PROJ-14: Erstellung abgelehnt, weil das Limit aktiver Sessions erreicht ist.
 
     Die Route übersetzt das in HTTP 429 mit deutscher Meldung.
+    """
+
+
+class SessionActiveError(RuntimeError):
+    """PROJ-21: Löschen abgelehnt, weil die Session noch aktiv ist (nicht terminal).
+
+    Die Route übersetzt das in HTTP 409 mit deutscher Meldung.
     """
 
 # Default-Auftakt der Reset-Kind-Session, wenn der Nutzer keinen eigenen Prompt gibt.
@@ -208,10 +216,16 @@ class SessionRuntime:
         self.pending: dict[str, PendingDecision] = {}
         self._futures: dict[str, asyncio.Future] = {}
         self._last_assistant_text: str = ""
+        # PROJ-15: bereits vorgeschlagene Marker-Arten dieser Session (Entprellung —
+        # je Marker-Art max. ein Wissens-Vorschlag pro Session, keine Card-Flut).
+        self._seen_markers: set[str] = set()
         # Kontext-Füllstand korrekt rechnen (PROJ4-QA-3): aktuelle Turn-Belegung aus
         # assistant-Events, das (modellabhängige) Kontextfenster aus result-Events.
         self._ctx_occupancy: int = 0
         self._ctx_window: int = 0
+        # PROJ-16: Amok-Watchdog — Sliding-Window-Monitor (Tokens/Zeit, Stillstand,
+        # Schleife, Schreibrate). Liest die Limits live aus dem Modul-Singleton.
+        self.watchdog = watchdog.WatchdogMonitor(watchdog.watchdog_store)
 
     def to_read(self) -> dict:
         """Lese-Snapshot inkl. offener Decision Cards (für REST-Liste + WS-Broadcast)."""
@@ -280,6 +294,10 @@ class SessionRuntime:
             reasoning = text or thinking
             if reasoning:
                 self._last_assistant_text = reasoning
+                # PROJ-15: denselben Strom auf Kuratierungs-Marker scannen (entprellt).
+                self._maybe_propose_knowledge(reasoning)
+                # PROJ-16: Assistenten-Output = echter Fortschritt → Stillstands-Uhr resetten.
+                self.watchdog.note_progress()
             self._apply_usage(event)
 
         elif event.type == "result":
@@ -338,6 +356,8 @@ class SessionRuntime:
             self.state.tokens_used += usage.billed_tokens
             if usage.total_cost_usd is not None:
                 self.state.total_cost_usd += float(usage.total_cost_usd)
+            # PROJ-16: abgerechnete Tokens ins Watchdog-Fenster (+ zählt als Fortschritt).
+            self.watchdog.feed_usage(usage.billed_tokens)
 
         window = self._ctx_window or DEFAULT_CONTEXT_WINDOW
         if self._ctx_occupancy and window > 0:
@@ -408,6 +428,26 @@ class SessionRuntime:
         2. **Operativer Evaluator**: ``auto-allow`` → durch; ``deny`` → nie ausgeführt
            (ablehnende Notiz); ``card`` → Freigabe nötig (im Bypass durchlässig).
         """
+        # PROJ-16: Watchdog-Reißleine ZUERST — vor jedem anderen Gate UND vor dem
+        # Bypass-Auto-Allow (Reißleine sticht Komfort). Reißt ein Limit (Tokens/Zeit,
+        # Stillstand, Schleife, Schreibrate), wird DIESER Aufruf in eine Watchdog-Card
+        # umgelenkt: die Session pausiert (Prozess lebt), bis der Nutzer Fortsetzen/
+        # Korrigieren/Abbrechen wählt.
+        alarm = self.watchdog.evaluate(tool_name, tool_input)
+        if alarm is not None:
+            outcome = await self._open_card(
+                decision_id, tool_name, tool_input,
+                card_type="watchdog_pause",
+                triggering_rule=alarm.reason,
+                action=f"Watchdog-Pause: {alarm.reason}",
+            )
+            # Fortsetzen ODER Mit-Kommentar-korrigieren: ausgelöstes Limit zurücksetzen
+            # + Cooldown, damit es nicht sofort erneut feuert (AC + Card-Flut-Schutz).
+            self.watchdog.reset(alarm.metric)
+            return outcome
+        # Kein Alarm → diesen erlaubten Aufruf in die Watchdog-Fenster aufnehmen.
+        self.watchdog.record(tool_name, tool_input)
+
         # PROJ-8/PROJ-10: prospektive Phase/Feature OHNE Seiteneffekt berechnen — die
         # Übernahme erfolgt erst NACH einem evtl. Phasen-Gate (QA-Bug B: ein abgelehnter
         # Übergang darf die Phase NICHT vorrücken).
@@ -611,6 +651,87 @@ class SessionRuntime:
         self._maybe_persist()  # PROJ-14: Rückkehr nach running spiegeln.
         return card
 
+    # --- Kuratierung / Wissens-Vorschläge (PROJ-15) ------------------------
+
+    def _maybe_propose_knowledge(self, text: str) -> None:
+        """Scannt den Assistenten-/Denk-Strom auf Kuratierungs-Marker → NICHT-blockierende Card.
+
+        Entprellung: je Marker-Art (Bug gelöst / ADR / Sackgasse) höchstens ein
+        Vorschlag pro Session (``_seen_markers``). Die Karte hält die Session NICHT an
+        (kein Future, kein ``awaiting_approval``) — Kuratierung darf nie blockieren.
+        """
+        if not settings.enable_curation:
+            return
+        marker = curation.detect_marker(text)
+        if marker is None or marker.kind in self._seen_markers:
+            return
+        self._seen_markers.add(marker.kind)
+        title, body = curation.build_proposal(
+            marker, text,
+            project_name=self.state.project_name,
+            session_id=self.state.session_id,
+        )
+        decision_id = f"know-{marker.kind}-{len(self._seen_markers)}"
+        card = PendingDecision(
+            decision_id=decision_id,
+            session_id=self.state.session_id,
+            tool_name="KnowledgeProposal",
+            action=f"Wissens-Vorschlag: {marker.label}",
+            excerpt=curation._clip(body, policy.MAX_EXCERPT_CHARS),
+            rationale=marker.label,
+            context={
+                "project_path": self.state.project_path,
+                "role": self.state.role,
+                "phase": self.state.abc_phase,
+                "curation_marker": marker.kind,
+            },
+            created_at=_now().isoformat(),
+            triggering_rule=f"Kuratierung: {marker.label} (Marker „{marker.keyword}“)",
+            card_type="knowledge_proposal",
+            proposal_title=title,
+            proposal_body=body,
+        )
+        self.pending[decision_id] = card  # nicht-blockierend: kein Future, kein awaiting_approval
+        self.state.last_activity = _now()
+        self._broadcast({"kind": "decision", "event": "proposed", "decision": card.to_read()})
+        self._broadcast({"kind": "state", **self.to_read()})
+
+    def resolve_knowledge(
+        self,
+        decision_id: str,
+        approve: bool,
+        edited_title: str | None,
+        edited_body: str | None,
+        writer: Callable[[PendingDecision], None],
+    ) -> PendingDecision:
+        """Wissens-Vorschlag entscheiden (Freigeben/Editieren/Verwerfen) — nicht-blockierend.
+
+        ``approve`` → ``writer`` schreibt die (ggf. editierte) Notiz **vor** dem Auflösen;
+        schlägt der Vault-Write fehl, propagiert der Fehler und die Card **bleibt offen**
+        (Edge-Case „Vault nicht schreibbar → kein Verlust"). ``deny`` (Verwerfen) → nichts
+        geschrieben (nur das Roh-Log dokumentiert den Marker).
+        """
+        card = self.pending.get(decision_id)
+        if card is None or card.card_type != "knowledge_proposal":
+            raise KeyError(decision_id)
+        if card.state != OPEN:
+            raise ValueError("Dieser Wissens-Vorschlag wurde bereits entschieden.")
+        if approve:
+            if edited_title:
+                card.proposal_title = edited_title
+            if edited_body:
+                card.proposal_body = edited_body
+            writer(card)  # kann werfen → Card bleibt OPEN, Route übersetzt in 503
+            card.resolution = "approve"
+        else:
+            card.resolution = "deny"
+        card.state = RESOLVED
+        self.pending.pop(decision_id, None)
+        self.state.last_activity = _now()
+        self._broadcast({"kind": "decision", "event": "resolved", "decision": card.to_read()})
+        self._broadcast({"kind": "state", **self.to_read()})
+        return card
+
     def abandon_decisions(
         self, reason: str = "Session beendet — Freigabe hinfällig."
     ) -> None:
@@ -701,6 +822,12 @@ class SessionManager:
         except Exception as exc:  # noqa: BLE001 — Persistenz ist best-effort.
             logger.warning("Session-Live-Index konnte nicht geschrieben werden: %s", exc)
 
+    async def _safe_delete(self, session_id: str) -> None:
+        try:
+            await self._repo.delete(session_id)
+        except Exception as exc:  # noqa: BLE001 — Persistenz ist best-effort.
+            logger.warning("Live-Index-Eintrag konnte nicht gelöscht werden: %s", exc)
+
     async def rehydrate(self) -> None:
         """PROJ-14: beim Startup den Live-Index laden und verwaiste Sessions markieren.
 
@@ -721,7 +848,10 @@ class SessionManager:
                 continue
             state = self._state_from_row(row)
             runtime = SessionRuntime(
-                state, DeadDriver(), on_done=self._write_session_log, on_persist=self._persist
+                state,
+                DeadDriver(pid=row.get("pid")),  # PROJ-21: PID für Orphan-Kill bewahren.
+                on_done=self._write_session_log,
+                on_persist=self._persist,
             )
             runtime._last_persisted_status = state.status
             if row.get("status") in ACTIVE_STATES:
@@ -883,7 +1013,10 @@ class SessionManager:
         # `send_input` den Status (awaiting_approval → running), während die Card-Future
         # ungelöst weiterhängt, und der Event-Strom der Session verkeilt (Bug PROJ4-QA-1).
         # Erst entscheiden (Freigeben/Ablehnen/Mit Kommentar zurück), dann weiter eingeben.
-        if runtime.pending:
+        # PROJ-15: nicht-blockierende Wissens-Vorschläge zählen NICHT als offene Freigabe —
+        # Kuratierung darf die Eingabe nie sperren.
+        blocking = [c for c in runtime.pending.values() if c.card_type != "knowledge_proposal"]
+        if blocking:
             raise RuntimeError(
                 "Offene Freigabe — bitte erst die Decision Card entscheiden, dann weiter eingeben."
             )
@@ -944,6 +1077,66 @@ class SessionManager:
         runtime.abandon_decisions("Session gestoppt — Freigabe hinfällig.")
         self._persist(runtime)  # PROJ-14: terminalen Zustand (PID weg) spiegeln.
 
+    # --- Löschen / Aufräumen (PROJ-21) -------------------------------------
+
+    async def delete(self, session_id: str) -> None:
+        """Eine **terminale** Session aus Registry + Live-Index entfernen.
+
+        - Unbekannte ID → ``KeyError`` (Route → 404).
+        - Aktive Session (Status in ``ACTIVE_STATES``) → ``SessionActiveError``
+          (Route → 409): laufende Arbeit darf nicht abgewürgt werden.
+        - Lebt eine persistierte PID noch (typisch: verwaiste Session nach
+          Backend-Neustart), wird der OS-Prozess best-effort per SIGTERM beendet,
+          damit kein Geister-Prozess Tokens verbrennt — Fehler blockieren das
+          Löschen nicht.
+        - Gelöscht wird nur der Live-Index (SQLite + In-Memory); das Session-Log
+          im Vault bleibt erhalten (Prinzip „Live-Index, nicht die Wahrheit").
+        """
+        runtime = self._require(session_id)  # KeyError → 404
+        if runtime.state.status in ACTIVE_STATES:
+            raise SessionActiveError(
+                "Aktive Session kann nicht gelöscht werden — zuerst stoppen."
+            )
+        self._terminate_orphan(runtime)
+        del self._sessions[session_id]
+        await self._safe_delete(session_id)
+
+    async def cleanup_terminal(self) -> int:
+        """Alle terminalen Sessions (done/error/verwaist) auf einmal entfernen.
+
+        Aktive Sessions werden **still übersprungen**. Gibt die Anzahl gelöschter
+        Sessions zurück und wendet dieselbe Orphan-Kill-Regel je Session an.
+        """
+        terminal_ids = [
+            sid
+            for sid, r in self._sessions.items()
+            if r.state.status not in ACTIVE_STATES
+        ]
+        deleted = 0
+        for sid in terminal_ids:
+            runtime = self._sessions.get(sid)
+            if runtime is None:  # konkurrierendes Einzel-Delete kam zuvor.
+                continue
+            self._terminate_orphan(runtime)
+            del self._sessions[sid]
+            await self._safe_delete(sid)
+            deleted += 1
+        return deleted
+
+    def _terminate_orphan(self, runtime: SessionRuntime) -> None:
+        """Best-effort-SIGTERM an einen evtl. noch lebenden, nicht steuerbaren
+        Prozess einer terminalen Session. Nur relevant für verwaiste Sessions mit
+        lebender PID; Fehler (Permission/Race) werden geschluckt — das Löschen darf
+        nie daran scheitern (geloggt als Warnung)."""
+        pid = getattr(runtime.driver, "pid", None)
+        if not self._pid_alive(pid):
+            return
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+            logger.info("Verwaisten Session-Prozess PID %s per SIGTERM beendet.", pid)
+        except Exception as exc:  # noqa: BLE001 — best-effort, blockiert das Löschen nicht.
+            logger.warning("SIGTERM an PID %s fehlgeschlagen: %s", pid, exc)
+
     # --- Decision Cards / Freigabe (PROJ-4) --------------------------------
 
     async def request_decision(
@@ -955,10 +1148,44 @@ class SessionManager:
         )
 
     def resolve_decision(
-        self, session_id: str, decision_id: str, approve: bool, comment: str | None = None
+        self,
+        session_id: str,
+        decision_id: str,
+        approve: bool,
+        comment: str | None = None,
+        edited_title: str | None = None,
+        edited_body: str | None = None,
     ) -> PendingDecision:
-        """Nutzer-Entscheidung einspielen (Freigeben/Ablehnen/Mit Kommentar zurück)."""
-        return self._require(session_id).resolve_decision(decision_id, approve, comment)
+        """Nutzer-Entscheidung einspielen.
+
+        - **Wissens-Vorschlag** (PROJ-15, nicht-blockierend): Freigeben/Editieren →
+          kuratierte Notiz nach ``Knowledge/``; Verwerfen → nichts geschrieben.
+        - **Freigabe-Card** (PROJ-4): Freigeben/Ablehnen/Mit Kommentar zurück.
+        """
+        runtime = self._require(session_id)
+        card = runtime.pending.get(decision_id)
+        if card is not None and card.card_type == "knowledge_proposal":
+            return runtime.resolve_knowledge(
+                decision_id, approve, edited_title, edited_body,
+                writer=lambda c: self._write_curated_note(runtime, c),
+            )
+        return runtime.resolve_decision(decision_id, approve, comment)
+
+    def _write_curated_note(self, runtime: SessionRuntime, card: PendingDecision) -> None:
+        """PROJ-15: freigegebenen Wissens-Vorschlag als kuratierte MD-Notiz persistieren.
+
+        Fehler (Vault nicht verfügbar/schreibbar) werden bewusst **nicht** geschluckt →
+        ``resolve_knowledge`` lässt die Card offen, die Route meldet 503 (kein Verlust).
+        """
+        if self._vault is None:
+            raise RuntimeError("Vault nicht verfügbar — Wissensnotiz nicht geschrieben.")
+        self._vault.write_curated_note(
+            title=card.proposal_title or card.action,
+            body=card.proposal_body or "",
+            source_session_id=runtime.state.session_id,
+            marker=(card.context or {}).get("curation_marker") or card.triggering_rule,
+            owner=runtime.state.owner,
+        )
 
     # --- Context-Management & Handover (PROJ-5) ----------------------------
 

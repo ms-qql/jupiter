@@ -24,7 +24,10 @@ import type {
   ThresholdSetting,
   TrustPolicy,
   UploadResult,
+  VaultSearchResult,
   VaultWriteResult,
+  WatchdogLimits,
+  WatchdogSetting,
 } from "./types";
 
 export const API_BASE =
@@ -100,17 +103,50 @@ export function stopSession(id: string): Promise<{ ok: boolean }> {
   return request(`/sessions/${id}/stop`, { method: "POST" });
 }
 
-/** Decision Card entscheiden (PROJ-4): Freigeben / Ablehnen / Mit Kommentar zurück. */
+// --- PROJ-21: Session-Löschen / Cockpit-Aufräumen --------------------------
+
+/** Eine terminale Session aus dem Live-Index löschen (Vault-Log bleibt erhalten).
+ *  204 → void · 404 unbekannt · 409 aktive Session (→ ApiError.status). */
+export function deleteSession(id: string): Promise<void> {
+  return request<void>(`/sessions/${id}`, { method: "DELETE" });
+}
+
+/** Bulk „Erledigte aufräumen": entfernt alle terminalen Sessions, aktive werden
+ *  serverseitig still übersprungen. Liefert die Anzahl gelöschter Sessions. */
+export function cleanupSessions(): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>("/sessions/cleanup", { method: "POST" });
+}
+
+/** Decision Card entscheiden: Freigeben / Ablehnen / Mit Kommentar zurück (PROJ-4)
+ *  bzw. Wissens-Vorschlag Freigeben / Editieren / Verwerfen (PROJ-15).
+ *  `edited` (nur knowledge_proposal): editierter Titel/Body bei „approve". */
 export function resolveDecision(
   sessionId: string,
   decisionId: string,
   decision: "approve" | "deny",
   comment?: string,
+  edited?: { title?: string | null; body?: string | null },
 ): Promise<{ ok: boolean }> {
   return request(`/sessions/${sessionId}/decisions/${decisionId}`, {
     method: "POST",
-    body: JSON.stringify({ decision, comment: comment ?? null }),
+    body: JSON.stringify({
+      decision,
+      comment: comment ?? null,
+      edited_title: edited?.title ?? null,
+      edited_body: edited?.body ?? null,
+    }),
   });
+}
+
+/** PROJ-15: Vault-Volltextsuche. scope=curated → nur kuratiertes Wissen (projektübergreifend). */
+export function searchVault(
+  q: string,
+  scope: "all" | "curated" = "all",
+  limit = 20,
+  signal?: AbortSignal,
+): Promise<VaultSearchResult> {
+  const params = new URLSearchParams({ q, scope, limit: String(limit) });
+  return request<VaultSearchResult>(`/vault/search?${params.toString()}`, { signal });
 }
 
 // --- PROJ-5: Context-Management & Handover ---------------------------------
@@ -201,6 +237,22 @@ export function previewPolicy(
   for (const [k, v] of Object.entries(match)) if (v) params.set(k, v);
   return request<PolicyPreview>(`/settings/policy/preview?${params.toString()}`, {
     signal,
+  });
+}
+
+// --- PROJ-16: Amok-Watchdog + Limits ---------------------------------------
+
+/** Aktuelle Watchdog-Limits lesen (vier Schwellen + Herkunft/Warnung). */
+export function getWatchdog(signal?: AbortSignal): Promise<WatchdogSetting> {
+  return request<WatchdogSetting>("/settings/watchdog", { signal });
+}
+
+/** Watchdog-Limits ersetzen — serverseitig validiert (Werte > 0) und LIVE
+ *  übernommen (kein Neustart, laufende Sessions bleiben ununterbrochen). */
+export function setWatchdog(limits: WatchdogLimits): Promise<WatchdogSetting> {
+  return request<WatchdogSetting>("/settings/watchdog", {
+    method: "PUT",
+    body: JSON.stringify(limits),
   });
 }
 

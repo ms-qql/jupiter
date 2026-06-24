@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from ..config import clamp_threshold
-from ..engine.manager import SessionLimitError, SessionManager
+from ..engine.manager import SessionActiveError, SessionLimitError, SessionManager
 from ..schemas.sessions import (
     ConstitutionRead,
     DecisionResolve,
@@ -64,6 +64,17 @@ async def session_limits(request: Request) -> dict:
     return {"max_parallel_sessions": manager.max_parallel_sessions, "active": manager.active_count()}
 
 
+@router.post("/cleanup")
+async def cleanup_sessions(request: Request) -> dict:
+    """PROJ-21: alle terminalen Sessions (done/error/verwaist) auf einmal löschen.
+
+    Aktive Sessions werden serverseitig still übersprungen. Statisches Segment,
+    daher VOR der dynamischen ``/{session_id}``-Gruppe deklariert.
+    """
+    deleted = await _manager(request).cleanup_terminal()
+    return {"deleted": deleted}
+
+
 @router.get("/{session_id}", response_model=SessionDetail)
 async def get_session(session_id: str, request: Request) -> dict:
     runtime = _manager(request).get(session_id)
@@ -90,10 +101,12 @@ async def send_input(session_id: str, payload: SessionInput, request: Request) -
 async def resolve_decision(
     session_id: str, decision_id: str, payload: DecisionResolve, request: Request
 ) -> dict:
-    """Decision Card entscheiden (PROJ-4): Freigeben / Ablehnen / Mit Kommentar zurück.
+    """Decision Card entscheiden: Freigeben / Ablehnen / Mit Kommentar zurück (PROJ-4)
+    bzw. Wissens-Vorschlag Freigeben / Editieren / Verwerfen (PROJ-15).
 
     Die wartende Session wird entsperrt und läuft entsprechend weiter oder bricht
-    die Aktion ab.
+    die Aktion ab; ein freigegebener Wissens-Vorschlag wird kuratiert in den Vault
+    geschrieben.
     """
     manager = _manager(request)
     if manager.get(session_id) is None:
@@ -104,11 +117,17 @@ async def resolve_decision(
             decision_id,
             approve=payload.decision == "approve",
             comment=payload.comment,
+            edited_title=payload.edited_title,
+            edited_body=payload.edited_body,
         )
     except KeyError as exc:  # Card unbekannt (oder bereits aufgelöst/obsolet)
         raise HTTPException(status_code=404, detail="Decision Card nicht gefunden.") from exc
     except ValueError as exc:  # bereits entschieden
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (PermissionError, OSError) as exc:  # PROJ-15: Vault nicht schreibbar → Card bleibt offen
+        raise HTTPException(
+            status_code=503, detail=f"Wissensnotiz nicht geschrieben (Vault): {exc}"
+        ) from exc
     return {"ok": True, "decision": card.to_read()}
 
 
@@ -128,6 +147,21 @@ async def stop_session(session_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Session nicht gefunden.")
     await manager.stop(session_id)
     return {"ok": True}
+
+
+@router.delete("/{session_id}", status_code=204, response_model=None)
+async def delete_session(session_id: str, request: Request) -> None:
+    """PROJ-21: eine terminale Session aus dem Live-Index entfernen (204).
+
+    404 wenn unbekannt; 409 wenn die Session noch aktiv ist (zuerst stoppen).
+    Das Session-Log im Vault bleibt erhalten.
+    """
+    try:
+        await _manager(request).delete(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.") from exc
+    except SessionActiveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/{session_id}/constitution", response_model=ConstitutionRead)

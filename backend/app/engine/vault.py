@@ -28,7 +28,9 @@ from datetime import datetime, timezone
 from ..config import settings
 
 # type → Unterordner im Jupiter-Bereich.
-_TYPE_DIRS = {"session_log": "Sessions", "handover": "Handovers"}
+# PROJ-15: dritte Schicht ``curated`` (Knowledge/) — kuratiertes Wissen, getrennt von
+# rohen Logs (Sessions/) und Handovers/. Roh ↔ kuratiert ist damit eine Dateisystem-Grenze.
+_TYPE_DIRS = {"session_log": "Sessions", "handover": "Handovers", "curated": "Knowledge"}
 
 _UMLAUT = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"}
 # Obergrenzen für die Suche (DoS-Schutz / saubere Ausschnitte).
@@ -174,14 +176,19 @@ class VaultService:
         out.sort(key=lambda f: f["path"])
         return out
 
-    def search(self, query: str, limit: int = 20) -> list[dict]:
-        """Substring-Suche (case-insensitiv) über ALLE MD im Vault → Pfad + Ausschnitt."""
+    def search(self, query: str, limit: int = 20, subdir: str = "") -> list[dict]:
+        """Substring-Suche (case-insensitiv) über MD im Vault → Pfad + Ausschnitt.
+
+        ``subdir`` (relativ zum Vault) grenzt die Suche auf einen Unterbaum ein —
+        z. B. den kuratierten ``Knowledge/``-Bereich (PROJ-15); leer = ganzer Vault.
+        """
         needle = (query or "").strip().lower()
         if not needle:
             return []
         limit = max(1, min(limit, _MAX_SEARCH_HITS))
+        base = self._resolve_read(subdir) if subdir else self.vault_root
         hits: list[dict] = []
-        for dirpath, _dirs, files in os.walk(self.vault_root):
+        for dirpath, _dirs, files in os.walk(base):
             for name in files:
                 if not name.endswith(".md"):
                     continue
@@ -218,8 +225,16 @@ class VaultService:
         title: str | None = None,
         created: datetime | None = None,
         on_exists: str = "append",
+        extra_meta: dict | None = None,
+        dated: bool = True,
     ) -> VaultWriteResult:
-        """Schreibt valides MD in den Jupiter-Bereich. ``on_exists``: append | version | error."""
+        """Schreibt valides MD in den Jupiter-Bereich. ``on_exists``: append | version | error.
+
+        ``extra_meta`` ergänzt zusätzliche Frontmatter-Felder (PROJ-15: z. B.
+        ``source_session_id``, ``curation_marker``). ``dated=False`` erzeugt eine
+        themen-stabile Datei ohne Datums-/ID-Präfix (kuratiertes Wissen ist eine
+        lebende Notiz → gleicher Titel = gleiche Datei → Append-Dedup).
+        """
         subdir = _TYPE_DIRS.get(type)
         if subdir is None:
             raise ValueError(f"Unbekannter type '{type}'. Erlaubt: {sorted(_TYPE_DIRS)}.")
@@ -227,23 +242,27 @@ class VaultService:
             raise ValueError("on_exists muss append | version | error sein.")
 
         ts = created or _now()
-        filename = f"{ts.strftime('%Y-%m-%d')}--{slugify(title or type)}"
-        short_id = safe_id_segment(session_id)  # QA-2.1: keine ../-Ordner über den Dateinamen
-        if short_id:
-            filename += f"-{short_id}"
+        if dated:
+            filename = f"{ts.strftime('%Y-%m-%d')}--{slugify(title or type)}"
+            short_id = safe_id_segment(session_id)  # QA-2.1: keine ../-Ordner über den Dateinamen
+            if short_id:
+                filename += f"-{short_id}"
+        else:
+            filename = slugify(title or type)
         filename += ".md"
 
         target = self._resolve_write(os.path.join(subdir, filename))
         body_text = body if body.endswith("\n") else body + "\n"
-        frontmatter = _build_frontmatter(
-            {
-                "owner": owner or settings.default_owner,
-                "session_id": session_id,
-                "created": ts.isoformat(),
-                "type": type,
-                "title": title,
-            }
-        )
+        meta = {
+            "owner": owner or settings.default_owner,
+            "session_id": session_id,
+            "created": ts.isoformat(),
+            "type": type,
+            "title": title,
+        }
+        if extra_meta:
+            meta.update(extra_meta)  # None-Werte lässt _build_frontmatter aus.
+        frontmatter = _build_frontmatter(meta)
         full = frontmatter + "\n" + body_text
 
         if not os.path.exists(target):
@@ -257,6 +276,50 @@ class VaultService:
             self._append_locked(target, "\n" + body_text)
 
         return VaultWriteResult(path=self._rel(target), type=type, created=ts.isoformat())
+
+    def write_curated_note(
+        self,
+        *,
+        title: str,
+        body: str,
+        source_session_id: str | None = None,
+        marker: str | None = None,
+        owner: str | None = None,
+        created: datetime | None = None,
+        on_exists: str = "append",
+    ) -> VaultWriteResult:
+        """PROJ-15: kuratierte Wissens-Notiz nach ``Knowledge/`` schreiben.
+
+        Themen-stabile Datei (``dated=False`` → Dateiname = Titel-Slug): gleicher
+        Titel ⇒ gleiche Datei ⇒ Default ``append`` (Dedup „gleiches Thema → anhängen"
+        statt neu anlegen; eine bereits manuell editierte Notiz wird **nie** blind
+        überschrieben). ``source_session_id`` + ``marker`` landen im Frontmatter
+        (Nachvollziehbarkeit).
+        """
+        return self.write(
+            type="curated",
+            body=body,
+            title=title,
+            session_id=None,  # kein Kurz-ID-Suffix → themen-stabiler Dateiname
+            owner=owner,
+            created=created,
+            on_exists=on_exists,
+            dated=False,
+            extra_meta={"source_session_id": source_session_id, "curation_marker": marker},
+        )
+
+    @property
+    def _curated_subdir(self) -> str:
+        """Pfad des kuratierten Bereichs relativ zum Vault (für die scoped Suche)."""
+        return os.path.join(self.jupiter_subdir, _TYPE_DIRS["curated"])
+
+    def search_curated(self, query: str, limit: int = 20) -> list[dict]:
+        """PROJ-15: Suche NUR über kuratiertes Wissen (``Knowledge/``) — projektübergreifend.
+
+        Der zurückgelieferte ``path`` ist vault-relativ und dient zugleich als Backlink
+        (über den MD-Reader öffenbar).
+        """
+        return self.search(query, limit, subdir=self._curated_subdir)
 
     def write_session_log(self, state, body_md: str, on_exists: str = "append") -> VaultWriteResult:
         """Convenience: rohes Session-Log nach ``Sessions/`` schreiben (Auto-Hook im Manager)."""

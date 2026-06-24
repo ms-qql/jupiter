@@ -1,0 +1,21 @@
+# Amok-Watchdog — Limits (PROJ-16). Dokumentierte Vorlage; NICHT geladen.
+# Zum Aktivieren nach `backend/config/watchdog.yaml` kopieren (live mtime-Reload,
+# kein Neustart). Fehlt/defekt die Laufzeit-Datei → diese Defaults greifen
+# eingebaut (nie „kein Watchdog"). Editierbar auch über den Settings-Tab „Watchdog".
+
+# An/Aus der Reißleine. Default an. Aus = bewusste Nutzer-Entscheidung.
+enabled: true
+
+# 1) Tokens je gleitendem Zeitfenster (Token-Verbrennen erkennen).
+token_limit: 200000
+token_window_seconds: 60
+
+# 2) Max. Laufzeit ohne Fortschritt (Sekunden seit letztem Output/Result).
+max_idle_seconds: 180
+
+# 3) Identische Tool-Calls in Folge → Schleife (unterschiedliche = Iteration).
+max_repeated_calls: 5
+
+# 4) Schreibrate: Writes je gleitendem Zeitfenster.
+write_limit: 30
+write_window_seconds: 60

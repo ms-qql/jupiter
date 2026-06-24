@@ -82,3 +82,28 @@ class PolicyPreviewRead(BaseModel):
 
     level: PolicyLevel
     rule: str
+
+
+# --- PROJ-16: Amok-Watchdog + Limits ---------------------------------------
+
+
+class WatchdogLimitsPut(BaseModel):
+    """Die vier konfigurierbaren Watchdog-Limits (PUT /settings/watchdog).
+
+    Alle Zeit-/Zähler-Felder müssen positiv sein (``gt=0`` → 422 bei Verstoß).
+    """
+
+    enabled: bool = True
+    token_limit: int = Field(..., gt=0, description="Abgerechnete Tokens je Zeitfenster.")
+    token_window_seconds: int = Field(..., gt=0, description="Token-Zeitfenster (s).")
+    max_idle_seconds: int = Field(..., gt=0, description="Max. Laufzeit ohne Fortschritt (s).")
+    max_repeated_calls: int = Field(..., gt=0, description="Identische Tool-Calls in Folge → Schleife.")
+    write_limit: int = Field(..., gt=0, description="Writes je Zeitfenster.")
+    write_window_seconds: int = Field(..., gt=0, description="Write-Zeitfenster (s).")
+
+
+class WatchdogSettingRead(WatchdogLimitsPut):
+    """Aktuelle Watchdog-Limits + Herkunft/Warnung (GET /settings/watchdog)."""
+
+    source: str
+    warning: str | None = None

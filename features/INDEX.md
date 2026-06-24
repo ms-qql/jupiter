@@ -27,13 +27,13 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-12 | MD-Editor (voll, Obsidian-DNA) | P1 | Deployed | PROJ-7 | [Spec](PROJ-12-md-editor.md) |
 | PROJ-13 | Git-Branch-Handling (in-App, abc-konform) | P1 | Planned | PROJ-3 | [Spec](PROJ-13-git-branch-handling.md) |
 | PROJ-14 | PROJ-1-Härtung: Limit + Persistenz | P1 | Deployed | PROJ-1 | [Spec](PROJ-14-engine-haertung-limit-persistenz.md) |
-| PROJ-15 | Vault Stufe 3 (lebendes Gehirn + Kuratierung) | P1 | Planned | PROJ-2, PROJ-4, PROJ-5 | [Spec](PROJ-15-vault-stufe-3.md) |
-| PROJ-16 | Amok-Watchdog + Limits | P1 | Planned | PROJ-1, PROJ-4, PROJ-10 | [Spec](PROJ-16-amok-watchdog.md) |
+| PROJ-15 | Vault Stufe 3 (lebendes Gehirn + Kuratierung) | P1 | Deployed | PROJ-2, PROJ-4, PROJ-5 | [Spec](PROJ-15-vault-stufe-3.md) |
+| PROJ-16 | Amok-Watchdog + Limits | P1 | Deployed | PROJ-1, PROJ-4, PROJ-10 | [Spec](PROJ-16-amok-watchdog.md) |
 | PROJ-17 | Recovery über den Vault | P1 | Planned | PROJ-2, PROJ-5, PROJ-14 | [Spec](PROJ-17-recovery-vault.md) |
 | PROJ-18 | Weitere Engines + iFrame/Launch | P1 | Planned | PROJ-1 | [Spec](PROJ-18-weitere-engines.md) |
 | PROJ-19 | Effizienz-Ausbau (RAG/Späher/Caching/Token-Dashboard) | P1 | Planned | PROJ-1, PROJ-2, PROJ-5 | [Spec](PROJ-19-effizienz-ausbau.md) |
 | PROJ-20 | Spracheingabe / Push-to-Talk (abo-frei) | P1 | Planned | PROJ-9, PROJ-4 | [Spec](PROJ-20-spracheingabe.md) |
-| PROJ-21 | Session-Löschen / Cockpit-Aufräumen | P1 | Planned | PROJ-1, PROJ-14, PROJ-3 | [Spec](PROJ-21-session-loeschen-cockpit-aufraeumen.md) |
+| PROJ-21 | Session-Löschen / Cockpit-Aufräumen | P1 | Deployed | PROJ-1, PROJ-14, PROJ-3 | [Spec](PROJ-21-session-loeschen-cockpit-aufraeumen.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

@@ -30,7 +30,11 @@ class PendingDecision:
     tool_input: dict = field(default_factory=dict)
     # PROJ-10: auslösende Policy-Regel (Klartext, Nachvollziehbarkeit) + Card-Typ.
     triggering_rule: str | None = None
-    card_type: str = "normal"       # "normal" | "phase_transition" | "deny"
+    # "normal" | "phase_transition" | "deny" | "knowledge_proposal" (PROJ-15, nicht-blockierend).
+    card_type: str = "normal"
+    # PROJ-15: editierbarer Inhalt eines Wissens-Vorschlags (nur card_type=knowledge_proposal).
+    proposal_title: str | None = None
+    proposal_body: str | None = None
 
     def to_read(self) -> dict:
         return {
@@ -47,6 +51,8 @@ class PendingDecision:
             "tool_input": self.tool_input,
             "triggering_rule": self.triggering_rule,
             "card_type": self.card_type,
+            "proposal_title": self.proposal_title,
+            "proposal_body": self.proposal_body,
         }
 
 

@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { FileTree } from "@/components/cockpit/file-tree";
+import { KnowledgeSearch } from "@/components/cockpit/knowledge-search";
 import { FrontmatterPanel } from "@/components/cockpit/frontmatter-panel";
 import { MarkdownView } from "@/components/cockpit/markdown-view";
 import { MdEditorPanel } from "@/components/cockpit/md-editor";
@@ -214,6 +215,16 @@ function DocReader() {
     [updateUrl, selectedPath],
   );
 
+  // PROJ-15: kuratierten Treffer (vault-relativer Pfad) im Reader öffnen.
+  const openVaultRel = useCallback(
+    (rel: string) => {
+      const vault = sources.find((s) => s.id === "vault");
+      if (!vault) return;
+      selectPath(`${vault.root.replace(/\/$/, "")}/${rel}`);
+    },
+    [sources, selectPath],
+  );
+
   if (loadError) {
     return (
       <div className="p-6">
@@ -251,6 +262,7 @@ function DocReader() {
       <div className="flex min-h-0 flex-1">
         {/* Datei-Baum */}
         <aside className="hidden w-72 shrink-0 flex-col border-r border-border bg-card/40 md:flex">
+          <KnowledgeSearch onSelect={openVaultRel} />
           <ScrollArea className="flex-1">
             <div className="p-2">
               <FileTree

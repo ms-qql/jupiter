@@ -2,6 +2,7 @@
 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { GlobalStatusBar } from "@/components/cockpit/global-status-bar";
+import { CleanupButton } from "@/components/cockpit/cleanup-button";
 import { SessionGrid } from "@/components/cockpit/session-grid";
 import { KanbanBoard } from "@/components/cockpit/kanban-board";
 import { GanttChart } from "@/components/cockpit/gantt-chart";
@@ -18,10 +19,12 @@ import {
   useNow,
   useSessions,
 } from "@/components/cockpit/sessions-provider";
+import { countTerminal } from "@/lib/status";
 
 export default function CockpitPage() {
   const { sessions, initialLoading, error } = useSessions();
   const now = useNow();
+  const terminalCount = countTerminal(sessions);
 
   const showError = error && sessions.length === 0;
   // Beendete Sessions standardmäßig aus dem aktiven Board ausblenden (→ Archiv).
@@ -39,6 +42,7 @@ export default function CockpitPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {!initialLoading && <CleanupButton terminalCount={terminalCount} />}
           <SettingsDialog />
           <ThemeToggle />
           <NewSessionDialog>

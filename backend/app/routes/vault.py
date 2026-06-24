@@ -46,8 +46,11 @@ async def search(
     request: Request,
     q: str = Query(..., min_length=1, max_length=200, description="Suchtext."),
     limit: int = Query(20, ge=1, le=100),
+    scope: str = Query("all", pattern="^(all|curated)$",
+                       description="all = ganzer Vault; curated = nur kuratiertes Wissen (PROJ-15)."),
 ) -> dict:
-    hits = _vault(request).search(q, limit)
+    vault = _vault(request)
+    hits = vault.search_curated(q, limit) if scope == "curated" else vault.search(q, limit)
     return {"query": q, "hits": hits}
 
 

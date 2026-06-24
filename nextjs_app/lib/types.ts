@@ -20,7 +20,13 @@ export interface PendingDecision {
   action: string; // „Was"
   excerpt: string; // relevanter Ausschnitt (Befehl/Diff)
   rationale: string; // „Warum"
-  context: { project_path?: string; role?: string | null; phase?: string | null };
+  context: {
+    project_path?: string;
+    role?: string | null;
+    phase?: string | null;
+    /** PROJ-15: bei knowledge_proposal die erkannte Marker-Art (bug_geloest|adr|sackgasse). */
+    curation_marker?: string | null;
+  };
   created_at: string;
   state: string; // open | resolved | obsolete
   resolution: string | null;
@@ -30,9 +36,14 @@ export interface PendingDecision {
   /** PROJ-10: Klartext der Policy-Regel, die diese Card ausgelöst hat
    *  (z. B. „card · Bash @ Rolle architect"). null = konservativer Default. */
   triggering_rule?: string | null;
-  /** PROJ-10: Card-Typ — „normal" (operative Freigabe), „phase_transition"
-   *  (bypass-festes Phasen-Gate) oder „deny" (hart verboten, nur Info). */
-  card_type?: "normal" | "phase_transition" | "deny";
+  /** PROJ-10/15/16: Card-Typ — „normal" (operative Freigabe), „phase_transition"
+   *  (bypass-festes Phasen-Gate), „deny" (hart verboten, nur Info), „watchdog_pause"
+   *  (PROJ-16: Reißleine hat pausiert) oder „knowledge_proposal" (PROJ-15:
+   *  nicht-blockierender Wissens-Vorschlag, blockiert die Session NICHT). */
+  card_type?: "normal" | "phase_transition" | "deny" | "watchdog_pause" | "knowledge_proposal";
+  /** PROJ-15: editierbarer Inhalt eines Wissens-Vorschlags (nur knowledge_proposal). */
+  proposal_title?: string | null;
+  proposal_body?: string | null;
 }
 
 /** Struktur des AskUserQuestion-Tool-Inputs (für die Frage-Karte, PROJ-4). */
@@ -107,6 +118,19 @@ export interface VaultWriteResult {
   created: string;
 }
 
+/** Ein Suchtreffer im Vault (PROJ-2/PROJ-15) — Pfad dient zugleich als Backlink. */
+export interface VaultSearchHit {
+  path: string; // vault-relativ → über die Doku-/MD-Reader-Route öffenbar
+  line: number;
+  excerpt: string;
+}
+
+/** Antwort von GET /vault/search (PROJ-15: scope=all|curated). */
+export interface VaultSearchResult {
+  query: string;
+  hits: VaultSearchHit[];
+}
+
 /** Globale Kontext-Schwelle + erlaubter Bereich (PROJ-5). */
 export interface ThresholdSetting {
   threshold_pct: number;
@@ -155,6 +179,34 @@ export interface TrustPolicy {
 export interface PolicyPreview {
   level: PolicyLevel;
   rule: string; // Klartext der greifenden Regel (oder „Default")
+}
+
+// --- PROJ-16: Amok-Watchdog + Limits ---------------------------------------
+
+/** Die vier konfigurierbaren Watchdog-Limits (editierbarer Teil von GET/PUT
+ *  /settings/watchdog). Jeder Wert > 0; der Server klemmt unsinnige Werte. */
+export interface WatchdogLimits {
+  /** An = Reißleine aktiv. Fehlt die Config, greifen konservative Defaults
+   *  (nie „kein Watchdog"); dieser Schalter ist die bewusste Nutzer-Wahl. */
+  enabled: boolean;
+  /** Abgerechnete Tokens je gleitendem Zeitfenster. */
+  token_limit: number;
+  token_window_seconds: number;
+  /** Max. Laufzeit ohne Fortschritt (Sekunden seit letztem Output/Result). */
+  max_idle_seconds: number;
+  /** N identische Tool-Calls in Folge → Schleife (unterschiedliche = Iteration). */
+  max_repeated_calls: number;
+  /** Writes je gleitendem Zeitfenster (auf verschiedene Pfade entschärft). */
+  write_limit: number;
+  write_window_seconds: number;
+}
+
+/** Gesamte Watchdog-Config (GET /settings/watchdog) — Limits + Herkunft/Warnung. */
+export interface WatchdogSetting extends WatchdogLimits {
+  /** Herkunft: z. B. „config/watchdog.yaml" oder „default" (keine Datei gepflegt). */
+  source: string;
+  /** Warnung bei kaputter/ungültiger Config (sonst null) — UI zeigt Fallback-Hinweis. */
+  warning: string | null;
 }
 
 // --- PROJ-7: MD-Reader (read-only) -----------------------------------------

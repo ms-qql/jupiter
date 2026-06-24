@@ -63,7 +63,11 @@ class PendingDecisionRead(BaseModel):
     resolution: str | None = None
     tool_input: dict = {}   # Roh-Input (Frage-Tools: Frontend rendert Auswahlliste)
     triggering_rule: str | None = None  # PROJ-10: auslösende Policy-Regel (Klartext)
-    card_type: str = "normal"           # PROJ-10: normal | phase_transition | deny
+    # normal | phase_transition | deny | knowledge_proposal (PROJ-15) | watchdog_pause (PROJ-16).
+    card_type: str = "normal"
+    # PROJ-15: editierbarer Inhalt eines Wissens-Vorschlags (knowledge_proposal).
+    proposal_title: str | None = None
+    proposal_body: str | None = None
 
 
 class DecisionResolve(BaseModel):
@@ -74,6 +78,9 @@ class DecisionResolve(BaseModel):
         default=None, max_length=MAX_INPUT_CHARS,
         description="Optionaler Kommentar; bei 'deny' reist er als Begründung zu Claude zurück.",
     )
+    # PROJ-15: editierter Inhalt eines Wissens-Vorschlags (bei 'approve' = „Editieren").
+    edited_title: str | None = Field(default=None, max_length=200)
+    edited_body: str | None = Field(default=None, max_length=MAX_INPUT_CHARS)
 
 
 class SessionRead(BaseModel):

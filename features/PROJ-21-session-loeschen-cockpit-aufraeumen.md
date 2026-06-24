@@ -1,8 +1,8 @@
 # PROJ-21: Session-Löschen / Cockpit-Aufräumen
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-06-23
-**Last Updated:** 2026-06-23
+**Last Updated:** 2026-06-24
 
 ## Kontext / Motivation
 Das Backend hat aktuell **keinen Lösch-Pfad** für Sessions. Das `SessionIndexRepository`
@@ -87,10 +87,179 @@ Dieses Feature schließt das Produkt-Gap: ein sauberer Lösch-/Aufräum-Pfad von
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-24 · **Stack:** Next.js 16 (Cockpit) + FastAPI + SQLite-Live-Index · **Branch:** dev
+
+### Kurzfassung
+Es fehlt ein Lösch-Pfad über alle Schichten. Das Design ergänzt ihn additiv — keine bestehende
+Methode wird umgebaut. Reihenfolge der Schichten: Repository → Manager → API → Cockpit.
+Leitprinzip „Live-Index, nicht die Wahrheit": gelöscht wird nur der **Live-Eintrag**
+(SQLite + In-Memory), das **Vault-Log/Transkript bleibt** unangetastet (ermöglicht Recovery via PROJ-17).
+
+### A) Bestehender Stand (aus CodeGraph-Exploration)
+- `SessionManager._sessions: dict[str, SessionRuntime]` — In-Memory-Registry je `session_id`.
+  Status-Modell: `ACTIVE_STATES = {starting, running, waiting, awaiting_approval}`; terminal = `done`, `error`.
+  Es gibt `stop(session_id)` (pausiert/beendet die Engine, markiert `done`) — aber **kein** Entfernen
+  aus der Registry. PID liegt unter `runtime.driver.pid` und wird in `_row()` persistiert.
+- `SessionIndexRepository` (Protokoll) kennt nur `init / upsert / list_all / close`; SQL läuft sync
+  in `asyncio.to_thread`. Zwei Impls: `Sqlite…` (WAL, frische Connection je Op) und `Null…` (No-op).
+  `rehydrate()` lädt beim Start alle Zeilen zurück → genau hier „überleben" gelöschte Sessions heute.
+- `routes/sessions.py`: Manager via `_manager(request)`; etablierte Fehlermuster 404/409/429.
+- Cockpit pollt `GET /sessions` alle 4 s über `SessionsProvider`/`useSessions()`. Toast = `sonner`
+  (bereits vorhanden). `reset-session-button.tsx` ist die Vorlage für Button + Dialog + Toast.
+  **`AlertDialog` existiert noch nicht** — neu anzulegen (auf Basis des vorhandenen `dialog.tsx`).
+
+### B) Backend-Schichten
+
+**1. Repository** (`backend/app/db/session_index.py`)
+- Protokoll erhält `async def delete(session_id: str) -> None`.
+- `Sqlite…`: `DELETE FROM session_index WHERE session_id = ?` (parametrisiert, in `asyncio.to_thread`).
+  Idempotent — unbekannte ID ist kein Fehler auf Repo-Ebene.
+- `Null…`: No-op.
+- **Bulk-Entscheidung:** _Kein_ `delete_terminal` im Repo. Der Manager iteriert, weil nur er das
+  autoritative Status-Wissen (aktiv vs. terminal) + die Orphan-Kill-Regel hat. Hält das Repo dumm.
+
+**2. Manager** (`SessionManager`)
+- `async def delete(session_id) -> None`:
+  - Unbekannte ID → `KeyError`-Äquivalent → API mappt auf **404**.
+  - Status in `ACTIVE_STATES` → Fehler → API mappt auf **409**.
+  - Terminal/verwaist: lebt eine persistierte PID noch → **best-effort `SIGTERM`** (Fehler nur geloggt,
+    blockiert nie). Danach Eintrag aus `_sessions` entfernen **und** `repo.delete(session_id)`.
+- `async def cleanup_terminal() -> int`: iteriert über alle Sessions, ruft `delete` nur für terminale,
+  überspringt aktive **stillschweigend**, gibt Anzahl gelöschter zurück. Wendet dieselbe Kill-Regel an.
+
+**3. API** (`routes/sessions.py`)
+- `DELETE /sessions/{session_id}` → **204** | 404 (`"Session nicht gefunden."`) | 409
+  (`"Aktive Session kann nicht gelöscht werden — zuerst stoppen."`).
+- `POST /sessions/cleanup` → **200** `{"deleted": <int>}`.
+  (Gewählt statt `DELETE /sessions?status=terminal`: eigener Pfad, kein Query-Parsing, klare Semantik.)
+
+### C) Frontend-Komponenten (`nextjs_app`)
+```
+SessionTile / SessionRail-Eintrag (terminal)
+└── DeleteSessionButton (Trash-Icon; nur bei done/error/verwaist sichtbar)
+    └── ConfirmDeleteDialog (neuer AlertDialog: "Session löschen?" · Abbrechen | Löschen[destructive])
+        → api.deleteSession(id) → Toast "Session gelöscht." → Provider-Refetch
+
+GlobalStatusBar / Mission-Control-Kopf
+└── CleanupButton "Erledigte aufräumen (N)"  (nur sichtbar wenn N≥1 terminale)
+    └── ConfirmDeleteDialog (Bulk-Text: "N Sessions aufräumen?")
+        → api.cleanupSessions() → Toast "N Sessions aufgeräumt." → Refetch
+```
+- Neuer `api.ts`: `deleteSession(id)` (DELETE, 204→void), `cleanupSessions()` (POST → `{deleted}`).
+- Neue UI-Primitive `components/ui/alert-dialog.tsx` (shadcn-Pattern, auf vorhandenem Dialog aufbauend).
+- Lösch-Button trägt Loading-/Disabled-State (kein Doppel-Klick). Fehler (404/409/Netz) → deutscher
+  Toast, Liste wird neu gepollt und bleibt konsistent.
+- Aktive Kacheln zeigen den Button nicht (bzw. disabled). Server bleibt autoritativ (Race → 409 → Refetch).
+
+### D) Tech-Entscheidungen (Begründung)
+- **Bulk-Logik im Manager, nicht im Repo:** „aktiv vs. terminal" und der Orphan-Kill sind Laufzeit-Wissen
+  des Managers; das Repo kennt nur Zeilen. So bleibt SQL trivial und testbar.
+- **SIGTERM statt SIGKILL:** Engine darf sauber herunterfahren; Geister-Prozesse werden gestoppt, ohne
+  hart abzuschießen. Schlägt der Kill fehl, wird trotzdem gelöscht (Best-effort, Warn-Log).
+- **Nur Live-Index löschen:** Vault bleibt Wahrheit → versehentliches Löschen ist über Recovery heilbar.
+- **`DELETE` + `POST /cleanup` statt einem Endpoint:** RESTful für Einzel-Delete (204), expliziter
+  Bulk-Pfad mit Zähler-Antwort; konsistent mit den vorhandenen `POST /{id}/…`-Steuerpfaden.
+- **Eigener `AlertDialog`:** Bestätigung ist Pflicht (AC); `sonner`-Toasts existieren bereits → wiederverwenden.
+
+### E) Dependencies
+Keine neuen Pakete. Backend: stdlib `signal`/`os` (SIGTERM). Frontend: vorhandenes `sonner` +
+Base-UI-Dialog (Grundlage für den neuen `alert-dialog`). Kein JWT/RLS (Jupiter-MVP-Override).
+
+### Schnittstellen-Kontrakt (für frontend/backend)
+| Methode | Pfad | Erfolg | Fehler |
+|---|---|---|---|
+| DELETE | `/sessions/{id}` | 204 (kein Body) | 404 unbekannt · 409 aktiv |
+| POST | `/sessions/cleanup` | 200 `{"deleted": int}` | — (überspringt aktive still) |
+
+### Implementierungs-Notizen — Frontend (2026-06-24)
+**Branch:** dev · Stack: Next.js 16 (kein Flutter — Jupiter-Override).
+
+Neu:
+- `lib/api.ts`: `deleteSession(id)` (DELETE → void via 204-Pfad), `cleanupSessions()` (POST → `{deleted}`).
+- `lib/status.ts`: `isTerminalStatus(status)` (done|error) + `countTerminal(sessions)` — eine Quelle für UI-Sichtbarkeit (Server bleibt autoritativ).
+- `components/cockpit/confirm-dialog.tsx`: wiederverwendbarer Bestätigungs-Dialog (kontrolliert, deutsch, destruktiver Confirm) auf Basis des vorhandenen base-ui-`Dialog`. **Bewusst kein separater `ui/alert-dialog.tsx`** — der vorhandene Dialog deckt die AC voll ab, weniger neue Primitive.
+- `components/cockpit/delete-session-button.tsx`: Einzel-Löschen. Sitzt als Button in Kachel/Rail (beides `<Link>`), `preventDefault`+`stopPropagation` verhindern Navigation. Loading/Disabled gegen Doppelklick. 404 wird als „bereits gelöscht" (Erfolg) behandelt, 409/Netz als deutscher Fehler-Toast; danach immer `refresh()`.
+- `components/cockpit/cleanup-button.tsx`: Bulk „Erledigte aufräumen (N)", rendert `null` bei N=0.
+
+Verdrahtet:
+- `session-tile.tsx`: Lösch-Button nur bei terminalen Kacheln (in der Kopfzeile neben Modell-Badge).
+- `session-rail.tsx`: terminale Rail-Einträge (Archiv `done` + `error`) zeigen den Button on-hover statt der Laufzeit.
+- `app/(cockpit)/page.tsx`: `CleanupButton` im Header (nur nach Initial-Load, sichtbar ab ≥1 terminaler Session).
+
+Erfolgs-/Fehler-Feedback via vorhandenes `sonner`. Refetch über `useSessions().refresh()` → Eintrag verschwindet sofort statt erst beim nächsten 4s-Poll. `npx tsc`/`eslint` auf alle geänderten Dateien grün (einziger tsc-Fehler liegt vorbestehend in `lib/md-tree.test.ts`).
+
+**Offen für `/abc-backend`:** `DELETE /sessions/{id}` + `POST /sessions/cleanup`, Repo-`delete`, `SessionManager.delete`/`cleanup_terminal` inkl. SIGTERM-Orphan-Kill (Backend-Sektion der AC).
+
+### Implementierungs-Notizen — Backend (2026-06-24)
+**Branch:** dev.
+
+- `db/session_index.py`: `delete(session_id)` im `SessionIndexRepository`-Protokoll, `Sqlite…` (`DELETE FROM session_index WHERE session_id = ?` parametrisiert, via `asyncio.to_thread`, idempotent), `Null…` als No-op.
+- `engine/manager.py`:
+  - `SessionActiveError(RuntimeError)` (→ 409).
+  - `delete(session_id)`: `_require` → `KeyError` bei unbekannt (→ 404); `ACTIVE_STATES` → `SessionActiveError`; sonst Orphan-Kill, aus `_sessions` entfernen, `_safe_delete` (best-effort Repo).
+  - `cleanup_terminal() -> int`: iteriert, löscht nur Nicht-aktive, überspringt aktive still, zählt gelöschte.
+  - `_terminate_orphan(runtime)`: best-effort `SIGTERM` an lebende `driver.pid` (Fehler nur geloggt), `_safe_delete` analog `_safe_upsert`.
+- `engine/base.py`: `DeadDriver(pid=…)` trägt die rehydrierte PID — sonst ginge sie beim Restart verloren und der Orphan-Kill liefe ins Leere. `rehydrate()` reicht `row["pid"]` durch.
+- `routes/sessions.py`: `POST /sessions/cleanup` (statisch, VOR `/{session_id}` deklariert) → `{"deleted": n}`; `DELETE /sessions/{id}` (`status_code=204, response_model=None`) → 204/404/409.
+
+**Tests:** `tests/test_proj21_session_delete.py` — 13 Tests (Repo idempotent, delete 404/409/terminal, „überlebt keinen Restart", best-effort bei DB-Fehler, realer SIGTERM-Orphan-Kill via Subprozess, cleanup nur-terminal + leer, API 204/404/409 + cleanup). Volle Suite: **388 passed**.
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-24 · **Branch:** dev · **Verdict: READY (Approved)** — 0 Critical/High, 0 Medium.
+
+### Testumfang
+- Backend: `pytest` — `tests/test_proj21_session_delete.py` **16 Tests**, volle Suite **391 passed** (keine Regression).
+- Frontend: `tsc --noEmit` (keine PROJ-21-Fehler), `eslint` (clean), `vitest` `lib/status.test.ts` **29 passed** (inkl. neue PROJ-21-Helper).
+- Frontend-UI: gegen die ACs per Code-Review verifiziert (Komponentenlogik + Verdrahtung). **Live-Browser-E2E nicht ausgeführt** (kein laufender Full-Stack im QA-Lauf) — keine Logiklücke, nur Hinweis.
+
+### Acceptance Criteria — Backend
+| AC | Status | Beleg |
+|---|---|---|
+| Protokoll `delete(session_id)` | ✅ | `session_index.py`; `test_null_repo_delete_ist_noop`, Sqlite-Roundtrip |
+| Sqlite `DELETE … WHERE = ?` (param., to_thread) | ✅ | `_delete_sync`; `test_repo_delete_entfernt_zeile_und_ist_idempotent` |
+| Null `delete` No-op | ✅ | `test_null_repo_delete_ist_noop`, `test_delete_persistenz_aus_nur_in_memory` |
+| Bulk via Manager-Iteration | ✅ | `cleanup_terminal`; `test_cleanup_terminal_loescht_nur_terminale` |
+| `Manager.delete` entfernt Registry + repo | ✅ | `test_delete_terminale_session_entfernt_registry_und_index` |
+| Aktiv → 409 | ✅ | `test_delete_aktive_session_abgelehnt` + API `test_api_delete_aktive_409` |
+| Lebende PID → best-effort SIGTERM | ✅ | `test_delete_killt_verwaisten_lebenden_prozess` (echter Subprozess) |
+| `cleanup_terminal()→int` + Orphan-Regel | ✅ | `test_cleanup_terminal_*`, `_terminate_orphan` je Session |
+| `DELETE /{id}` → 204 | ✅ | `test_api_delete_terminal_204_und_weg` |
+| `DELETE` unbekannt → 404 | ✅ | `test_api_delete_unbekannt_404` |
+| `DELETE` aktiv → 409 (dt. Text) | ✅ | „… zuerst stoppen." |
+| `POST /cleanup` → `{deleted}` | ✅ | `test_api_cleanup_loescht_terminale` |
+| Nach delete weg — auch nach Restart | ✅ | `test_delete_ueberlebt_keinen_restart` |
+
+### Acceptance Criteria — Frontend
+| AC | Status | Beleg |
+|---|---|---|
+| Lösch-Button nur an terminalen Kacheln | ✅ | `session-tile.tsx` (`isTerminal`-Guard) |
+| Sidebar-Einträge terminal löschbar | ✅ | `session-rail.tsx` (terminale RailItems, on-hover) |
+| „Erledigte aufräumen (N)" ab ≥1 terminal, mit Anzahl | ✅ | `cleanup-button.tsx` (return null bei 0) + `page.tsx` |
+| Einzel + Bulk: AlertDialog, dt., Abbrechen/Löschen | ✅ | `confirm-dialog.tsx` |
+| Erfolg: Eintrag weg + Toast | ✅ | `refresh()` + sonner-Toast |
+| Fehler (409/404/Netz) dt. Meldung, Liste konsistent | ✅ | `delete-session-button.tsx` / `cleanup-button.tsx` |
+| Loading/Disabled gegen Doppelklick | ✅ | `deleting`/`running`-State |
+
+### Edge Cases
+- Aktive Session 409 / Bulk überspringt aktive still → ✅ (`test_cleanup_terminal_loescht_nur_terminale` lässt aktive stehen).
+- Verwaiste Session mit toter PID → kein Kill, normales Entfernen → ✅ (`_pid_alive`-Guard; done-Session-Pfad).
+- Verwaiste mit lebender PID, Kill schlägt fehl → trotzdem gelöscht → ✅ `test_delete_kill_fehler_blockiert_nicht`.
+- Race Status-Wechsel → Server autoritativ (409) → ✅.
+- Concurrent Bulk+Einzel → idempotent (Snapshot + `get`-Guard, 404) → ✅ (`test_repo…idempotent`, cleanup-Guard).
+- Persistenz aus → nur In-Memory, kein Fehler → ✅.
+- Leerer Zustand → „Aufräumen" ausgeblendet → ✅ (`countTerminal`/return null).
+- Vault-Log bleibt → ✅ by-design: weder `delete` noch `cleanup_terminal` berühren den Vault.
+
+### Security / Red-Team
+- Parametrisierte SQL ausschließlich (kein Concat) → ✅.
+- `DELETE /sessions/cleanup` (falsche Methode) → `{session_id}="cleanup"` → 404, harmlos.
+- MVP single-user, kein JWT/RLS (Jupiter-Override) — `owner` serverseitig; keine client-gesteuerte ID-Eskalation, da Löschen rein über `session_id` im eigenen Live-Index läuft.
+- Best-effort-Prinzip durchgängig: DB-/Kill-Fehler degradieren zu Warnung, blockieren UI/In-Memory nicht.
+
+### Bugs
+Keine offen. (1 währenddessen behobener Integrationspunkt: `DeadDriver` musste die rehydrierte PID tragen, sonst lief der Orphan-Kill nach Restart ins Leere — im Backend-Commit enthalten.)
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-24 · **URL:** https://jupiter.auxevo.tech · **Version:** 0.5.0 · **Tag:** v0.5.0 · **Branch-Promotion:** `dev → main`.
+
+Gemeinsam mit PROJ-15 (Vault Stufe 3) und PROJ-16 (Amok-Watchdog) promotet. Host-native VPS-Deploy: Push auf `main` → GitHub-Webhook → `deploy.sh` (`git reset --hard origin/main` + `npm run build` + `systemctl restart`).

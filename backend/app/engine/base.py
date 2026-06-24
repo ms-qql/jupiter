@@ -78,6 +78,11 @@ class DeadDriver(EngineDriver):
     ``claude --resume``-Pfad aus, der einen frischen Treiber einsetzt.
     """
 
+    def __init__(self, pid: int | None = None) -> None:
+        # PROJ-21: die persistierte OS-PID überlebt den Restart hier, damit ein
+        # verwaister, evtl. noch lebender Prozess beim Löschen beendet werden kann.
+        self._pid = pid
+
     async def start(self, spec: LaunchSpec, on_event: EventHandler) -> None:  # pragma: no cover - nie aufgerufen
         raise RuntimeError("DeadDriver kann nicht gestartet werden (rehydrierter Platzhalter).")
 
@@ -93,3 +98,7 @@ class DeadDriver(EngineDriver):
     @property
     def is_alive(self) -> bool:
         return False
+
+    @property
+    def pid(self) -> int | None:
+        return self._pid
