@@ -1,6 +1,6 @@
 # PROJ-20: Spracheingabe / Push-to-Talk (abo-frei, DSGVO-konform)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 **Baustein:** #29
@@ -192,8 +192,45 @@ und inferiert ohne Crash (`tiny`-Modell gegen ffmpeg-Testaudio). faster-whisper 
 - `GET /settings/transcription` → `{ use_groq, groq_available, model, language }`.
 - `PATCH /settings/transcription` · `{ use_groq: bool }` → wie GET (400 ohne Key).
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (/abc-qa, 2026-06-24)
+**Branch:** dev · **Tester:** QA Engineer · **Verdikt: READY** (0 kritische/hohe Bugs).
+
+### Acceptance Criteria (7/7 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | Push-to-Talk in Launcher (PROJ-9) + Card-Antworten (PROJ-4): aufnehmen→transkribieren→einfügen | ✅ PASS | `PushToTalkButton` an `new-session-dialog.tsx:278` + `decision-card.tsx:413` eingebunden; Hook `transcribeAudio` → Callback fügt ein |
+| 2 | Standard self-hosted, kein API-Key, keine Kosten | ✅ PASS | Default `use_groq=false`; realer Smoke faster-whisper (webm/opus→Inferenz) ohne Key; `test_local_transcription_is_default` |
+| 3 | Groq-Fallback konfigurierbar, default aus, bewusster Schalter | ✅ PASS | `test_groq_used_when_enabled_and_key_present`, `test_patch_groq_with_key_enables`; Probe: PATCH ohne Key → 400 |
+| 4 | Web Speech API wird NICHT verwendet | ✅ PASS | grep: kein `SpeechRecognition`/`webkitSpeech` (nur Kommentar, der es ausschließt) |
+| 5 | Transkript editierbar vor Absenden, kein Auto-Submit | ✅ PASS | Callbacks rufen ausschließlich `setPrompt`/`setComment` — kein `submit`/`decide`/`createSession` |
+| 6 | Mikro verweigert/scheitert → klare Meldung, Tippen bleibt möglich | ✅ PASS | Hook mappt `NotAllowedError`/`NotFoundError`/kein-Support → deutscher Toast; Feld bleibt unberührt nutzbar |
+| 7 | Alle Texte deutsch; Aufnahme-/Transkriptions-/Fehler-Zustände sichtbar | ✅ PASS | Button: Mic→pulsierender Stopp→Spinner; deutsche Toasts; „Sprache"-Tab deutsch |
+
+### Edge Cases
+- Kein Mikro / Permission verweigert → degradiert auf Tippen ✅
+- Whisper-/Groq-Dienst-Fehler → `TranscriptionError` → **503** mit Klartext (nie 500, nie stiller Verlust) ✅ (`test_runner_error_maps_to_503`)
+- Lange Aufnahme → Client-Auto-Stop (`max_audio_seconds`) + Server-Limit `max_audio_bytes` → **413** ✅ (`test_oversized_audio_rejected`)
+- Groq aktiviert ohne Key → 400 + Setup-Hinweis, bleibt lokal ✅; Toggle ohne Key fällt zur Laufzeit auf lokal zurück (`test_groq_toggle_without_key_stays_local`)
+- Leere Aufnahme → **400** ✅ (`test_empty_audio_rejected`)
+- Mehrsprachigkeit → `language` durchgereicht, Default `de` ✅ (`test_language_override_is_passed_through`)
+
+### Security / Red-Team (12/12)
+- **Secret-Leak:** `JUPITER_GROQ_API_KEY` taucht weder in `GET/PATCH /settings/transcription` noch in Fehler-Responses auf ✅
+- **Kein stiller Cloud-Versand:** `use_groq=true` ohne Key → 400 **und** zur Laufzeit Fallback auf lokal (Audio verlässt das System nie unbeabsichtigt) ✅
+- **DSGVO/Datenschutz:** Audio nur transient als Temp-Datei, im `finally` gelöscht ✅ (`test_temp_audio_is_removed_after_transcription`); keine US-Browser-Speech-API ✅
+- **Eingabe-Robustheit:** fehlendes `audio`-Feld → 422; JSON statt multipart → 422; bösartiger `language`-String wird nur durchgereicht (kein SQL/Shell-Pfad — Whisper-Param) ✅
+- Kein JWT/RLS (Jupiter-MVP-Override, single-user) — bewusst, konsistent mit PROJ-1/2/11.
+
+### Tests & Regression
+- **`tests/test_proj20_transcription.py`** — 11 Fälle, alle grün.
+- **Volle Backend-Suite: 590 passed** (keine Regression durch `click`-Upgrade/neue Imports).
+- **Frontend:** `npx tsc --noEmit` keine neuen Fehler (nur vorbestehender `md-tree.test.ts`); `npx eslint` der PROJ-20-Dateien sauber.
+
+### Offene Hinweise (nicht-blockierend)
+- **Low:** Echte Spracherkennungs-Qualität (Deutsch, `small`) wurde nicht mit echter Sprache gemessen — nur die Decode-/Inferenz-Pipeline (Tonsignal → leeres Transkript, erwartet). Empfehlung: kurzer manueller Browser-Test mit echtem Diktat nach Deploy.
+- **Low:** Erster lokaler Transkriptions-Aufruf lädt das `small`-Modell (~470 MB) → spürbare Erst-Latenz; danach im Prozess gecached. Optional Modell-Preload beim Start.
+
+**Production-Ready: JA.**
 
 ## Deployment
 _To be added by /abc-deploy_
