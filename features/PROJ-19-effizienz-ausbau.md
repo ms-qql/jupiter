@@ -183,8 +183,21 @@ Hauptsession delegiert "Fazit-Aufgabe" (viel lesen/suchen, wenig zurück)
 
 **Hinweis Daten-Reichweite:** Das Dashboard aggregiert die aktuell im Live-Index geführten Sessions (das, was der Provider liefert). Eine echte historische „heute/7d/30d"-Summe über bereits archivierte/gelöschte Sessions liefert später die geplante Backend-Route `GET /usage/summary` (Sub-Phase 1 Backend, noch offen) — die Frontend-Aggregation ist so geschnitten, dass sie dann nur die Datenquelle wechselt.
 
+### Sub-Phase 1 — Backend (`/usage`) — ✅ fertig (Branch `dev`)
+- **`backend/app/routes/usage.py`** — read-only, kein JWT (MVP single-user, vgl. sessions.py):
+  - `GET /usage/summary?range=today|7d|30d|all` → `UsageSummary` (Tokens + Kosten gesamt, `cost_status`, `by_model[]`, `by_project[]`).
+  - `GET /usage/drilldown?range=…&model=…&project=…` → `UsageDrilldown` (Session-Zeilen, nach Tokens absteigend; optionale Filter Modell-Label/Projektpfad).
+- **`backend/app/engine/usage.py`** — `UsageService` + seiteneffektfreie Aggregat-Funktionen (`aggregate_summary`/`aggregate_drilldown`/`filter_by_range`/`range_start`). Quelle = **persistenter Live-Index** (`SessionIndexRepository.list_all()`) → überlebt Neustart, enthält auch beendete Sessions; keine neue Erhebung (AC erfüllt). Zeitfenster in UTC (`today` = ab UTC-Mitternacht).
+- **`backend/app/schemas/usage.py`** — Pydantic-v2 (`UsageSummary` / `UsageGroup` / `UsageDrilldown` / `UsageDrilldownRow`); `cost_status ∈ {complete, partial, none}`.
+- **Kosten-Degradation** identisch zum Frontend: `engine_shows_cost(engine) == (engine == "claude")`. Subscription/Fremd-Engine → `none`/`partial` (kein falscher Null-Betrag).
+- **Schema-Ergänzung (additiv):** `engine`-Spalte in `session_index` (`COLUMNS` + `SCHEMA_SQL` + `_MIGRATIONS`, Default `'claude'`). Der Manager emittierte `engine` bereits in der Index-Row, es wurde aber nie persistiert → bei Rehydrierung ging die echte Engine verloren (Default „claude"). Jetzt persistiert — fixt nebenbei diesen latenten Bug und liefert die Engine fürs Kosten-Aggregat. `_state_from_row` las `engine` bereits.
+- **Registrierung:** `app.state.usage = UsageService(repo)` + `app.include_router(usage.router)` in `main.py`.
+- **Tests:** `backend/tests/test_proj19_usage.py` (9 Fälle: Logik + beide Endpunkte via TestClient/Fake-Repo) grün; volle Suite **559 passed**, keine Regression (Index/Rehydrierung inkl.).
+
+**Frontend-Anbindung (offen, bewusst):** Das Dashboard aggregiert weiterhin client-seitig aus dem sessions-provider (steht bereits, kein Extra-Request). Die `/usage`-Endpunkte sind die kanonische, getestete Quelle für die echte historische Summe; das Umstellen des Dashboards (mit Fallback auf die Client-Aggregation = „kein Hard-Fail") ist ein sauberer Folgeschritt, nicht Teil dieses Backend-Commits, um die per-Feature-Stagung nicht zu vermischen.
+
 ### Offen (nächste Sub-Phasen)
-- Sub-Phase 1 **Backend**: `GET /usage/summary` + `/usage/drilldown` (Aggregation über `session_index`, performant für viele/historische Sessions) — optional, das UI steht bereits.
+- Sub-Phase 1 **Frontend↔Backend-Anbindung** (optional, s. o.).
 - Sub-Phase 2 **Pointer/RAG (#23)**, 3 **Prompt-Caching (#27)**, 4 **Späher-Agenten (#26)** — laut Tech-Design.
 
 ## QA Test Results

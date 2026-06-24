@@ -31,6 +31,10 @@ COLUMNS: tuple[str, ...] = (
     "project_path",
     "project_name",
     "model",
+    # PROJ-18/19: welche Engine die Session fuhr. Der Manager emittierte das Feld
+    # bereits, ohne dass es persistiert wurde → vor PROJ-19 ging es bei Rehydrierung
+    # verloren (Default „claude"). Jetzt persistiert, u. a. fürs Kosten-Aggregat (#28).
+    "engine",
     "permission_mode",
     "role",
     "status",
@@ -59,6 +63,7 @@ CREATE TABLE IF NOT EXISTS session_index (
     project_path      TEXT,
     project_name      TEXT,
     model             TEXT,
+    engine            TEXT DEFAULT 'claude',
     permission_mode   TEXT,
     role              TEXT,
     status            TEXT NOT NULL,
@@ -85,6 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("recovery_dismissed", "INTEGER DEFAULT 0"),
     ("drained_at", "TEXT"),  # PROJ-33
+    ("engine", "TEXT DEFAULT 'claude'"),  # PROJ-19
 )
 
 

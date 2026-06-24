@@ -23,6 +23,7 @@ from .engine.launcher import LauncherService
 from .engine.manager import SessionManager
 from .engine.md_reader import MdReaderService
 from .engine.recovery import RecoveryService
+from .engine.usage import UsageService
 from .engine.vault import VaultService
 from .routes import (
     constitution,
@@ -34,6 +35,7 @@ from .routes import (
     recovery,
     sessions,
     settings as settings_routes,
+    usage,
     vault,
 )
 
@@ -121,6 +123,8 @@ def create_app(
     )
     # PROJ-17: Recovery-Sicht über Live-Index (verwaiste Stränge) + Vault (Handover/Log).
     app.state.recovery = RecoveryService(app.state.manager, vault_service)
+    # PROJ-19 (#28): Token-/Kosten-Aggregat über den persistenten Live-Index.
+    app.state.usage = UsageService(repo)
     app.include_router(sessions.router)
     app.include_router(constitution.router)
     app.include_router(vault.router)
@@ -131,6 +135,7 @@ def create_app(
     app.include_router(projects.router)
     app.include_router(recovery.router)
     app.include_router(engines.router)
+    app.include_router(usage.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:
