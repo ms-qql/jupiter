@@ -208,7 +208,51 @@ Edge-Cases getestet: Doppelvorschlag→Append, Geschwätzigkeit→Entprellung, E
 → Bereit für `/abc-qa`.
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-24 · **Branch:** dev · **Tester:** QA Engineer (Red-Team) · **Methode:** `pytest` (**433 grün**, davon 22 PROJ-15 in `test_proj15_curation.py`) + `vitest` (**57 grün**) + `next build`/TypeScript + ESLint grün + adversariale Code-Review der neuen Flächen (kuratierter Write, scoped Suche, nicht-blockierende Card).
+
+### Akzeptanzkriterien (8/8 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | Zwei Schichten roh↔kuratiert, beide offenes MD | ✅ PASS | `_TYPE_DIRS["curated"]=Knowledge`; `test_curated_note_lands_in_knowledge`, `test_search_curated_is_scoped_to_knowledge` |
+| 2 | Agenten lesen + strukturierte Spuren zurück, ohne Überschreiben | ✅ PASS | PROJ-2-Leseschicht + `write_curated_note` mit `append`; `test_curated_dedup_appends_same_topic` (beide Erkenntnisse erhalten) |
+| 3 | Trigger Bug/ADR/Sackgasse → Vorschlag | ✅ PASS | `test_detect_marker_kinds`, `test_marker_creates_nonblocking_proposal` |
+| 4 | Vorschlag als Card mit Freigeben/Editieren/Verwerfen | ✅ PASS | `KnowledgeProposalCard` (Build/Vitest) + `test_api_proposal_approve_and_curated_search` |
+| 5 | Freigegeben→`Knowledge/`, verworfen→nichts | ✅ PASS | `test_approve_writes_curated_note_edited`, `test_deny_writes_nothing` |
+| 6 | Kuratierte Suche projektübergreifend + Pfad/Backlink | ✅ PASS | `search_curated`; `test_api_search_all_vs_curated_scope`; Frontend öffnet Treffer im MD-Reader |
+| 7 | Nachvollziehbar (owner/Zeitstempel) + idempotent | ✅ PASS | `test_qa_curated_frontmatter_has_owner_and_created`; atomarer Write/Append (PROJ-2) |
+| 8 | Alle Texte deutsch | ✅ PASS | Card/Such-UI + Notiz-Templates deutsch |
+
+### Edge-Cases (alle abgedeckt)
+- ✅ Doppelvorschlag (gleiches Thema) → **Append** statt neu (`test_curated_dedup_appends_same_topic`).
+- ✅ Trigger zu oft → **Entprellung** je Marker-Art (`test_debounce_one_proposal_per_marker_kind`).
+- ✅ Editieren → editierte Fassung geschrieben (`test_approve_writes_curated_note_edited`); Roh-Log unberührt (wird erst bei DONE geschrieben).
+- ✅ Konflikt mit manuell editierter Notiz → nie blind überschreiben (Default `append`).
+- ✅ **Vault nicht schreibbar → Card bleibt offen** (kein Verlust) → `test_qa`/`test_vault_failure_keeps_card_open` (OSError propagiert, Route 503).
+- ✅ Sehr großes Roh-Log → Pointer/Auszug statt Volltext (`test_build_proposal_is_pointer_not_fulltext`).
+- ✅ Kuratierung deaktivierbar (`test_qa_curation_toggle_off_suppresses_proposals`).
+
+### Security-Audit (Red-Team)
+**Kontext:** Single-User-MVP, kein JWT/RLS (bewusst, #21) → klassische Tenant-Audits N/A. Neue Flächen = kuratierter Write + scoped Suche.
+- ✅ **Pfad-Traversal** über kuratierten Titel (`../../etc/passwd`) → `slugify` neutralisiert, Datei bleibt im `Knowledge/`-Baum (`test_qa_curated_title_traversal_stays_in_knowledge`). Erbt zusätzlich den PROJ-2-`_resolve_write`-Guard.
+- ✅ **Frontmatter/YAML-Injection** über Titel → via `json.dumps` escaped, kein überschriebenes Feld (`test_qa_curated_title_yaml_injection_safe`).
+- ✅ **Such-Scope dicht:** `scope=curated` sieht NUR `Knowledge/` (kein Leak roher Logs/fremder PARA-Bereiche); ungültiger `scope` → 422.
+- ✅ **Schreib-Eingrenzung:** Approve schreibt ausschließlich nach `Knowledge/` (Jupiter-Unterbaum), nie vault-weit.
+- ✅ **XSS:** `proposal_body`/`excerpt` als React-Textknoten (`<pre>`); im Reader geöffnet greift die bestehende MarkdownView-Sanitisierung (PROJ-7).
+- ✅ **Kein Wedge:** nicht-blockierende Vorschlags-Card sperrt die Eingabe NICHT; echte Freigabe-Cards blockieren weiterhin (`test_qa_blocking_card_still_blocks_input_regression`).
+
+### Findings
+| ID | Sev | Befund | Empfehlung |
+|----|-----|--------|------------|
+| QA15-1 | Low | Cross-Day-Dedup: gleiche Themen-Datei ist datumslos → echte Dedup über Tage. Sehr alte Notiz wächst durch Append monoton. | Akzeptiert (lebende Notiz); spätere Archiv-Rotation optional. |
+| QA15-2 | Low (UX) | Hat eine Session gleichzeitig eine blockierende Card **und** einen Wissens-Vorschlag, zählt die Kachel im `awaiting_approval`-Zweig beide als „Freigabe nötig" (+1 zu viel). | Beim Härten Vorschläge aus dem `pendingCount` filtern. |
+| QA15-3 | Low | Marker-Heuristik ist phrasenbasiert → seltene false positives/negatives möglich. | Bewusst MVP; semantischer Klassifikator = RAG-Ausbau PROJ-19. |
+
+Keine Critical/High/Medium. Keine Regression (433 Backend- + 57 Frontend-Tests grün).
+
+### Produktionsreife-Entscheidung
+**READY / Approved** (innerhalb des MVP-Scopes) — alle 8 AC + alle Edge-Cases bestanden, keine Critical/High-Bugs. QA15-1..3 sind Low-Härtungen (kein Blocker).
+
+> **Deploy-Hinweis:** Der verschränkte PROJ-15-Backend-Teil (`manager.py`/`config.py`/`schemas/sessions.py`/`routes/sessions.py`) + `tests/test_proj15_curation.py` sind im Working Tree (getestet), aber noch nicht committet (gemeinsam mit der laufenden PROJ-16-Watchdog-Arbeit in denselben Dateien) → `/abc-deploy` muss sie koordiniert mit-promoten.
 
 ## Deployment
 _To be added by /abc-deploy_
