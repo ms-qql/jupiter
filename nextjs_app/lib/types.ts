@@ -30,9 +30,10 @@ export interface PendingDecision {
   /** PROJ-10: Klartext der Policy-Regel, die diese Card ausgelöst hat
    *  (z. B. „card · Bash @ Rolle architect"). null = konservativer Default. */
   triggering_rule?: string | null;
-  /** PROJ-10: Card-Typ — „normal" (operative Freigabe), „phase_transition"
-   *  (bypass-festes Phasen-Gate) oder „deny" (hart verboten, nur Info). */
-  card_type?: "normal" | "phase_transition" | "deny";
+  /** PROJ-10/16: Card-Typ — „normal" (operative Freigabe), „phase_transition"
+   *  (bypass-festes Phasen-Gate), „deny" (hart verboten, nur Info) oder
+   *  „watchdog_pause" (PROJ-16: Reißleine hat die Session bei Limit-Riss pausiert). */
+  card_type?: "normal" | "phase_transition" | "deny" | "watchdog_pause";
 }
 
 /** Struktur des AskUserQuestion-Tool-Inputs (für die Frage-Karte, PROJ-4). */
@@ -155,6 +156,34 @@ export interface TrustPolicy {
 export interface PolicyPreview {
   level: PolicyLevel;
   rule: string; // Klartext der greifenden Regel (oder „Default")
+}
+
+// --- PROJ-16: Amok-Watchdog + Limits ---------------------------------------
+
+/** Die vier konfigurierbaren Watchdog-Limits (editierbarer Teil von GET/PUT
+ *  /settings/watchdog). Jeder Wert > 0; der Server klemmt unsinnige Werte. */
+export interface WatchdogLimits {
+  /** An = Reißleine aktiv. Fehlt die Config, greifen konservative Defaults
+   *  (nie „kein Watchdog"); dieser Schalter ist die bewusste Nutzer-Wahl. */
+  enabled: boolean;
+  /** Abgerechnete Tokens je gleitendem Zeitfenster. */
+  token_limit: number;
+  token_window_seconds: number;
+  /** Max. Laufzeit ohne Fortschritt (Sekunden seit letztem Output/Result). */
+  max_idle_seconds: number;
+  /** N identische Tool-Calls in Folge → Schleife (unterschiedliche = Iteration). */
+  max_repeated_calls: number;
+  /** Writes je gleitendem Zeitfenster (auf verschiedene Pfade entschärft). */
+  write_limit: number;
+  write_window_seconds: number;
+}
+
+/** Gesamte Watchdog-Config (GET /settings/watchdog) — Limits + Herkunft/Warnung. */
+export interface WatchdogSetting extends WatchdogLimits {
+  /** Herkunft: z. B. „config/watchdog.yaml" oder „default" (keine Datei gepflegt). */
+  source: string;
+  /** Warnung bei kaputter/ungültiger Config (sonst null) — UI zeigt Fallback-Hinweis. */
+  warning: string | null;
 }
 
 // --- PROJ-7: MD-Reader (read-only) -----------------------------------------

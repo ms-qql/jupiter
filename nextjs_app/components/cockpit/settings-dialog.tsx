@@ -3,6 +3,7 @@
 // Cockpit-Einstellungen — bündelt globale Regler in Tabs:
 //  - Allgemein (PROJ-5): Kontext-Schwelle für Warnung + Handover-Vorschlag.
 //  - Trust-Policy (PROJ-10): abgestuftes Vertrauen + Phasen-Übergangs-Gate.
+//  - Watchdog (PROJ-16): Reißleine — Token-/Zeit-/Wiederholungs-/Schreib-Limits.
 // Über das Zahnrad im Mission-Control-Header.
 
 import { SettingsIcon } from "lucide-react";
@@ -19,6 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ThresholdControl } from "./threshold-control";
 import { PolicyControl } from "./policy-control";
+import { WatchdogControl } from "./watchdog-control";
 
 export function SettingsDialog() {
   return (
@@ -41,6 +43,7 @@ export function SettingsDialog() {
           <TabsList>
             <TabsTrigger value="allgemein">Allgemein</TabsTrigger>
             <TabsTrigger value="policy">Trust-Policy</TabsTrigger>
+            <TabsTrigger value="watchdog">Watchdog</TabsTrigger>
           </TabsList>
           <TabsContent value="allgemein" className="py-2">
             <ThresholdControl />
@@ -48,6 +51,11 @@ export function SettingsDialog() {
           <TabsContent value="policy" className="py-2">
             <ScrollArea className="max-h-[60vh] pr-3">
               <PolicyControl />
+            </ScrollArea>
+          </TabsContent>
+          <TabsContent value="watchdog" className="py-2">
+            <ScrollArea className="max-h-[60vh] pr-3">
+              <WatchdogControl />
             </ScrollArea>
           </TabsContent>
         </Tabs>
