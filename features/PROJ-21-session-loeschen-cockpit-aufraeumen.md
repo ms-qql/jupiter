@@ -1,6 +1,6 @@
 # PROJ-21: Session-Löschen / Cockpit-Aufräumen
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 
@@ -260,4 +260,6 @@ Erfolgs-/Fehler-Feedback via vorhandenes `sonner`. Refetch über `useSessions().
 Keine offen. (1 währenddessen behobener Integrationspunkt: `DeadDriver` musste die rehydrierte PID tragen, sonst lief der Orphan-Kill nach Restart ins Leere — im Backend-Commit enthalten.)
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-24 · **URL:** https://jupiter.auxevo.tech · **Version:** 0.5.0 · **Tag:** v0.5.0 · **Branch-Promotion:** `dev → main`.
+
+Gemeinsam mit PROJ-15 (Vault Stufe 3) und PROJ-16 (Amok-Watchdog) promotet. Host-native VPS-Deploy: Push auf `main` → GitHub-Webhook → `deploy.sh` (`git reset --hard origin/main` + `npm run build` + `systemctl restart`).

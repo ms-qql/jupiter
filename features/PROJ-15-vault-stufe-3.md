@@ -1,6 +1,6 @@
 # PROJ-15: Vault Stufe 3 — lebendes Gehirn + roh↔kuratiert + Kuratierung
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Bausteine:** #9, #10, #11
@@ -255,4 +255,6 @@ Keine Critical/High/Medium. Keine Regression (433 Backend- + 57 Frontend-Tests g
 > **Deploy-Hinweis:** Der verschränkte PROJ-15-Backend-Teil (`manager.py`/`config.py`/`schemas/sessions.py`/`routes/sessions.py`) + `tests/test_proj15_curation.py` sind im Working Tree (getestet), aber noch nicht committet (gemeinsam mit der laufenden PROJ-16-Watchdog-Arbeit in denselben Dateien) → `/abc-deploy` muss sie koordiniert mit-promoten.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-24 · **URL:** https://jupiter.auxevo.tech · **Version:** 0.5.0 · **Tag:** v0.5.0 · **Branch-Promotion:** `dev → main`.
+
+Gemeinsam mit PROJ-16 (Amok-Watchdog) und PROJ-21 (Session-Löschen) promotet (die PROJ-15-/PROJ-16-Backend-Verdrahtung lag verschränkt in `manager.py`/`config.py`/`schemas/sessions.py` und wurde mit Commit `feat(PROJ-15): Backend-Verdrahtung Kuratierung` gemeinsam aufgelöst). Host-native VPS-Deploy: Push auf `main` → GitHub-Webhook → `deploy.sh` (`git reset --hard origin/main` + `npm run build` + `systemctl restart`). Verifikation: 433 Backend- + 57 Frontend-Tests grün, `next build`/TS grün.

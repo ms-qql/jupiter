@@ -1,6 +1,6 @@
 # PROJ-16: Amok-Watchdog + Limits
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 **Baustein:** #19 (kritischstes Failure-Szenario)
@@ -230,4 +230,6 @@ Stack: FastAPI + **dateibasierter** Watchdog (YAML, kein DB). Branch `dev`. In-M
 Alle 8 Acceptance Criteria ✅, alle Edge-Cases abgedeckt, Security sauber. **Keine Critical/High/Medium** — nur 3 Info-Findings (dokumentierte Design-Grenzen) + 1 Betriebs-Caveat. **Produktionsreif → APPROVED.** Suite **427 passed**, Frontend TS/Build sauber.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-24 · **URL:** https://jupiter.auxevo.tech · **Version:** 0.5.0 · **Tag:** v0.5.0 · **Branch-Promotion:** `dev → main`.
+
+Gemeinsam mit PROJ-15 (Vault Stufe 3) und PROJ-21 (Session-Löschen) promotet. Host-native VPS-Deploy: Push auf `main` → GitHub-Webhook → `deploy.sh` (`git reset --hard origin/main` + `npm run build` + `systemctl restart`). Verifikation: 433 Backend- + 57 Frontend-Tests grün.
