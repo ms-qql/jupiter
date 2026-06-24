@@ -24,6 +24,7 @@ from .engine.manager import SessionManager
 from .engine.md_reader import MdReaderService
 from .engine.recovery import RecoveryService
 from .engine.scout import ScoutService
+from .engine.transcription import TranscriptionService
 from .engine.usage import UsageService
 from .engine.vault import VaultService
 from .routes import (
@@ -37,6 +38,7 @@ from .routes import (
     recovery,
     sessions,
     settings as settings_routes,
+    transcription,
     usage,
     vault,
 )
@@ -129,6 +131,8 @@ def create_app(
     app.state.usage = UsageService(repo)
     # PROJ-19 (#26): billige Späher-Agenten (RAG-Kontext + günstiges Modell → nur Fazit).
     app.state.scout = ScoutService(vault_service)
+    # PROJ-20: Spracheingabe-Transkription (self-hosted Whisper, optional Groq-Fallback).
+    app.state.transcription = TranscriptionService()
     app.include_router(sessions.router)
     app.include_router(constitution.router)
     app.include_router(vault.router)
@@ -141,6 +145,7 @@ def create_app(
     app.include_router(engines.router)
     app.include_router(usage.router)
     app.include_router(agents.router)
+    app.include_router(transcription.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

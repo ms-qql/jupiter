@@ -205,5 +205,24 @@ class Settings(BaseSettings):
         "zip", "tar", "gz", "tgz",
     }
 
+    # --- Spracheingabe / Push-to-Talk (PROJ-20) --------------------------
+    # Standard ist self-hosted faster-whisper (lokal, kein API-Key, keine
+    # laufenden Kosten). Modellgröße als Kompromiss aus Deutsch-Qualität und
+    # CPU-Latenz/RAM auf dem GPU-losen Dev-VPS; via Env hoch-/runterschaltbar.
+    whisper_model: str = "small"
+    # Transkriptions-Sprache (Default Deutsch); pro Request überschreibbar.
+    whisper_language: str = "de"
+    # Optionaler Groq-Cloud-Fallback (pay-per-use). Leerer Key = nicht verfügbar.
+    # Secret NUR aus der .env (JUPITER_GROQ_API_KEY), nie im Repo.
+    groq_api_key: str = ""
+    # Cloud-Fallback bewusst an/aus. Default AUS (DSGVO: Audio bleibt lokal).
+    # Greift nur, wenn zusätzlich ein Key gesetzt ist.
+    use_groq_transcription: bool = False
+    # Längenlimit der Aufnahme (Sek.) — Schutz vor Riesen-Uploads. Das Frontend
+    # stoppt zusätzlich clientseitig; hier ist die serverseitige Obergrenze.
+    max_audio_seconds: int = 120
+    # Harte Obergrenze der Audio-Größe (Bytes) als zweite Verteidigungslinie.
+    max_audio_bytes: int = 25 * 1024 * 1024  # 25 MB
+
 
 settings = Settings()
