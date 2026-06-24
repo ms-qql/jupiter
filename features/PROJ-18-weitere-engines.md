@@ -188,7 +188,7 @@ GET/POST /sessions/{id}/...    → unverändert (start/input/pause/stop/transcri
 - `app/(cockpit)/page.tsx` — neuer Tab „Werkzeuge" (`ToolsPanel`).
 - Test-Fixtures (`lib/status.test.ts`, `gantt-chart.test.tsx`) um `engine: "claude"` ergänzt.
 
-**Bekannte Einschränkung:** Der „Werkzeuge"-Tab liegt innerhalb des Session-Boards und ist daher nur sichtbar, wenn ≥1 Session existiert (Empty-State zeigt vorher nur den Start-Hinweis). Reicht für die AC; ein immer sichtbares Panel wäre ein kleiner Folge-Schliff.
+**Nachtrag (2026-06-24):** Der „Werkzeuge"-Tab ist jetzt **immer** sichtbar (BUG-3 behoben) — Tabs werden unabhängig von der Session-Zahl gerendert, der Empty-State liegt im Kacheln-Tab.
 
 ## QA Test Results — Runde 1 (Backend)
 
@@ -312,7 +312,7 @@ progress_timeout_seconds: int = Field(..., gt=0, description="Kein Fortschritt >
 
 ### Bugs / Befunde (Frontend)
 - **Keine Critical/High/Medium.**
-- **BUG-3 (Low, Known Limitation):** Der „Werkzeuge"-Tab liegt innerhalb des Session-Boards → nur sichtbar, wenn ≥1 Session existiert. Reicht für die AC; ein immer sichtbares Panel wäre ein Folge-Schliff.
+- **BUG-3 (Low) — ✅ BEHOBEN (2026-06-24):** Der „Werkzeuge"-Tab war nur mit ≥1 Session sichtbar. Fix: Tabs in `app/(cockpit)/page.tsx` werden jetzt **immer** gerendert; der Empty-State lebt im Kacheln-Tab. „Werkzeuge" (iFrame/Launch) ist damit auch ohne laufende Session erreichbar.
 
 ### ⚠️ Branch-weite Regression (NICHT PROJ-18 — gehört zu PROJ-27)
 Beim Gesamt-Suite-Lauf auf `dev` fallen **3 stabile Tests** — **alle in PROJ-27** (Liveness), PROJ-18 ist sauber:
