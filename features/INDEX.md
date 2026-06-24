@@ -39,7 +39,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 
 | ID | Feature | Prio | Status | Abhängigkeiten | Spec |
 |----|---------|------|--------|----------------|------|
-| PROJ-27 | Verifizierter Liveness-Indikator + Reanimieren hängender Sessions | P1 | In Progress | PROJ-1, PROJ-3, PROJ-14, PROJ-16 | [Spec](PROJ-27-liveness-reanimieren.md) |
+| PROJ-27 | Verifizierter Liveness-Indikator + Reanimieren hängender Sessions | P1 | In Review | PROJ-1, PROJ-3, PROJ-14, PROJ-16 | [Spec](PROJ-27-liveness-reanimieren.md) |
 | PROJ-28 | Fileexplorer Drei-Spalten-Layout (Sidebar · Panel · Ansicht) | P1 | Planned | PROJ-11, PROJ-7 | [Spec](PROJ-28-fileexplorer-drei-spalten.md) |
 | PROJ-29 | Eingabefeld-Höhe symmetrisch zu den 3 Buttons | P2 | Planned | PROJ-3, PROJ-11 | [Spec](PROJ-29-eingabefeld-hoehe-symmetrie.md) |
 | PROJ-30 | Kanban-Phasenerkennung im Bypass-Mode (QA/Deploy) | P1 | Planned | PROJ-8, PROJ-1 | [Spec](PROJ-30-kanban-phasen-bypass.md) |

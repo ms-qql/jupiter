@@ -1,6 +1,6 @@
 # PROJ-27: Verifizierter Liveness-Indikator + Reanimieren hängender Sessions
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -222,3 +222,58 @@ Backend-lastiges Feature. Empfehlung: **`/abc-backend`** zuerst (Liveness-Ableit
 **Review lokal:** `cd nextjs_app && npm run dev` (Backend per `conda run -n Dashboard --no-capture-output uvicorn app.main:app --reload --app-dir backend`).
 
 **Nächster Schritt:** `/abc-qa` (Akzeptanzkriterien + Edge Cases gegen Front- und Backend).
+
+---
+
+## QA Test Results (2026-06-24, `/abc-qa`, Branch `dev`)
+
+**Tester:** QA Engineer / Red-Team · **Methodik:** Code-Audit + automatisierte Tests (FakeDriver, injizierte Uhren) + Suiten-Regression.
+**Produktreife-Entscheidung: NOT READY — Status bleibt „In Review".** Grund: 1 offenes **High**-Finding (BUG-1, False-Positive „hängt"). Fix ist als **PROJ-32** spezifiziert; nach Behebung Re-QA dieses ACs.
+
+**Test-Suiten:** Backend `506 passed, 1 xfailed` (der xfail = BUG-1, `strict` → wird Alarm, sobald PROJ-32 ihn behebt). Frontend `64 passed`, Lint sauber, TypeScript fehlerfrei.
+Neue QA-Tests: `backend/tests/test_proj27_qa.py` (9), zusätzlich zu `test_proj27_liveness.py` (22).
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis | Beleg |
+|---|-----------|----------|-------|
+| 1 | Liveness-Symbol (aktiv/hängt/tot) in Kachel + Detail | ✅ Pass | `HeartbeatDot` in `session-tile.tsx` + Detail-Header/-Banner; `liveness` in `SessionRead` |
+| 2 | „aktiv" = echter Heartbeat (PID **und** Fortschritt im Fenster) | ⚠️ **Teilweise** | PID + Status korrekt; Fortschritts-Signal **unvollständig** → siehe **BUG-1** |
+| 3 | Hänger **hintergrund-getrieben** erkannt (eigener Poll, nicht erst am Tool-Gate) | ✅ Pass | `_liveness_loop` (`main.py`) → `evaluate_liveness_once`; `test_auto_reanimation_revives_hanging` |
+| 4 | Auto-Reanimierungs-Versuch bei Hänger, Ergebnis sichtbar | ✅ Pass | `_auto_reanimate`; `liveness_last_result` → „✓ läuft wieder"/„fehlgeschlagen" |
+| 5 | Manueller „Reaktivieren"-Knopf, selber Resume-Pfad | ✅ Pass | `POST /reanimate` → `reanimate()` → `_resume`; `ReanimateButton` |
+| 6 | Auto-Reanimierung mit Limit (max. Versuche + Backoff) | ✅ Pass | `LivenessMonitor.may_auto_attempt`; `test_monitor_attempts_backoff_and_budget` |
+| 7 | Session-Limit (PROJ-14) nicht umgangen | ✅ Pass | `reanimate` prüft Limit bei terminalen Sessions; `…_429` + `…_keeps_one_slot` |
+| 8 | Schwellen zentral konfigurierbar; Auto global abschaltbar | ✅ Pass | `GET/PUT /settings/liveness`; `test_auto_off_keeps_indicator_and_manual_button` |
+| 9 | Deutsche Texte; Lade-/Erfolg-/Fehlerzustände explizit | ✅ Pass | Tooltips/Toasts/Banner deutsch; Control-Lade-/Offline-Zustände |
+
+### Edge Cases
+| Edge Case (Spec) | Ergebnis | Beleg |
+|---|---|---|
+| **Legitime lange Aufgabe → kein False-„hängt"** | ❌ **Fail (BUG-1)** | `test_bug1_long_toolcall_should_stay_active` (xfail) |
+| Auto-Reanimierung schlägt wiederholt fehl → Stopp nach `max_versuche` | ✅ Pass | Budget-Test; danach nur manueller Knopf |
+| Prozess lebt, Stream tot → „hängt" + Reanimation | ✅ Pass | `derive` (RUNNING + idle) = „hängt"; Auto-Reanimierung feuert |
+| Warten auf Decision Card / Watchdog-Pause → **nicht** „hängt" | ✅ Pass | `test_derive_awaiting_approval_is_active_despite_idle` |
+| Reanimierung am Session-Limit → klare Meldung statt Bypass | ✅ Pass | 429; `_keeps_one_slot` (hängend = aktiv belegt keinen 2. Slot) |
+| Backend-Neustart-Orphans → „tot", keine Auto-Reanimierung | ✅ Pass | `test_restart_orphan_not_auto_reanimated` |
+
+### Red-Team / API
+- `POST /reanimate`: `404` unbekannt, `409` läuft bereits, `429` Limit, `503` Resume-Fehler (deutsche Meldung) — alle bestätigt (`test_reanimate_failed_resume_returns_503`, `…_unknown_is_404_not_500`).
+- `PUT /settings/liveness`: negativ **und** Nicht-Ganzzahl → `422` (`test_put_liveness_negative_is_422`, `…_non_integer_is_422`).
+- `enabled_auto_reanimation:false`: Automatik global aus, Indikator + manueller Knopf bleiben funktionsfähig (bestätigt).
+- Kein Tenant-Scope im MVP (single-user, `owner` serverseitig) — nicht anwendbar.
+
+### Regression
+Volle Backend-Suite grün (506); Frontend-Suite grün (64); Lint/TS sauber. Keine Regression in PROJ-14/16/17/18 (Manager/Watchdog/Schemas/Routen mit-getestet).
+
+### 🔴 BUG-1 (High) — False-Positive „hängt" bei legitimer langer Aufgabe
+**Severity:** High (verwirft aktive Arbeit + hoher Tokenverbrauch durch unnötigen `--resume`-Voll-Reload).
+**Beschreibung:** Die Fortschritts-Uhr (`WatchdogMonitor._last_progress`) wird **nur** von Assistenten-Output (`manager.py:353`) und `result`-Events (`feed_usage`, `:413`) zurückgesetzt. Ein langer Tool-Call **innerhalb** von Claude (`npm run build`, volle pytest-Suite, langer Explore/CodeGraph-Lauf) erzeugt minutenlang keinen Assistenten-Output und kein `result`; `watchdog.record` (Tool-Aufzeichnung, `:502`) setzt die Uhr **nicht** zurück. Nach `progress_timeout_seconds` (Default 180 s) wird die Session fälschlich „hängt" → `evaluate_liveness_once` → `_auto_reanimate` → `_reanimate_once` **stoppt den arbeitenden Prozess** und macht `claude --resume` (Voll-Reload) → **verworfene Arbeit + Tokenkosten**.
+**Repro:** Session starten, einen Tool-Call > 180 s ohne Assistenten-Text auslösen (z. B. langes Bash-Kommando). **Erwartung (Spec, Beschreibung Z. 23 / Edge Case Z. 37):** bleibt „aktiv", keine Auto-Reanimierung. **Ist:** wird „hängt" + auto-reanimiert.
+**Wurzelursache (belegt):** `test_bug1_root_cause_toolcall_is_not_progress` — `record()` lässt `seconds_since_progress` ungebremst über den Timeout wachsen.
+**Fix:** als eigenes Feature **PROJ-32** spezifiziert (Fortschritt auch aus Tool-Aktivität ableiten + In-Flight-Timeout ~600 s); betrifft auch PROJ-16. Bis Behebung + Re-QA bleibt PROJ-27 „In Review".
+**Belegt durch:** `test_bug1_long_toolcall_should_stay_active` (xfail strict — flippt automatisch auf Alarm, sobald der Fix greift).
+
+### Fazit
+Funktional vollständig und stabil bis auf die **eine** Fortschritts-Definition (BUG-1), die das KRITISCHE „kein False-hängt"-AC verletzt und ungewollte Auto-Reanimierungen produzieren kann. **Empfehlung: PROJ-32 umsetzen, dann Re-QA dieses ACs**; danach `/abc-deploy`. Bis dahin Status **In Review**.
+
+**Nächster Schritt:** PROJ-32 (Fortschritts-Definition härten) bauen → Re-QA von BUG-1 → bei Grün Status auf **Approved**.
