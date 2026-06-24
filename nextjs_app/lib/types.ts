@@ -348,3 +348,38 @@ export interface DeleteResult {
 export interface ClipboardDir {
   path: string;
 }
+
+// --- PROJ-17: Recovery über den Vault --------------------------------------
+
+/** Quelle, aus der der „Hier ging's weiter"-Vorschlag eines Kandidaten stammt
+ *  (stärkste zuerst): kuratierter Handover > Auto-Session-Log > nur Index-Metadaten. */
+export type RecoverySource = "handover" | "log" | "incomplete";
+
+/** Ein nach Reboot/Crash wiederherstellbarer Strang — spiegelt das geplante
+ *  backend/app/schemas/recovery.py RecoveryCandidate. Read-only Sicht über
+ *  Live-Index (PROJ-14) + Vault (PROJ-2/PROJ-5); kein neues Persistenz-Schema. */
+export interface RecoveryCandidate {
+  /** Verwaiste Vorgänger-Session, an die wiederangeknüpft wird (parent). */
+  session_id: string;
+  project_path: string;
+  project_name: string | null;
+  /** Weiteste bekannte ABC-Phase des Strangs (null = unbekannt). */
+  abc_phase: AbcPhase | null;
+  /** Zeitpunkt des jüngsten Handovers/letzter Aktivität (ISO) — null bei reiner Index-Quelle. */
+  last_handover_at: string | null;
+  /** Woraus der Vorschlag gebaut wurde (steuert das Quellen-Badge). */
+  source: RecoverySource;
+  /** „Hier ging's weiter": verdichtete offene Punkte aus dem Handover/Log. */
+  suggestion: string;
+  /** Wiederherstellen blockiert (z. B. Projektpfad existiert nicht mehr). */
+  restore_blocked: boolean;
+  /** Klartext-Grund der Blockade (nur wenn restore_blocked). */
+  blocked_reason: string | null;
+  /** Hinweis bei beschädigtem/halbem Handover (sonst null) — UI zeigt Warnung. */
+  warning: string | null;
+}
+
+/** Antwort von GET /recovery — die Liste wiederherstellbarer Stränge. */
+export interface RecoveryListResult {
+  candidates: RecoveryCandidate[];
+}

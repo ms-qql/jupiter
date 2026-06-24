@@ -17,6 +17,7 @@ import type {
   PhaseGateConfig,
   PolicyPreview,
   PolicyRule,
+  RecoveryListResult,
   RootEntry,
   Session,
   SessionCreate,
@@ -429,4 +430,32 @@ export function setClipboardDir(path: string): Promise<ClipboardDir> {
     method: "PATCH",
     body: JSON.stringify({ path }),
   });
+}
+
+// --- PROJ-17: Recovery über den Vault --------------------------------------
+
+/** Nach Reboot/Crash wiederherstellbare Stränge (verwaist + ohne Nachfolger).
+ *  Read-only Sicht über Live-Index + Vault; der Seed wird serverseitig gebaut. */
+export function listRecovery(signal?: AbortSignal): Promise<RecoveryListResult> {
+  return request<RecoveryListResult>("/recovery", { signal });
+}
+
+/** Strang wiederherstellen: startet eine Kind-Session mit dem (serverseitig aus
+ *  Handover/Log verdichteten) Seed als System-Kontext, verknüpft via
+ *  parent_session_id (wie PROJ-5). Idempotent: 1 Strang = 1 Nachfolger
+ *  (Zweitversuch → 409 → ApiError.status). */
+export function restoreRecovery(
+  sessionId: string,
+  initialPrompt?: string,
+): Promise<Session> {
+  return request<Session>(`/recovery/${sessionId}/restore`, {
+    method: "POST",
+    body: JSON.stringify({ initial_prompt: initialPrompt ?? null }),
+  });
+}
+
+/** Kandidat verwerfen: aus der Recovery-Ansicht entfernen, OHNE den Vault-Eintrag
+ *  zu löschen (Audit bleibt). 204 → void. */
+export function dismissRecovery(sessionId: string): Promise<void> {
+  return request<void>(`/recovery/${sessionId}/dismiss`, { method: "POST" });
 }

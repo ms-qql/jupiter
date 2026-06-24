@@ -1,6 +1,6 @@
 # PROJ-17: Recovery über den Vault
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #20 (kritischstes Failure-Szenario)
@@ -107,6 +107,25 @@ Keine neuen Pakete. Wiederverwendet: `VaultService` (list/read/parse), `SessionM
 ### Entschiedene Designfragen
 1. **Verworfen-Marker:** im SQLite-Live-Index (`recovery_dismissed`), nicht als Vault-Marker-Datei. Vault bleibt unangetastet (Audit).
 2. **Auto-Handover bei Verwaisung:** **nicht im MVP**. Stufen 2/3 (Session-Log / Index-Metadaten) reichen als Fallback.
+
+### Frontend-Umsetzung (abc-frontend, 2026-06-24)
+Stack: Next.js Cockpit (kein Flutter — projektweite Abweichung). Branch `dev`.
+
+**Neue Dateien**
+- `nextjs_app/components/cockpit/recovery-banner.tsx` — lädt `GET /recovery` beim Mount (Loader im Effect + Ref-Refresh wie `SessionsProvider`); blendet sich selbst aus, wenn 0 Kandidaten oder Abruf fehlschlägt (Recovery ist additiv, kein Fehler-Toast im Hintergrund-Load). Öffnet den Dialog; nach Aktion lädt es Recovery-Liste **und** Sessions neu (Kind-Session erscheint sofort).
+- `nextjs_app/components/cockpit/recovery-dialog.tsx` — Kandidatenliste in `ScrollArea`. Pro Karte: Projektname, ABC-Phasen-Badge, Quellen-Badge (Handover/Session-Log/unvollständig), Zeitpunkt (relativ via `formatDuration`), „Hier ging's weiter"-Vorschlag, Warnung (beschädigter Handover) und Blockade-Grund (Projektpfad fehlt). Aktionen **Wiederherstellen** (deaktiviert bei `restore_blocked`) / **Verwerfen**, je mit Busy-Zustand und Toasts.
+
+**Geänderte Dateien**
+- `lib/types.ts` — `RecoverySource`, `RecoveryCandidate`, `RecoveryListResult` (Frontend-Spiegel des geplanten `backend/app/schemas/recovery.py`).
+- `lib/api.ts` — `listRecovery()`, `restoreRecovery(id, initialPrompt?)`, `dismissRecovery(id)`.
+- `app/(cockpit)/page.tsx` — `<RecoveryBanner />` über der `GlobalStatusBar` eingehängt.
+
+**Erwarteter Backend-Vertrag (für /abc-backend)**
+- `GET /recovery` → `{ candidates: RecoveryCandidate[] }`. Kandidat = verwaister Strang (Status `error`/„Verwaist", aktiv beim letzten Lauf) **und** `child_session_id is None` **und** nicht `recovery_dismissed`. Felder: `session_id, project_path, project_name, abc_phase, last_handover_at, source, suggestion, restore_blocked, blocked_reason, warning`. `source`/`suggestion` aus Stufen-Quelle (Handover→Log→Index). `restore_blocked=true` + Grund, wenn `project_path` nicht mehr existiert.
+- `POST /recovery/{id}/restore` Body `{ initial_prompt?: string|null }` → `Session` (Kind). Seed serverseitig aus Handover/Log verdichtet; reuse PROJ-5-Reset-Kind (Seed als `--append-system-prompt`, `parent_session_id`-Verknüpfung). Idempotent: Zweitversuch → **409**.
+- `POST /recovery/{id}/dismiss` → **204**. Setzt `recovery_dismissed` im Live-Index; Vault-Datei bleibt.
+
+**Status-/Lade-/Leer-/Fehler-Zustände:** Banner unsichtbar bis geladen; Dialog zeigt Leerzustand „Keine wiederherstellbaren Sessions"; pro Aktion Busy-Label + Erfolg/Fehler-Toast. Alle Texte deutsch. Responsive (`flex-wrap`, `ScrollArea max-h-[60vh]`).
 
 ## QA Test Results
 _To be added by /abc-qa_

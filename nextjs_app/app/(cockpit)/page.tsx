@@ -2,6 +2,7 @@
 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { GlobalStatusBar } from "@/components/cockpit/global-status-bar";
+import { RecoveryBanner } from "@/components/cockpit/recovery-banner";
 import { CleanupButton } from "@/components/cockpit/cleanup-button";
 import { SessionGrid } from "@/components/cockpit/session-grid";
 import { KanbanBoard } from "@/components/cockpit/kanban-board";
@@ -52,6 +53,10 @@ export default function CockpitPage() {
           </NewSessionDialog>
         </div>
       </header>
+
+      {/* PROJ-17: Recovery-Hinweis nach Reboot/Crash — blendet sich selbst aus,
+          wenn es keine wiederherstellbaren Stränge gibt. */}
+      <RecoveryBanner />
 
       {!initialLoading && sessions.length > 0 && (
         <GlobalStatusBar sessions={sessions} />
