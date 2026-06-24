@@ -1,6 +1,6 @@
 # PROJ-21: Session-Löschen / Cockpit-Aufräumen
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 
@@ -205,7 +205,59 @@ Erfolgs-/Fehler-Feedback via vorhandenes `sonner`. Refetch über `useSessions().
 **Tests:** `tests/test_proj21_session_delete.py` — 13 Tests (Repo idempotent, delete 404/409/terminal, „überlebt keinen Restart", best-effort bei DB-Fehler, realer SIGTERM-Orphan-Kill via Subprozess, cleanup nur-terminal + leer, API 204/404/409 + cleanup). Volle Suite: **388 passed**.
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-24 · **Branch:** dev · **Verdict: READY (Approved)** — 0 Critical/High, 0 Medium.
+
+### Testumfang
+- Backend: `pytest` — `tests/test_proj21_session_delete.py` **16 Tests**, volle Suite **391 passed** (keine Regression).
+- Frontend: `tsc --noEmit` (keine PROJ-21-Fehler), `eslint` (clean), `vitest` `lib/status.test.ts` **29 passed** (inkl. neue PROJ-21-Helper).
+- Frontend-UI: gegen die ACs per Code-Review verifiziert (Komponentenlogik + Verdrahtung). **Live-Browser-E2E nicht ausgeführt** (kein laufender Full-Stack im QA-Lauf) — keine Logiklücke, nur Hinweis.
+
+### Acceptance Criteria — Backend
+| AC | Status | Beleg |
+|---|---|---|
+| Protokoll `delete(session_id)` | ✅ | `session_index.py`; `test_null_repo_delete_ist_noop`, Sqlite-Roundtrip |
+| Sqlite `DELETE … WHERE = ?` (param., to_thread) | ✅ | `_delete_sync`; `test_repo_delete_entfernt_zeile_und_ist_idempotent` |
+| Null `delete` No-op | ✅ | `test_null_repo_delete_ist_noop`, `test_delete_persistenz_aus_nur_in_memory` |
+| Bulk via Manager-Iteration | ✅ | `cleanup_terminal`; `test_cleanup_terminal_loescht_nur_terminale` |
+| `Manager.delete` entfernt Registry + repo | ✅ | `test_delete_terminale_session_entfernt_registry_und_index` |
+| Aktiv → 409 | ✅ | `test_delete_aktive_session_abgelehnt` + API `test_api_delete_aktive_409` |
+| Lebende PID → best-effort SIGTERM | ✅ | `test_delete_killt_verwaisten_lebenden_prozess` (echter Subprozess) |
+| `cleanup_terminal()→int` + Orphan-Regel | ✅ | `test_cleanup_terminal_*`, `_terminate_orphan` je Session |
+| `DELETE /{id}` → 204 | ✅ | `test_api_delete_terminal_204_und_weg` |
+| `DELETE` unbekannt → 404 | ✅ | `test_api_delete_unbekannt_404` |
+| `DELETE` aktiv → 409 (dt. Text) | ✅ | „… zuerst stoppen." |
+| `POST /cleanup` → `{deleted}` | ✅ | `test_api_cleanup_loescht_terminale` |
+| Nach delete weg — auch nach Restart | ✅ | `test_delete_ueberlebt_keinen_restart` |
+
+### Acceptance Criteria — Frontend
+| AC | Status | Beleg |
+|---|---|---|
+| Lösch-Button nur an terminalen Kacheln | ✅ | `session-tile.tsx` (`isTerminal`-Guard) |
+| Sidebar-Einträge terminal löschbar | ✅ | `session-rail.tsx` (terminale RailItems, on-hover) |
+| „Erledigte aufräumen (N)" ab ≥1 terminal, mit Anzahl | ✅ | `cleanup-button.tsx` (return null bei 0) + `page.tsx` |
+| Einzel + Bulk: AlertDialog, dt., Abbrechen/Löschen | ✅ | `confirm-dialog.tsx` |
+| Erfolg: Eintrag weg + Toast | ✅ | `refresh()` + sonner-Toast |
+| Fehler (409/404/Netz) dt. Meldung, Liste konsistent | ✅ | `delete-session-button.tsx` / `cleanup-button.tsx` |
+| Loading/Disabled gegen Doppelklick | ✅ | `deleting`/`running`-State |
+
+### Edge Cases
+- Aktive Session 409 / Bulk überspringt aktive still → ✅ (`test_cleanup_terminal_loescht_nur_terminale` lässt aktive stehen).
+- Verwaiste Session mit toter PID → kein Kill, normales Entfernen → ✅ (`_pid_alive`-Guard; done-Session-Pfad).
+- Verwaiste mit lebender PID, Kill schlägt fehl → trotzdem gelöscht → ✅ `test_delete_kill_fehler_blockiert_nicht`.
+- Race Status-Wechsel → Server autoritativ (409) → ✅.
+- Concurrent Bulk+Einzel → idempotent (Snapshot + `get`-Guard, 404) → ✅ (`test_repo…idempotent`, cleanup-Guard).
+- Persistenz aus → nur In-Memory, kein Fehler → ✅.
+- Leerer Zustand → „Aufräumen" ausgeblendet → ✅ (`countTerminal`/return null).
+- Vault-Log bleibt → ✅ by-design: weder `delete` noch `cleanup_terminal` berühren den Vault.
+
+### Security / Red-Team
+- Parametrisierte SQL ausschließlich (kein Concat) → ✅.
+- `DELETE /sessions/cleanup` (falsche Methode) → `{session_id}="cleanup"` → 404, harmlos.
+- MVP single-user, kein JWT/RLS (Jupiter-Override) — `owner` serverseitig; keine client-gesteuerte ID-Eskalation, da Löschen rein über `session_id` im eigenen Live-Index läuft.
+- Best-effort-Prinzip durchgängig: DB-/Kill-Fehler degradieren zu Warnung, blockieren UI/In-Memory nicht.
+
+### Bugs
+Keine offen. (1 währenddessen behobener Integrationspunkt: `DeadDriver` musste die rehydrierte PID tragen, sonst lief der Orphan-Kill nach Restart ins Leere — im Backend-Commit enthalten.)
 
 ## Deployment
 _To be added by /abc-deploy_

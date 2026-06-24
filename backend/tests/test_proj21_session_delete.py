@@ -7,6 +7,8 @@ per SIGTERM, best-effort), und den API-Vertrag (204/404/409 + `/cleanup`).
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -15,7 +17,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
-from app.db.session_index import SqliteSessionIndexRepository
+from app.db.session_index import (
+    NullSessionIndexRepository,
+    SqliteSessionIndexRepository,
+)
+from app.engine import manager as manager_mod
 from app.engine.manager import (
     DONE,
     ERROR,
@@ -42,6 +48,13 @@ async def _drain(mgr: SessionManager) -> None:
 
 
 # --- Repository ------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_null_repo_delete_ist_noop():
+    repo = NullSessionIndexRepository()
+    await repo.delete("egal")  # darf nicht werfen
+    assert await repo.list_all() == []
+
 
 @pytest.mark.asyncio
 async def test_repo_delete_entfernt_zeile_und_ist_idempotent(tmp_path):
@@ -131,6 +144,20 @@ async def test_delete_best_effort_bei_db_fehler(tmp_path, monkeypatch):
     assert mgr.get(sid) is None
 
 
+@pytest.mark.asyncio
+async def test_delete_persistenz_aus_nur_in_memory(monkeypatch):
+    """Edge: NullSessionIndexRepository (Persistenz aus) → Löschen wirkt nur
+    In-Memory, kein Fehler."""
+    monkeypatch.setattr(settings, "max_parallel_sessions", 5)
+    mgr = _mgr()  # Default = NullSessionIndexRepository
+    assert isinstance(mgr._repo, NullSessionIndexRepository)
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="x", model="haiku")
+    sid = rt.state.session_id
+    await mgr.stop(sid)
+    await mgr.delete(sid)  # darf nicht werfen
+    assert mgr.get(sid) is None
+
+
 # --- Manager: Orphan-Kill (SIGTERM) ---------------------------------------
 
 @pytest.mark.asyncio
@@ -163,6 +190,35 @@ async def test_delete_killt_verwaisten_lebenden_prozess(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_delete_kill_fehler_blockiert_nicht(tmp_path, monkeypatch):
+    """Edge: schlägt der SIGTERM fehl (Permission/Race), wird die Session trotzdem
+    aus dem Index gelöscht (best-effort)."""
+    real_kill = os.kill
+
+    def flaky_kill(pid, sig):
+        if sig == signal.SIGTERM:
+            raise PermissionError("darf nicht killen")
+        return real_kill(pid, sig)  # Lebendigkeits-Check (Signal 0) normal lassen
+
+    monkeypatch.setattr(manager_mod.os, "kill", flaky_kill)
+
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    await repo.upsert({
+        "session_id": "orphan", "status": "running", "owner": "dev",
+        "project_path": PROJECT, "model": "haiku", "permission_mode": "default",
+        "pid": os.getpid(),  # lebende PID (dieser Prozess) — SIGTERM wird gemockt
+        "created_at": "2026-06-24T10:00:00+00:00",
+        "last_activity": "2026-06-24T10:00:00+00:00",
+    })
+    mgr = _mgr(repo=repo)
+    await mgr.rehydrate()
+    await mgr.delete("orphan")  # SIGTERM wirft → trotzdem gelöscht
+    assert mgr.get("orphan") is None
+    assert await repo.list_all() == []
 
 
 # --- Manager: cleanup_terminal --------------------------------------------

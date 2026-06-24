@@ -33,7 +33,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-18 | Weitere Engines + iFrame/Launch | P1 | Planned | PROJ-1 | [Spec](PROJ-18-weitere-engines.md) |
 | PROJ-19 | Effizienz-Ausbau (RAG/Späher/Caching/Token-Dashboard) | P1 | Planned | PROJ-1, PROJ-2, PROJ-5 | [Spec](PROJ-19-effizienz-ausbau.md) |
 | PROJ-20 | Spracheingabe / Push-to-Talk (abo-frei) | P1 | Planned | PROJ-9, PROJ-4 | [Spec](PROJ-20-spracheingabe.md) |
-| PROJ-21 | Session-Löschen / Cockpit-Aufräumen | P1 | In Progress | PROJ-1, PROJ-14, PROJ-3 | [Spec](PROJ-21-session-loeschen-cockpit-aufraeumen.md) |
+| PROJ-21 | Session-Löschen / Cockpit-Aufräumen | P1 | Approved | PROJ-1, PROJ-14, PROJ-3 | [Spec](PROJ-21-session-loeschen-cockpit-aufraeumen.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

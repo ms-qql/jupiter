@@ -4,8 +4,10 @@ import {
   columnFor,
   contextLabel,
   countStatuses,
+  countTerminal,
   formatDuration,
   gaugeColor,
+  isTerminalStatus,
   modelLabel,
   phaseIndex,
   projectName,
@@ -200,6 +202,30 @@ describe("ABC_PHASES + phaseIndex — PROJ-8 Gantt", () => {
     expect(phaseIndex(null)).toBe(-1);
     expect(phaseIndex(undefined)).toBe(-1);
     expect(phaseIndex("quatsch")).toBe(-1);
+  });
+});
+
+describe("isTerminalStatus / countTerminal — PROJ-21", () => {
+  it("nur done + error sind terminal (löschbar)", () => {
+    expect(isTerminalStatus("done")).toBe(true);
+    expect(isTerminalStatus("error")).toBe(true);
+    expect(isTerminalStatus("starting")).toBe(false);
+    expect(isTerminalStatus("running")).toBe(false);
+    expect(isTerminalStatus("waiting")).toBe(false);
+    expect(isTerminalStatus("awaiting_approval")).toBe(false);
+  });
+  it("countTerminal zählt done + error", () => {
+    const sessions = [
+      session({ status: "done" }),
+      session({ status: "error" }),
+      session({ status: "running" }),
+      session({ status: "waiting" }),
+    ];
+    expect(countTerminal(sessions)).toBe(2);
+  });
+  it("countTerminal = 0 ohne terminale Sessions", () => {
+    expect(countTerminal([session({ status: "running" })])).toBe(0);
+    expect(countTerminal([])).toBe(0);
   });
 });
 
