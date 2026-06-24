@@ -144,7 +144,57 @@ Branch `dev`. Read-only Sicht über Live-Index (PROJ-14) + Vault (PROJ-2/PROJ-5)
 **Vertrag erfüllt** wie im Frontend-Abschnitt dokumentiert (Felder/Status-Codes identisch). Regression: 447 Tests grün (14 neu + 433 bestehend; volle Suite nur batch-weise wegen Speicher).
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-24 · **Branch:** dev · **Tester:** QA Engineer (Red-Team)
+
+### Automatisierte Tests
+- Backend: `tests/test_proj17_recovery.py` — **14/14 grün**. Regression (Batch-weise wegen Speicher): **433/433** bestehende Tests grün.
+- Frontend: `lib/api.recovery.test.ts` (5) — **62/62 grün** (volle vitest-Suite). ESLint sauber.
+
+### Acceptance Criteria
+| # | Kriterium | Status | Nachweis |
+|---|-----------|--------|----------|
+| 1 | Beim Start wiederherstellbare Stränge aus Vault erkennen | ✅ PASS | `candidates()` (Rehydrate-Orphans + Vault-Scan); `test_inmemory_orphan_with_handover`, `test_pure_vault_candidate_handover` |
+| 2 | Recovery-Ansicht (Projekt, letzte Phase, Zeitpunkt) | ✅ PASS | Schema-Felder + `recovery-dialog.tsx` (Phasen-/Quellen-Badge, `formatDuration`) |
+| 3 | „Hier ging's weiter"-Vorschlag (offene Punkte) | ✅ PASS | `## Offen`-Extrakt; `test_inmemory_orphan_with_handover` |
+| 4 | Wiederherstellen = Kind-Session mit Seed + `parent_session_id` | ✅ PASS | `recover()`; `test_restore_links_child_idempotent` (Seed im `effective_constitution`, Parent-Link) |
+| 5 | Verwerfen entfernt aus Ansicht, Vault bleibt | ✅ PASS | `dismiss()`; `test_dismiss_hides_but_keeps_vault` |
+| 6 | Reiner Vault-Wiederaufbau (In-Memory weg) | ✅ PASS | `test_pure_vault_candidate_handover` |
+| 7 | Keine Doppel-Kandidaten (aktiv/re-attacht) | ✅ PASS | `test_active_session_is_not_candidate` + `recovered`-Filter |
+| 8 | Deutsch; Lade-/Fehler-/Leer-Zustände | ✅ PASS | Banner/Dialog deutsch, Leer-/Busy-/Toast-Zustände |
+
+### Edge Cases
+| Fall | Status | Nachweis |
+|------|--------|----------|
+| Kein Handover → roher Stand, „unvollständig" | ✅ PASS | `test_incomplete_without_handover_or_log` |
+| Beschädigter/halber Handover → Warnung | ✅ PASS | `test_damaged_handover_warns` |
+| Mehrere Handovers → jüngsten | ✅ PASS | `test_newest_handover_wins` |
+| Projektpfad weg → anzeigen, Restore blockiert | ✅ PASS | `test_blocked_when_project_path_gone` |
+| Doppelte Wiederherstellung → idempotent (409) | ✅ PASS | `test_restore_links_child_idempotent`, `test_api_recovery_flow` |
+
+### Security / Red-Team
+- **Path-Traversal über `session_id`:** kein Dateipfad wird aus `session_id` gebaut (Dict-Lookup + Frontmatter-Vergleich) → sicher.
+- **XSS im Vorschlag:** `suggestion` als React-Textknoten (auto-escaped, `whitespace-pre-wrap`) → sicher.
+- **Verwerfen ≠ Löschen:** Vault-Datei bleibt (verifiziert) → Audit-Spur erhalten.
+- MVP ohne JWT/RLS (projektweite Entscheidung) — keine Tenant-Isolation zu prüfen.
+
+### Bugs
+**BUG-1 (Medium) — `restore` validiert die Orphan-Eigenschaft nicht.**
+`RecoveryService._candidate_for()` baut für **jede** im Speicher liegende Session einen Kandidaten — unabhängig vom Status. `POST /recovery/{id}/restore` mit der ID einer **aktiven** (z. B. `waiting`/`running`) Session läuft daher durch: es entsteht eine Duplikat-Kind-Session für einen lebenden Strang und `child_session_id` wird gesetzt (verifiziert: aus `waiting` → `active_count() == 2`).
+- *Reproduktion:* aktive Session erstellen → `POST /recovery/{id}/restore` → 201 statt Ablehnung.
+- *Impact:* über die UI nicht auslösbar (nur Kandidaten haben Buttons), aber im no-auth-MVP per direktem API-Call erreichbar; verletzt „1 Strang = 1 Nachfolger" und kann eine Claude-Session doppeln (Kosten).
+- *Vorschlag (Backend):* in `_candidate_for` (und/oder `restore`) nur fortfahren, wenn der In-Memory-Strang ein echter Recovery-Kandidat ist (Status `error` **und** Fehler beginnt mit „Verwaist", `child_session_id is None`); sonst `KeyError` → 404. `recover()`-Guard bleibt als zweite Verteidigungslinie.
+
+**BUG-2 (Low) — `dismiss` akzeptiert beliebige `session_id`.**
+`dismiss` setzt das Flag auch auf eine aktive Session (idempotent, 204). Folgenlos im Lauf, aber eine später verwaiste Session wäre dann vorab „verworfen". Optional dieselbe Orphan-Validierung wie BUG-1.
+
+**BUG-3 (Low) — Vault-Scan in `candidates()` ist O(n²) bei vielen Dateien.**
+`_vault_candidates()` liest jede Datei und ruft `_candidate_for` → `_load_source`, das `Handovers/`+`Sessions/` erneut listet/liest. Für den Single-User-MVP unkritisch; bei großen Vaults vor Phase 2 cachen/zusammenführen.
+
+**BUG-4 (Low) — theoretischer Race bei gleichzeitigem Doppel-Restore.**
+Der Idempotenz-Guard in `recover()` (Parent-Scan) liegt außerhalb des `_create_lock`; zwei exakt gleichzeitige Restores desselben Strangs könnten beide passieren. Sehr unwahrscheinlich; ggf. Guard in den Lock ziehen.
+
+### Produktionsreife
+**NOT READY (knapp)** — keine Critical/High-Bugs, aber **BUG-1 (Medium)** ist eine echte Korrektheitslücke mit sehr kleinem Fix. Empfehlung: BUG-1 fixen (2-Zeilen-Guard + Test), danach **Approved**. BUG-2–4 sind optional/Phase-2.
 
 ## Deployment
 _To be added by /abc-deploy_
