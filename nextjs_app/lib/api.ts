@@ -24,6 +24,7 @@ import type {
   ThresholdSetting,
   TrustPolicy,
   UploadResult,
+  VaultSearchResult,
   VaultWriteResult,
   WatchdogLimits,
   WatchdogSetting,
@@ -116,17 +117,36 @@ export function cleanupSessions(): Promise<{ deleted: number }> {
   return request<{ deleted: number }>("/sessions/cleanup", { method: "POST" });
 }
 
-/** Decision Card entscheiden (PROJ-4): Freigeben / Ablehnen / Mit Kommentar zurück. */
+/** Decision Card entscheiden: Freigeben / Ablehnen / Mit Kommentar zurück (PROJ-4)
+ *  bzw. Wissens-Vorschlag Freigeben / Editieren / Verwerfen (PROJ-15).
+ *  `edited` (nur knowledge_proposal): editierter Titel/Body bei „approve". */
 export function resolveDecision(
   sessionId: string,
   decisionId: string,
   decision: "approve" | "deny",
   comment?: string,
+  edited?: { title?: string | null; body?: string | null },
 ): Promise<{ ok: boolean }> {
   return request(`/sessions/${sessionId}/decisions/${decisionId}`, {
     method: "POST",
-    body: JSON.stringify({ decision, comment: comment ?? null }),
+    body: JSON.stringify({
+      decision,
+      comment: comment ?? null,
+      edited_title: edited?.title ?? null,
+      edited_body: edited?.body ?? null,
+    }),
   });
+}
+
+/** PROJ-15: Vault-Volltextsuche. scope=curated → nur kuratiertes Wissen (projektübergreifend). */
+export function searchVault(
+  q: string,
+  scope: "all" | "curated" = "all",
+  limit = 20,
+  signal?: AbortSignal,
+): Promise<VaultSearchResult> {
+  const params = new URLSearchParams({ q, scope, limit: String(limit) });
+  return request<VaultSearchResult>(`/vault/search?${params.toString()}`, { signal });
 }
 
 // --- PROJ-5: Context-Management & Handover ---------------------------------

@@ -20,7 +20,13 @@ export interface PendingDecision {
   action: string; // „Was"
   excerpt: string; // relevanter Ausschnitt (Befehl/Diff)
   rationale: string; // „Warum"
-  context: { project_path?: string; role?: string | null; phase?: string | null };
+  context: {
+    project_path?: string;
+    role?: string | null;
+    phase?: string | null;
+    /** PROJ-15: bei knowledge_proposal die erkannte Marker-Art (bug_geloest|adr|sackgasse). */
+    curation_marker?: string | null;
+  };
   created_at: string;
   state: string; // open | resolved | obsolete
   resolution: string | null;
@@ -30,10 +36,14 @@ export interface PendingDecision {
   /** PROJ-10: Klartext der Policy-Regel, die diese Card ausgelöst hat
    *  (z. B. „card · Bash @ Rolle architect"). null = konservativer Default. */
   triggering_rule?: string | null;
-  /** PROJ-10/16: Card-Typ — „normal" (operative Freigabe), „phase_transition"
-   *  (bypass-festes Phasen-Gate), „deny" (hart verboten, nur Info) oder
-   *  „watchdog_pause" (PROJ-16: Reißleine hat die Session bei Limit-Riss pausiert). */
-  card_type?: "normal" | "phase_transition" | "deny" | "watchdog_pause";
+  /** PROJ-10/15/16: Card-Typ — „normal" (operative Freigabe), „phase_transition"
+   *  (bypass-festes Phasen-Gate), „deny" (hart verboten, nur Info), „watchdog_pause"
+   *  (PROJ-16: Reißleine hat pausiert) oder „knowledge_proposal" (PROJ-15:
+   *  nicht-blockierender Wissens-Vorschlag, blockiert die Session NICHT). */
+  card_type?: "normal" | "phase_transition" | "deny" | "watchdog_pause" | "knowledge_proposal";
+  /** PROJ-15: editierbarer Inhalt eines Wissens-Vorschlags (nur knowledge_proposal). */
+  proposal_title?: string | null;
+  proposal_body?: string | null;
 }
 
 /** Struktur des AskUserQuestion-Tool-Inputs (für die Frage-Karte, PROJ-4). */
@@ -106,6 +116,19 @@ export interface VaultWriteResult {
   path: string;
   type: string;
   created: string;
+}
+
+/** Ein Suchtreffer im Vault (PROJ-2/PROJ-15) — Pfad dient zugleich als Backlink. */
+export interface VaultSearchHit {
+  path: string; // vault-relativ → über die Doku-/MD-Reader-Route öffenbar
+  line: number;
+  excerpt: string;
+}
+
+/** Antwort von GET /vault/search (PROJ-15: scope=all|curated). */
+export interface VaultSearchResult {
+  query: string;
+  hits: VaultSearchHit[];
 }
 
 /** Globale Kontext-Schwelle + erlaubter Bereich (PROJ-5). */

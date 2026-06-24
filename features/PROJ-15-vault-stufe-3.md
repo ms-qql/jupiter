@@ -189,6 +189,24 @@ Edge-Cases getestet: Doppelvorschlag→Append, Geschwätzigkeit→Entprellung, E
 
 → Bereit für `/abc-frontend` (Card-Variante „Wissens-Vorschlag" + kuratierte Suche) und danach `/abc-qa`.
 
+## Implementation Notes (Frontend Developer)
+**Datum:** 2026-06-24 · **Branch:** dev · **Stack:** Next.js 16 + shadcn/ui (Cockpit) — rein additiv, kein neues Paket. **Verifikation:** `npm run lint` grün · `next build` + TypeScript grün · `vitest` → **57 grün**.
+
+### Gebaut
+- **`components/cockpit/decision-card.tsx`** — neue **`KnowledgeProposalCard`** (eigene **smaragdgrüne** Farbe, klar abgesetzt von der orangenen Freigabe-Card; Badge „💡 Wissens-Vorschlag"). Zeigt Titel + kuratierten Body (scrollbar). Aktionen **Freigeben** / **Editieren** (klappt Titel-`Input` + Body-`Textarea` auf → „Editiert freigeben") / **Verwerfen**. Obsolet-Zustand + „In Session springen". `DecisionCard`-Router dispatcht `card_type === "knowledge_proposal"` dorthin (vor AskUserQuestion/ApproveDeny).
+- **`components/cockpit/knowledge-search.tsx` (NEU)** — projektübergreifende Suche über kuratiertes Wissen: Eingabe + `searchVault(q, "curated")`, Trefferliste (Titel + Ausschnitt), Klick öffnet die Notiz im MD-Reader.
+- **`app/(cockpit)/doku/page.tsx`** — `KnowledgeSearch` oben in der Sidebar eingehängt; `onSelect` mappt den vault-relativen Treffer-Pfad auf den absoluten Vault-Pfad und öffnet ihn via `selectPath` (Quelle wechselt automatisch auf „Vault").
+- **`lib/types.ts`** — `PendingDecision.card_type` um `knowledge_proposal`; `proposal_title`/`proposal_body`; `context.curation_marker`; neue `VaultSearchHit`/`VaultSearchResult`.
+- **`lib/api.ts`** — `resolveDecision(..., edited?)` (sendet `edited_title`/`edited_body`); neue `searchVault(q, scope, limit)`.
+
+### Surfacing
+- Wissens-Vorschläge erscheinen **inline auf der Session-Detailseite** (rendert alle `pending_decisions`) — nicht-blockierend, die Session läuft weiter. Sie setzen **nicht** `awaiting_approval`, daher kein Eintrag in der Kanban-„Review/Approval"-Spalte und keine Verfälschung des „Freigabe nötig"-Zählers (der greift nur bei `awaiting_approval`).
+
+### Hinweis
+- Frontend ist **sauber committet** (PROJ-16-Frontend war bereits in `18b3622`); nur das verschränkte **Backend** (`manager.py`/`config.py`/`schemas/sessions.py`) bleibt für den koordinierten Commit mit PROJ-16 offen.
+
+→ Bereit für `/abc-qa`.
+
 ## QA Test Results
 _To be added by /abc-qa_
 
