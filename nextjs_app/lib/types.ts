@@ -70,6 +70,9 @@ export interface Session {
   project_path: string;
   model: string;
   permission_mode: string;
+  /** PROJ-18: welche Engine die Session fährt (Default „claude"). Steuert die
+   *  Degradation engine-spezifischer Anzeigen (z. B. Kosten → „n/v"). */
+  engine: string;
   role: string | null;
   constitution_source: string | null;
   status: SessionStatus;
@@ -308,11 +311,49 @@ export interface SessionDetail extends Session {
 export interface SessionCreate {
   project_path: string;
   initial_prompt: string;
-  model: ModelName;
+  /** Modell — bei Claude „haiku|sonnet|opus", bei anderen Engines ein freier
+   *  Profil-Modellname (z. B. „gpt-4o-mini"). */
+  model: string;
   permission_mode?: PermissionMode;
   role?: string | null;
   /** PROJ-8: sprechendes Projekt-Label; ohne Angabe nutzt das Backend den Basename. */
   project_name?: string | null;
+  /** PROJ-18: Ziel-Engine (Default „claude", wenn weggelassen). */
+  engine?: string;
+}
+
+// --- PROJ-18: Weitere Engines + iFrame/Launch ------------------------------
+
+/** Integrations-Tiefe eines Registry-Eintrags: steuerbare Session, eingebettete
+ *  Web-App (iFrame) oder reiner externer Startknopf. */
+export type EngineKind = "engine" | "iframe" | "launch";
+
+/** Ein Eintrag aus GET /engines (spiegelt backend/app/schemas/engines.py EngineRead).
+ *  Engine-agnostisch + secret-frei: kein API-Key, kein argv. */
+export interface EngineRead {
+  key: string;
+  label: string;
+  kind: EngineKind;
+  /** nur bei kind=engine: „claude" | „generic_cli" | „openai". */
+  driver: string | null;
+  /** false → ausgrauen; `unavailable_reason` trägt den deutschen Setup-Hinweis. */
+  available: boolean;
+  unavailable_reason: string | null;
+  models: string[];
+  default_model: string | null;
+  capabilities: string[];
+  /** iFrame-Quelle (kind=iframe). */
+  url: string | null;
+  sandbox: string | null;
+  /** Launch-Ziel (kind=launch). */
+  target: string | null;
+}
+
+/** Antwort von GET /engines — alle Engines/iFrames/Launch-Einträge + Herkunft/Warnung. */
+export interface EnginesOverview {
+  engines: EngineRead[];
+  source: string;
+  warning: string | null;
 }
 
 // --- PROJ-9: Smart Launcher -------------------------------------------------

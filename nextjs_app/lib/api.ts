@@ -5,6 +5,7 @@ import type {
   ClipboardDir,
   DeleteResult,
   DirListing,
+  EnginesOverview,
   FileEntry,
   HandoverPreview,
   LaunchSuggestion,
@@ -93,6 +94,14 @@ export function createSession(body: SessionCreate): Promise<Session> {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+// --- PROJ-18: Engine-Registry ----------------------------------------------
+
+/** Alle konfigurierten Engines/iFrames/Launch-Einträge + Verfügbarkeit (secret-frei).
+ *  Speist den Engine-Selector im „Neue Session"-Dialog und das Werkzeuge-Panel. */
+export function getEngines(signal?: AbortSignal): Promise<EnginesOverview> {
+  return request<EnginesOverview>("/engines", { signal });
 }
 
 export function sendInput(id: string, text: string): Promise<{ ok: boolean }> {

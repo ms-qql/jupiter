@@ -30,13 +30,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ApiError, createSession, getLaunchSuggestion } from "@/lib/api";
+import { ApiError, createSession, getEngines, getLaunchSuggestion } from "@/lib/api";
 import { ABC_PHASES, modelLabel, projectName } from "@/lib/status";
 import type {
   AbcPhase,
+  EngineRead,
   FeatureSuggestion,
   LaunchSuggestion,
-  ModelName,
   PermissionMode,
 } from "@/lib/types";
 import { useSessions } from "./sessions-provider";
@@ -44,6 +44,23 @@ import { useSessions } from "./sessions-provider";
 function phaseLabel(phase: AbcPhase | null): string {
   return ABC_PHASES.find((p) => p.key === phase)?.label ?? "—";
 }
+
+// PROJ-18: Fallback-Engine, falls GET /engines (noch) nichts liefert — die
+// eingebaute Claude-Engine ist immer wählbar (rückwärtskompatibel zu PROJ-1).
+const CLAUDE_FALLBACK: EngineRead = {
+  key: "claude",
+  label: "Claude Max",
+  kind: "engine",
+  driver: "claude",
+  available: true,
+  unavailable_reason: null,
+  models: ["haiku", "sonnet", "opus"],
+  default_model: "sonnet",
+  capabilities: ["usage", "resume", "multi_turn", "tools"],
+  url: null,
+  sandbox: null,
+  target: null,
+};
 
 export function NewSessionDialog({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -55,8 +72,11 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
   const [projectPath, setProjectPath] = useState("/home/dev/projects/");
   const [prompt, setPrompt] = useState("");
   const [role, setRole] = useState("");
-  const [model, setModel] = useState<ModelName>("sonnet");
+  const [model, setModel] = useState<string>("sonnet");
   const [mode, setMode] = useState<PermissionMode>("default");
+  // PROJ-18: Engine-Auswahl (Default „claude"); Liste + Verfügbarkeit aus GET /engines.
+  const [engine, setEngine] = useState<string>("claude");
+  const [engines, setEngines] = useState<EngineRead[]>([]);
 
   // PROJ-9: Vorschlag aus der INDEX.md.
   const [suggestion, setSuggestion] = useState<LaunchSuggestion | null>(null);
@@ -67,7 +87,28 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
   // PROJ-8: Projekt-Label. Leer → Backend nutzt den Pfad-Basename; Placeholder
   // zeigt diesen Vorschlag live an, damit die Gantt-Zeile sprechend bleibt.
   const suggestedName = projectName(projectPath.trim()) || "jupiter";
-  const valid = projectPath.trim().length > 0 && prompt.trim().length > 0;
+
+  // PROJ-18: nur steuerbare Engines (kind=engine) sind im Selector wählbar;
+  // iFrame/Launch leben im Werkzeuge-Panel. Ohne Backend-Antwort bleibt Claude.
+  const engineOptions: EngineRead[] = engines.filter((e) => e.kind === "engine");
+  const effectiveEngines = engineOptions.length > 0 ? engineOptions : [CLAUDE_FALLBACK];
+  const selectedEngine =
+    effectiveEngines.find((e) => e.key === engine) ?? effectiveEngines[0];
+  const modelOptions =
+    selectedEngine.models.length > 0 ? selectedEngine.models : ["haiku", "sonnet", "opus"];
+
+  const valid =
+    projectPath.trim().length > 0 && prompt.trim().length > 0 && selectedEngine.available;
+
+  // Engine-Wechsel: Modell auf das Default-Modell des neuen Profils setzen.
+  // Plain function (kein useCallback): `effectiveEngines` wird je Render neu
+  // abgeleitet — der React Compiler übernimmt die Memoisierung.
+  function onEngineChange(key: string) {
+    setEngine(key);
+    const e = effectiveEngines.find((x) => x.key === key);
+    const next = e?.default_model ?? e?.models[0];
+    if (next) setModel(next);
+  }
 
   // Vorschlag nach Projektwahl laden (debounced), solange der Dialog offen ist.
   useEffect(() => {
@@ -102,6 +143,19 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
     };
   }, [open, projectPath]);
 
+  // PROJ-18: konfigurierte Engines laden, sobald der Dialog öffnet. Nicht-blockierend
+  // — schlägt es fehl, bleibt der Claude-Fallback wählbar.
+  useEffect(() => {
+    if (!open) return;
+    const ctrl = new AbortController();
+    getEngines(ctrl.signal)
+      .then((o) => setEngines(o.engines))
+      .catch(() => {
+        /* Backend nicht erreichbar → nur Claude (Fallback) */
+      });
+    return () => ctrl.abort();
+  }, [open]);
+
   // Optionen = Empfehlung + Alternativen (für die Auswahlliste).
   const options: FeatureSuggestion[] = suggestion?.empfehlung
     ? [suggestion.empfehlung, ...suggestion.alternativen]
@@ -127,6 +181,8 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
     setSuggestion(null);
     setSelectedId(null);
     setSugError(null);
+    setEngine("claude");
+    setModel("sonnet");
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -141,6 +197,7 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
         permission_mode: mode,
         role: role.trim() || undefined,
         project_name: project.trim() || undefined,
+        engine,
       });
       toast.success("Session gestartet");
       setOpen(false);
@@ -165,7 +222,7 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
           <DialogHeader>
             <DialogTitle>Neue Session</DialogTitle>
             <DialogDescription>
-              Startet eine Claude-Code-Session im gewählten Projekt.
+              Startet eine Session im gewählten Projekt — Standard ist Claude Max.
             </DialogDescription>
           </DialogHeader>
 
@@ -234,17 +291,46 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
               />
             </div>
 
+            {/* PROJ-18: Engine-Auswahl (Default „Claude Max"). Nicht verfügbare Engines
+                sind ausgegraut + tragen ihren deutschen Setup-Hinweis. */}
+            <div className="grid gap-2">
+              <Label htmlFor="engine">Engine</Label>
+              <Select value={engine} onValueChange={(v) => v && onEngineChange(v)}>
+                <SelectTrigger id="engine">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {effectiveEngines.map((e) => (
+                    <SelectItem key={e.key} value={e.key} disabled={!e.available}>
+                      {e.label}
+                      {!e.available && " — nicht verfügbar"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!selectedEngine.available && selectedEngine.unavailable_reason && (
+                <p className="text-xs text-amber-500">{selectedEngine.unavailable_reason}</p>
+              )}
+              {selectedEngine.available && selectedEngine.key !== "claude" && (
+                <p className="text-xs text-muted-foreground">
+                  {`Fremd-Engine: Decision Cards / Phasen-Gate greifen ggf. nicht; ohne Usage-Daten zeigen Token/Kosten „n/v“.`}
+                </p>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="model">Modell</Label>
-                <Select value={model} onValueChange={(v) => setModel(v as ModelName)}>
+                <Select value={model} onValueChange={(v) => v && setModel(v)}>
                   <SelectTrigger id="model">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="haiku">Haiku</SelectItem>
-                    <SelectItem value="sonnet">Sonnet</SelectItem>
-                    <SelectItem value="opus">Opus</SelectItem>
+                    {modelOptions.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {modelLabel(m)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

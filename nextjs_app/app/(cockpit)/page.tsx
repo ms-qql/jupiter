@@ -8,6 +8,7 @@ import { SessionGrid } from "@/components/cockpit/session-grid";
 import { KanbanBoard } from "@/components/cockpit/kanban-board";
 import { GanttChart } from "@/components/cockpit/gantt-chart";
 import { ArchivedSection } from "@/components/cockpit/archived-section";
+import { ToolsPanel } from "@/components/cockpit/tools-panel";
 import { NewSessionDialog } from "@/components/cockpit/new-session-dialog";
 import { SettingsDialog } from "@/components/cockpit/settings-dialog";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
@@ -73,6 +74,8 @@ export default function CockpitPage() {
           <TabsList>
             <TabsTrigger value="kacheln">Kacheln</TabsTrigger>
             <TabsTrigger value="kanban">Kanban</TabsTrigger>
+            {/* PROJ-18: eingebettete Apps (iFrame) + externe Startknöpfe. */}
+            <TabsTrigger value="werkzeuge">Werkzeuge</TabsTrigger>
           </TabsList>
           <TabsContent value="kacheln" className="mt-4">
             {active.length > 0 ? (
@@ -94,6 +97,9 @@ export default function CockpitPage() {
               </h2>
               <GanttChart sessions={sessions} />
             </section>
+          </TabsContent>
+          <TabsContent value="werkzeuge" className="mt-4">
+            <ToolsPanel />
           </TabsContent>
         </Tabs>
       )}

@@ -171,6 +171,25 @@ GET/POST /sessions/{id}/...    → unverändert (start/input/pause/stop/transcri
 **Verifizierte AC:** generischer Treiber (✓), zwei Test-Engines exemplarisch lauffähig — OpenAI + OpenRouter über *einen* Treiber (✓), engine-agnostische Session-Sicht + Degradation (✓), Engine-Auswahl in `POST /sessions`, Claude bleibt Default (✓), fehlende Engine/Key → klare Meldung, kein Crash (✓), deutsche Texte (✓).
 **Offen (nicht im Backend-Scope):** Frontend — Engine-Selector im `new-session-dialog`, `EmbedTab` (iFrame), `LaunchButton`, „n/v"-Degradation im `session-tile`. Realer Smoke-Turn gegen echte OpenAI-/OpenRouter-Keys (`/abc-qa-e2e`).
 
+## Implementierung (Frontend) — 2026-06-24
+**Branch:** dev · **Stack:** Next.js 16 + shadcn/ui (Base UI) + Tailwind · **Status:** Frontend steht, `tsc`/ESLint/`next build` grün, 64 Vitest-Tests grün.
+
+**Neu:**
+- `components/cockpit/launch-button.tsx` — Tiefe 3: Startknopf. Web-URL → neuer Tab (`rel=noopener`); lokaler Befehl (keine URL) → „Befehl kopieren" (im Browser nicht ausführbar).
+- `components/cockpit/embed-tab.tsx` — Tiefe 2: iFrame-Einbettung mit `sandbox` aus dem Profil; persistenter Fallback „In neuem Tab öffnen" + deutscher Hinweis, falls die Fremdseite die Einbettung verweigert (X-Frame-Options/CSP — von uns nicht erkennbar, daher immer Fallback).
+- `components/cockpit/tools-panel.tsx` — lädt `GET /engines`, rendert iFrame-Apps + Startknöpfe; zeigt Registry-`warning`; leer-/Fehler-Zustand mit Hinweis auf `config/engines.yaml`.
+
+**Geändert:**
+- `lib/types.ts` — `engine` an `Session` (Pflicht) + `engine?` an `SessionCreate`; neue Typen `EngineKind`/`EngineRead`/`EnginesOverview`; `SessionCreate.model` von `ModelName` auf `string` gelockert (Fremd-Engine-Modelle).
+- `lib/api.ts` — `getEngines()` (`GET /engines`).
+- `lib/status.ts` — `engineShowsCost()` + `costLabel()` (nur Claude liefert echte Kosten → sonst „n/v").
+- `components/cockpit/new-session-dialog.tsx` — Engine-Selector (Default „Claude Max"); nicht verfügbare Engines ausgegraut + deutscher Setup-Hinweis; Modell-Liste folgt dem Engine-Profil; `engine` wird an `createSession` durchgereicht; Submit blockiert bei nicht verfügbarer Engine. Fällt ohne Backend-Antwort sauber auf den Claude-Fallback zurück.
+- `components/cockpit/session-tile.tsx` — „n/v"-Degradation der Kosten + Engine-Badge für Nicht-Claude-Sessions (engine-agnostische Sicht; PROJ-27-Heartbeat-Zeilen unberührt).
+- `app/(cockpit)/page.tsx` — neuer Tab „Werkzeuge" (`ToolsPanel`).
+- Test-Fixtures (`lib/status.test.ts`, `gantt-chart.test.tsx`) um `engine: "claude"` ergänzt.
+
+**Bekannte Einschränkung:** Der „Werkzeuge"-Tab liegt innerhalb des Session-Boards und ist daher nur sichtbar, wenn ≥1 Session existiert (Empty-State zeigt vorher nur den Start-Hinweis). Reicht für die AC; ein immer sichtbares Panel wäre ein kleiner Folge-Schliff.
+
 ## QA Test Results
 
 **Tested:** 2026-06-24

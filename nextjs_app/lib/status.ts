@@ -180,6 +180,17 @@ export function contextLabel(pct: number, known: boolean): string {
   return known ? `${Math.round(pct)}%` : "unbekannt";
 }
 
+/** PROJ-18: Nur der Claude-Treiber liefert echte Kosten; andere Engines (OpenAI/CLI)
+ *  haben keine Kosten-Extraktion → die Anzeige degradiert sauber zu „n/v". */
+export function engineShowsCost(engine: string): boolean {
+  return engine === "claude";
+}
+
+/** Kosten-Label der Kachel: „$x.xxx" für Claude, sonst „n/v" (engine-agnostische Degradation). */
+export function costLabel(engine: string, totalCostUsd: number): string {
+  return engineShowsCost(engine) ? `$${totalCostUsd.toFixed(3)}` : "n/v";
+}
+
 /** Farbklasse des Kontext-Balkens: rot ab Schwelle, amber kurz davor, sonst grün (PROJ-5). */
 export function gaugeColor(pct: number, threshold: number): string {
   if (pct >= threshold) return "bg-red-500";
