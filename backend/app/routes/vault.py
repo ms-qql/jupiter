@@ -11,6 +11,7 @@ from ..engine.vault import VaultService
 from ..schemas.vault import (
     VaultFileInfo,
     VaultFileRead,
+    VaultRagPreview,
     VaultSearchResult,
     VaultWriteRequest,
     VaultWriteResult,
@@ -52,6 +53,22 @@ async def search(
     vault = _vault(request)
     hits = vault.search_curated(q, limit) if scope == "curated" else vault.search(q, limit)
     return {"query": q, "hits": hits}
+
+
+@router.get("/rag/preview", response_model=VaultRagPreview)
+async def rag_preview(
+    request: Request,
+    q: str = Query(..., min_length=1, max_length=200, description="Query für die Relevanz-Auswahl."),
+    top_n: int = Query(5, ge=1, le=20, description="Maximale Anzahl Ausschnitte."),
+    scope: str = Query("all", pattern="^(all|curated)$",
+                       description="all = ganzer Vault; curated = nur kuratiertes Wissen (PROJ-15)."),
+) -> dict:
+    """Pointer/RAG (PROJ-19 #23): gerankte relevante Ausschnitte statt Volltext.
+
+    Macht die Kontext-Ersparnis sichtbar (``reduction_pct``) und signalisiert via
+    ``fallback`` einen leeren Treffer, damit der Caller auf Volltext zurückfallen kann.
+    """
+    return _vault(request).rag_preview(q, top_n=top_n, curated=scope == "curated")
 
 
 @router.post("/files", response_model=VaultWriteResult, status_code=201)

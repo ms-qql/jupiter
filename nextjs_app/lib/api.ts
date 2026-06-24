@@ -26,8 +26,16 @@ import type {
   LivenessLimits,
   LivenessSetting,
   ThresholdSetting,
+  TranscriptionResult,
+  TranscriptionSetting,
   TrustPolicy,
   UploadResult,
+  UsageDrilldownRead,
+  UsageRange,
+  UsageSummaryRead,
+  ScoutRequest,
+  ScoutResult,
+  VaultRagPreview,
   VaultSearchResult,
   VaultWriteResult,
   WatchdogLimits,
@@ -104,6 +112,28 @@ export function getEngines(signal?: AbortSignal): Promise<EnginesOverview> {
   return request<EnginesOverview>("/engines", { signal });
 }
 
+// --- PROJ-19 (#28/#27): Token-/Kosten-Dashboard ----------------------------
+
+/** Verbrauchs-Aggregat (Tokens/Kosten gesamt + je Modell/Projekt + Cache-Quote). */
+export function getUsageSummary(
+  range: UsageRange,
+  signal?: AbortSignal,
+): Promise<UsageSummaryRead> {
+  return request<UsageSummaryRead>(`/usage/summary?range=${range}`, { signal });
+}
+
+/** Session-Drilldown (nach Tokens absteigend), optional nach Modell/Projekt gefiltert. */
+export function getUsageDrilldown(
+  range: UsageRange,
+  opts?: { model?: string; project?: string },
+  signal?: AbortSignal,
+): Promise<UsageDrilldownRead> {
+  const params = new URLSearchParams({ range });
+  if (opts?.model) params.set("model", opts.model);
+  if (opts?.project) params.set("project", opts.project);
+  return request<UsageDrilldownRead>(`/usage/drilldown?${params.toString()}`, { signal });
+}
+
 export function sendInput(id: string, text: string): Promise<{ ok: boolean }> {
   return request(`/sessions/${id}/input`, {
     method: "POST",
@@ -168,6 +198,29 @@ export function searchVault(
 ): Promise<VaultSearchResult> {
   const params = new URLSearchParams({ q, scope, limit: String(limit) });
   return request<VaultSearchResult>(`/vault/search?${params.toString()}`, { signal });
+}
+
+// --- PROJ-19 (#23): Pointer/RAG-Vorschau -----------------------------------
+
+/** Gerankte relevante Vault-Ausschnitte statt Volltext + Ersparnis-Messung/Fallback. */
+export function getRagPreview(
+  q: string,
+  topN = 5,
+  scope: "all" | "curated" = "all",
+  signal?: AbortSignal,
+): Promise<VaultRagPreview> {
+  const params = new URLSearchParams({ q, top_n: String(topN), scope });
+  return request<VaultRagPreview>(`/vault/rag/preview?${params.toString()}`, { signal });
+}
+
+// --- PROJ-19 (#26): Späher-Agenten -----------------------------------------
+
+/** Fazit-Aufgabe an einen günstigen Späher delegieren → nur das verdichtete Fazit. */
+export function runScout(body: ScoutRequest): Promise<ScoutResult> {
+  return request<ScoutResult>("/agents/scout", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 // --- PROJ-5: Context-Management & Handover ---------------------------------
@@ -493,4 +546,48 @@ export function restoreRecovery(
  *  zu löschen (Audit bleibt). 204 → void. */
 export function dismissRecovery(sessionId: string): Promise<void> {
   return request<void>(`/recovery/${sessionId}/dismiss`, { method: "POST" });
+}
+
+// --- PROJ-20: Spracheingabe / Push-to-Talk ---------------------------------
+
+/** Audio transkribieren — multipart, daher eigenes fetch (kein JSON-Content-Type
+ *  wie bei `request`). Engine-Wahl (self-hosted/Groq) entscheidet das Backend
+ *  anhand der Settings. Audio wird serverseitig nicht gespeichert. */
+export async function transcribeAudio(
+  audio: Blob,
+  language?: string,
+): Promise<TranscriptionResult> {
+  const fd = new FormData();
+  fd.append("audio", audio, "aufnahme.webm");
+  if (language) fd.append("language", language);
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}/transcription`, { method: "POST", body: fd });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (!resp.ok) {
+    redirectToLoginOn401(resp.status);
+    let detail = `Fehler ${resp.status}`;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(detail, resp.status);
+  }
+  return (await resp.json()) as TranscriptionResult;
+}
+
+export function getTranscriptionSettings(signal?: AbortSignal): Promise<TranscriptionSetting> {
+  return request<TranscriptionSetting>("/settings/transcription", { signal });
+}
+
+/** Cloud-Fallback (Groq) bewusst an/aus. 400, wenn use_groq=true ohne Key. */
+export function setTranscriptionSettings(useGroq: boolean): Promise<TranscriptionSetting> {
+  return request<TranscriptionSetting>("/settings/transcription", {
+    method: "PATCH",
+    body: JSON.stringify({ use_groq: useGroq }),
+  });
 }

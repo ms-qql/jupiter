@@ -25,6 +25,11 @@ from ..schemas.settings import (
     WatchdogLimitsPut,
     WatchdogSettingRead,
 )
+from ..schemas.transcription import (
+    TranscriptionSettingPatch,
+    TranscriptionSettingRead,
+)
+from ..engine.transcription import TranscriptionService
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -137,3 +142,32 @@ async def put_liveness(payload: LivenessLimitsPut) -> dict:
         return liveness.liveness_store.save(payload.model_dump())
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Spracheingabe / Transkriptions-Quelle (PROJ-20) ----------------------
+
+def _transcription_payload() -> dict:
+    return {
+        "use_groq": TranscriptionService.use_groq(),
+        "groq_available": TranscriptionService.groq_available(),
+        "model": settings.whisper_model,
+        "language": settings.whisper_language,
+    }
+
+
+@router.get("/transcription", response_model=TranscriptionSettingRead)
+async def get_transcription() -> dict:
+    """Aktuelle Quelle (lokal/Groq) + ob der Groq-Fallback überhaupt verfügbar ist."""
+    return _transcription_payload()
+
+
+@router.patch("/transcription", response_model=TranscriptionSettingRead)
+async def set_transcription(payload: TranscriptionSettingPatch) -> dict:
+    """Cloud-Fallback bewusst an/aus. Groq ohne konfigurierten Key → 400 (Setup-Hinweis)."""
+    if payload.use_groq and not TranscriptionService.groq_available():
+        raise HTTPException(
+            status_code=400,
+            detail="Kein Groq-API-Key konfiguriert (JUPITER_GROQ_API_KEY in der .env setzen).",
+        )
+    settings.use_groq_transcription = payload.use_groq
+    return _transcription_payload()

@@ -106,6 +106,20 @@ class Settings(BaseSettings):
     # `claude --resume` fortsetzen. False → Sessions bleiben verwaist + manueller Knopf.
     auto_resume_on_restart: bool = True
 
+    # PROJ-19 (#27): Prompt-Caching. An → stabile Prompt-Bestandteile (Konstitution/
+    # Rolle) bilden das cache-freundliche Präfix + werden über einen Inhalts-Hash
+    # identifiziert (Änderung = automatische Invalidierung). Aus → identische
+    # Assemblierung, nur ohne Cache-Key (No-op-Fallback, kein Hard-Fail).
+    prompt_cache_enabled: bool = True
+
+    # PROJ-19 (#26): billige Späher-Agenten. Kurzlebiger, nicht-steuerbarer Lauf auf
+    # dem günstigen Modell, der viel liest/sucht und nur das Fazit zurückgibt. Aus →
+    # Endpunkt liefert 503 (kein Hard-Fail im Treiber-Pfad).
+    scout_enabled: bool = True
+    scout_default_model: str = "haiku"  # günstiges Modell für Fazit-Aufgaben.
+    scout_timeout_seconds: int = 180
+    scout_max_context_chars: int = 40_000  # eingelesener Kontext gedeckelt (Kosten-Schutz).
+
     # --- Decision Cards / Freigabe-Hook (PROJ-4) ---------------------------
     # Freigabe-Flow aktivieren: Sessions starten mit dem PreToolUse-Hook.
     enable_decision_cards: bool = True
@@ -190,6 +204,25 @@ class Settings(BaseSettings):
         # Archive
         "zip", "tar", "gz", "tgz",
     }
+
+    # --- Spracheingabe / Push-to-Talk (PROJ-20) --------------------------
+    # Standard ist self-hosted faster-whisper (lokal, kein API-Key, keine
+    # laufenden Kosten). Modellgröße als Kompromiss aus Deutsch-Qualität und
+    # CPU-Latenz/RAM auf dem GPU-losen Dev-VPS; via Env hoch-/runterschaltbar.
+    whisper_model: str = "small"
+    # Transkriptions-Sprache (Default Deutsch); pro Request überschreibbar.
+    whisper_language: str = "de"
+    # Optionaler Groq-Cloud-Fallback (pay-per-use). Leerer Key = nicht verfügbar.
+    # Secret NUR aus der .env (JUPITER_GROQ_API_KEY), nie im Repo.
+    groq_api_key: str = ""
+    # Cloud-Fallback bewusst an/aus. Default AUS (DSGVO: Audio bleibt lokal).
+    # Greift nur, wenn zusätzlich ein Key gesetzt ist.
+    use_groq_transcription: bool = False
+    # Längenlimit der Aufnahme (Sek.) — Schutz vor Riesen-Uploads. Das Frontend
+    # stoppt zusätzlich clientseitig; hier ist die serverseitige Obergrenze.
+    max_audio_seconds: int = 120
+    # Harte Obergrenze der Audio-Größe (Bytes) als zweite Verteidigungslinie.
+    max_audio_bytes: int = 25 * 1024 * 1024  # 25 MB
 
 
 settings = Settings()

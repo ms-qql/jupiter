@@ -163,6 +163,11 @@ export function phaseIndex(phase: string | null | undefined): number {
   return ABC_PHASES.findIndex((p) => p.key === phase);
 }
 
+/** Volles Label einer Phase (oder null, wenn unbekannt). */
+export function phaseLabel(phase: string | null | undefined): string | null {
+  return ABC_PHASES.find((p) => p.key === phase)?.label ?? null;
+}
+
 // Hilfen ----------------------------------------------------------------------
 
 /** Kurzlabel fürs Modell — auch wenn das Backend die volle ID auflöst
