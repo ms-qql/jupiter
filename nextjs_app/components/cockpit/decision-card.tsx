@@ -174,6 +174,7 @@ function ApproveDenyCard({ decision, showJump = true, className }: CardProps) {
   const isPhaseGate = cardType === "phase_transition";
   const isDeny = cardType === "deny"; // Aktion bereits blockiert — nur Kenntnisnahme
   const isWatchdog = cardType === "watchdog_pause"; // PROJ-16: Reißleine hat pausiert
+  const isSelfRestart = cardType === "self_restart"; // PROJ-33: Host-/Backend-Neustart abgefangen
 
   async function decide(verdict: "approve" | "deny", withComment?: string) {
     if (busy) return;
@@ -184,7 +185,9 @@ function ApproveDenyCard({ decision, showJump = true, className }: CardProps) {
         verdict === "approve"
           ? isWatchdog
             ? "Fortgesetzt — Limit zurückgesetzt"
-            : "Freigegeben"
+            : isSelfRestart
+              ? "Neustart freigegeben"
+              : "Freigegeben"
           : withComment
             ? "Mit Kommentar zurückgegeben"
             : "Abgelehnt",
@@ -221,6 +224,7 @@ function ApproveDenyCard({ decision, showJump = true, className }: CardProps) {
         isPhaseGate && "border-violet-500/50 bg-violet-500/5 ring-violet-500/20",
         isDeny && "border-red-500/50 bg-red-500/5 ring-red-500/20",
         isWatchdog && "border-amber-500/60 bg-amber-500/10 ring-amber-500/30",
+        isSelfRestart && "border-red-500/60 bg-red-500/10 ring-red-500/30",
         obsolete && "border-border bg-muted/30 opacity-60 ring-0",
         className,
       )}
@@ -236,16 +240,20 @@ function ApproveDenyCard({ decision, showJump = true, className }: CardProps) {
             isDeny && "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400",
             isWatchdog &&
               "border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-400",
+            isSelfRestart &&
+              "border-red-500/50 bg-red-500/15 text-red-700 dark:text-red-400",
           )}
         >
-          {isWatchdog && <ShieldAlert className="size-3" />}
+          {(isWatchdog || isSelfRestart) && <ShieldAlert className="size-3" />}
           {isPhaseGate
             ? "Phasenwechsel"
             : isDeny
               ? "Verboten"
               : isWatchdog
                 ? "Watchdog"
-                : decision.tool_name}
+                : isSelfRestart
+                  ? "Host-Neustart"
+                  : decision.tool_name}
         </Badge>
         <span className="min-w-0 flex-1 break-words text-sm font-medium">{decision.action}</span>
       </div>
@@ -357,7 +365,7 @@ function ApproveDenyCard({ decision, showJump = true, className }: CardProps) {
           {/* Aktionen */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button size="sm" disabled={busy} onClick={() => decide("approve")}>
-              {isPhaseGate ? "Phase freigeben" : "Freigeben"}
+              {isPhaseGate ? "Phase freigeben" : isSelfRestart ? "Neustart freigeben" : "Freigeben"}
             </Button>
             <Button
               size="sm"

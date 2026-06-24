@@ -1,6 +1,6 @@
 # PROJ-17: Recovery über den Vault
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #20 (kritischstes Failure-Szenario)
@@ -196,6 +196,12 @@ _Ursprünglicher Befund:_
 
 **BUG-4 (Low) — theoretischer Race bei gleichzeitigem Doppel-Restore.**
 Der Idempotenz-Guard in `recover()` (Parent-Scan) liegt außerhalb des `_create_lock`; zwei exakt gleichzeitige Restores desselben Strangs könnten beide passieren. Sehr unwahrscheinlich; ggf. Guard in den Lock ziehen.
+
+**BUG-5 (High) — ✅ BEHOBEN (2026-06-24).** *Reiner Vault-Kandidat mit nur Session-Log war nicht wiederherstellbar.*
+Symptom: Im Recovery-Dialog zeigten Log-only-Stränge „Projektpfad nicht rekonstruierbar — Wiederherstellung nicht möglich" und der „Wiederherstellen"-Button war blockiert (Toast-Fehler). Ursache: Der Projektpfad wurde nur aus dem Handover-Body (`Projektpfad: \`…\``) gelesen; ein Session-Log trug den Pfad **nirgends** (Frontmatter nur `owner/session_id/created/type/title`). Fehlte der Live-Index (genau der Reboot-Fall, für den Recovery existiert), war der Strang tot. Fix:
+- `vault.write_session_log()` schreibt `project_path` + `project_name` ins Frontmatter (durable für reinen Vault-Wiederaufbau).
+- `RecoveryService` rekonstruiert den Pfad nun mehrstufig: Handover-Body → Frontmatter-`project_path` → Projektname gegen existierende Verzeichnisse unter `settings.allowed_roots` (Backfill für Altbestand ohne Frontmatter-Pfad; gibt nur einen **tatsächlich existierenden** Ordner zurück, sonst bleibt es blockiert).
+- Regressionstests: `test_pure_vault_log_with_frontmatter_path`, `test_pure_vault_log_path_resolved_by_name` (+ angepasster `test_pure_vault_log_only_blocked`).
 
 ### Produktionsreife
 **READY → Approved (2026-06-24).** BUG-1 (Medium) behoben + durch Regressionstests abgesichert. Keine Critical/High/Medium offen. BUG-2–4 (Low) bleiben als optionale Phase-2-Härtung dokumentiert (kein Blocker).

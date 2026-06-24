@@ -6,6 +6,7 @@ implementieren später dieselbe Schnittstelle.
 """
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -14,6 +15,28 @@ from .events import StreamEvent
 
 # Callback, das der Manager dem Treiber übergibt; der Treiber ruft es je Event.
 EventHandler = Callable[[StreamEvent], Awaitable[None]]
+
+
+def pid_alive(pid: int | None) -> bool:
+    """PROJ-33: Existiert der OS-Prozess noch? (Signal 0, best-effort.)
+
+    Härtet die ``is_alive``-Prüfung der Subprozess-Treiber: asyncios ``returncode``
+    kann veralten, wenn der Prozess starb, ohne dass der Event-Loop ihn reapte
+    (beobachteter Geister-„aktiv"-Zustand). Ein nicht (mehr) existierender PID gilt
+    als tot. Identische Semantik wie ``SessionManager._pid_alive`` (eine Quelle der
+    Lebendigkeits-Logik).
+    """
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # existiert, gehört aber anderem User → lebt
+        return True
+    except (OSError, ValueError):  # im Zweifel als lebend werten (kein Fehlalarm „tot")
+        return True
+    return True
 
 
 @dataclass

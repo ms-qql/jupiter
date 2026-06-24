@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     # Pfad der SQLite-Datei (Live-Index, NICHT die Wahrheit — die bleibt der Vault).
     # Wird inkl. Elternverzeichnis bei Bedarf automatisch angelegt.
     session_index_db_path: str = str(Path.home() / "jupiter-data" / "session_index.db")
+    # PROJ-33: Nach einem GEORDNETEN Backend-Neustart gedrainte Sessions automatisch via
+    # `claude --resume` fortsetzen. False → Sessions bleiben verwaist + manueller Knopf.
+    auto_resume_on_restart: bool = True
 
     # --- Decision Cards / Freigabe-Hook (PROJ-4) ---------------------------
     # Freigabe-Flow aktivieren: Sessions starten mit dem PreToolUse-Hook.

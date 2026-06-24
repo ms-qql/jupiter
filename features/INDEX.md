@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-33
+**Next Available ID:** PROJ-34
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -29,8 +29,8 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-14 | PROJ-1-Härtung: Limit + Persistenz | P1 | Deployed | PROJ-1 | [Spec](PROJ-14-engine-haertung-limit-persistenz.md) |
 | PROJ-15 | Vault Stufe 3 (lebendes Gehirn + Kuratierung) | P1 | Deployed | PROJ-2, PROJ-4, PROJ-5 | [Spec](PROJ-15-vault-stufe-3.md) |
 | PROJ-16 | Amok-Watchdog + Limits | P1 | Deployed | PROJ-1, PROJ-4, PROJ-10 | [Spec](PROJ-16-amok-watchdog.md) |
-| PROJ-17 | Recovery über den Vault | P1 | Approved | PROJ-2, PROJ-5, PROJ-14 | [Spec](PROJ-17-recovery-vault.md) |
-| PROJ-18 | Weitere Engines + iFrame/Launch | P1 | Approved | PROJ-1 | [Spec](PROJ-18-weitere-engines.md) |
+| PROJ-17 | Recovery über den Vault | P1 | Deployed | PROJ-2, PROJ-5, PROJ-14 | [Spec](PROJ-17-recovery-vault.md) |
+| PROJ-18 | Weitere Engines + iFrame/Launch | P1 | Deployed | PROJ-1 | [Spec](PROJ-18-weitere-engines.md) |
 | PROJ-19 | Effizienz-Ausbau (RAG/Späher/Caching/Token-Dashboard) | P1 | Planned | PROJ-1, PROJ-2, PROJ-5 | [Spec](PROJ-19-effizienz-ausbau.md) |
 | PROJ-20 | Spracheingabe / Push-to-Talk (abo-frei) | P1 | Planned | PROJ-9, PROJ-4 | [Spec](PROJ-20-spracheingabe.md) |
 | PROJ-21 | Session-Löschen / Cockpit-Aufräumen | P1 | Deployed | PROJ-1, PROJ-14, PROJ-3 | [Spec](PROJ-21-session-loeschen-cockpit-aufraeumen.md) |
@@ -39,12 +39,13 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 
 | ID | Feature | Prio | Status | Abhängigkeiten | Spec |
 |----|---------|------|--------|----------------|------|
-| PROJ-27 | Verifizierter Liveness-Indikator + Reanimieren hängender Sessions | P1 | Approved | PROJ-1, PROJ-3, PROJ-14, PROJ-16 | [Spec](PROJ-27-liveness-reanimieren.md) |
+| PROJ-27 | Verifizierter Liveness-Indikator + Reanimieren hängender Sessions | P1 | Deployed | PROJ-1, PROJ-3, PROJ-14, PROJ-16 | [Spec](PROJ-27-liveness-reanimieren.md) |
 | PROJ-28 | Fileexplorer Drei-Spalten-Layout (Sidebar · Panel · Ansicht) | P1 | Planned | PROJ-11, PROJ-7 | [Spec](PROJ-28-fileexplorer-drei-spalten.md) |
 | PROJ-29 | Eingabefeld-Höhe symmetrisch zu den 3 Buttons | P2 | Planned | PROJ-3, PROJ-11 | [Spec](PROJ-29-eingabefeld-hoehe-symmetrie.md) |
 | PROJ-30 | Kanban-Phasenerkennung im Bypass-Mode (QA/Deploy) | P1 | Planned | PROJ-8, PROJ-1 | [Spec](PROJ-30-kanban-phasen-bypass.md) |
 | PROJ-31 | Spec-Links im MD-Reader auflösen (Doku führt ins Leere) | P1 | Planned | PROJ-7, PROJ-12 | [Spec](PROJ-31-md-reader-spec-links.md) |
-| PROJ-32 | Fortschritts-Signal aus Tool-Aktivität (kein False-„hängt" bei langen Tools) | P1 | Approved | PROJ-16, PROJ-27, PROJ-4 | [Spec](PROJ-32-fortschritt-aus-tool-aktivitaet.md) |
+| PROJ-32 | Fortschritts-Signal aus Tool-Aktivität (kein False-„hängt" bei langen Tools) | P1 | Deployed | PROJ-16, PROJ-27, PROJ-4 | [Spec](PROJ-32-fortschritt-aus-tool-aktivitaet.md) |
+| PROJ-33 | Session-Lifecycle-Härtung (Restart-Resilienz + prozess-verifiziertes Liveness) | P1 | Deployed | PROJ-1, PROJ-14, PROJ-27, PROJ-17 | [Spec](PROJ-33-session-lifecycle-haertung.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

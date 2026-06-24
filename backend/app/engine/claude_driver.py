@@ -17,7 +17,7 @@ import asyncio
 import json
 
 from ..config import settings
-from .base import EngineDriver, EventHandler, LaunchSpec
+from .base import EngineDriver, EventHandler, LaunchSpec, pid_alive
 from .events import StreamEvent, parse_line
 
 
@@ -76,7 +76,12 @@ class ClaudeCodeDriver(EngineDriver):
 
     @property
     def is_alive(self) -> bool:
-        return self._proc is not None and self._proc.returncode is None
+        proc = self._proc
+        if proc is None or proc.returncode is not None:
+            return False
+        # PROJ-33: ``returncode`` allein kann veralten (Prozess tot, aber nicht
+        # gereapt → Geister-„aktiv"). Zusätzlich die OS-PID verifizieren.
+        return pid_alive(proc.pid)
 
     @property
     def pid(self) -> int | None:

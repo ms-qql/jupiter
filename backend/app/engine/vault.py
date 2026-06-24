@@ -332,6 +332,13 @@ class VaultService:
             title=title,
             created=state.created_at,
             on_exists=on_exists,
+            # PROJ-17: Projektpfad ins Frontmatter, damit ein reiner Vault-Wiederaufbau
+            # (Live-Index weg) den Strang wiederherstellen kann — das Session-Log
+            # trägt sonst keinen Pfad und die Recovery wäre blockiert.
+            extra_meta={
+                "project_path": state.project_path,
+                "project_name": state.project_name or title,
+            },
         )
 
     # --- atomare Datei-Operationen -----------------------------------------

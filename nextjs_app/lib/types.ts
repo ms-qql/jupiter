@@ -44,11 +44,18 @@ export interface PendingDecision {
   /** PROJ-10: Klartext der Policy-Regel, die diese Card ausgelöst hat
    *  (z. B. „card · Bash @ Rolle architect"). null = konservativer Default. */
   triggering_rule?: string | null;
-  /** PROJ-10/15/16: Card-Typ — „normal" (operative Freigabe), „phase_transition"
+  /** PROJ-10/15/16/33: Card-Typ — „normal" (operative Freigabe), „phase_transition"
    *  (bypass-festes Phasen-Gate), „deny" (hart verboten, nur Info), „watchdog_pause"
-   *  (PROJ-16: Reißleine hat pausiert) oder „knowledge_proposal" (PROJ-15:
-   *  nicht-blockierender Wissens-Vorschlag, blockiert die Session NICHT). */
-  card_type?: "normal" | "phase_transition" | "deny" | "watchdog_pause" | "knowledge_proposal";
+   *  (PROJ-16: Reißleine hat pausiert), „knowledge_proposal" (PROJ-15:
+   *  nicht-blockierender Wissens-Vorschlag) oder „self_restart" (PROJ-33: ein Tool
+   *  würde den eigenen Host/Backend neustarten → bypass-feste Freigabe nötig). */
+  card_type?:
+    | "normal"
+    | "phase_transition"
+    | "deny"
+    | "watchdog_pause"
+    | "knowledge_proposal"
+    | "self_restart";
   /** PROJ-15: editierbarer Inhalt eines Wissens-Vorschlags (nur knowledge_proposal). */
   proposal_title?: string | null;
   proposal_body?: string | null;

@@ -1,6 +1,6 @@
 # PROJ-27: Verifizierter Liveness-Indikator + Reanimieren hängender Sessions
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -303,4 +303,11 @@ Alle 9 ACs jetzt **✅ Pass** — insbesondere **AC 2** („aktiv" = echter Hear
 ### Fazit (Runde 2 — final)
 PROJ-27 ist funktional vollständig, abgesichert und ohne offene Critical/High-Befunde. **READY for deploy.** Status **Approved**.
 
-**Nächster Schritt:** `/abc-deploy` (dev → main promoten).
+---
+
+## Deployment (2026-06-24, `/abc-deploy`)
+- **Produktion:** https://jupiter.auxevo.tech · **Version:** 0.6.0 (Tag `v0.6.0`) · **Branch:** `main` (Promotion `dev → main`)
+- **Mit ausgeliefert:** PROJ-17, PROJ-18, PROJ-27, PROJ-32 (gemeinsamer Release-Zug v0.6.0).
+- **Host-nativ** (kein Container): systemd `jupiter-backend`/`jupiter-frontend`, Caddy-TLS, GitHub-Webhook → `deploy.sh` (`reset --hard origin/main` + `npm run build` + `pip install` + Service-Restart).
+- **Geliefert:** verifizierter Heartbeat-Indikator (aktiv/hängt/tot) in Kachel + Detail, hintergrund-getriebene Hänger-Erkennung, Auto-Reanimierung (Limit/Backoff, global abschaltbar) + manueller „Reaktivieren"-Knopf, `GET/PUT /settings/liveness`. False-Positive bei langen Tools durch PROJ-32 behoben.
+- **Browser-Smoke nach Deploy** (auf der Prod-Domain, nach SW-Hard-Refresh): Heartbeat-Punkt sichtbar, Reaktivieren-Knopf an hängender/toter Session, Liveness-Settings-Tab lädt.

@@ -18,7 +18,7 @@ import asyncio
 import json
 
 from .adapters import get_adapter
-from .base import EngineDriver, EventHandler, LaunchSpec
+from .base import EngineDriver, EventHandler, LaunchSpec, pid_alive
 from .events import StreamEvent
 
 
@@ -71,7 +71,11 @@ class GenericCliDriver(EngineDriver):
 
     @property
     def is_alive(self) -> bool:
-        return self._proc is not None and self._proc.returncode is None
+        proc = self._proc
+        if proc is None or proc.returncode is not None:
+            return False
+        # PROJ-33: zusätzlich zur asyncio-``returncode`` die OS-PID prüfen (kein Geister-„aktiv").
+        return pid_alive(proc.pid)
 
     @property
     def pid(self) -> int | None:

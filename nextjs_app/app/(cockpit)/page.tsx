@@ -67,9 +67,9 @@ export default function CockpitPage() {
         <BoardSkeleton />
       ) : showError ? (
         <ErrorState message={error} />
-      ) : sessions.length === 0 ? (
-        <EmptyState />
       ) : (
+        // PROJ-18 (BUG-3-Fix): Tabs IMMER rendern — der „Werkzeuge"-Tab (iFrame/Launch)
+        // ist auch ohne laufende Session erreichbar; der Empty-State lebt im Kacheln-Tab.
         <Tabs defaultValue="kacheln" className="w-full">
           <TabsList>
             <TabsTrigger value="kacheln">Kacheln</TabsTrigger>
@@ -78,25 +78,39 @@ export default function CockpitPage() {
             <TabsTrigger value="werkzeuge">Werkzeuge</TabsTrigger>
           </TabsList>
           <TabsContent value="kacheln" className="mt-4">
-            {active.length > 0 ? (
-              <SessionGrid sessions={active} now={now} />
+            {sessions.length === 0 ? (
+              <EmptyState />
             ) : (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                Keine aktiven Sessions.
-              </p>
+              <>
+                {active.length > 0 ? (
+                  <SessionGrid sessions={active} now={now} />
+                ) : (
+                  <p className="py-6 text-center text-sm text-muted-foreground">
+                    Keine aktiven Sessions.
+                  </p>
+                )}
+                <ArchivedSection sessions={archived} now={now} />
+              </>
             )}
-            <ArchivedSection sessions={archived} now={now} />
           </TabsContent>
           <TabsContent value="kanban" className="mt-4">
-            {/* Kanban = voller Pipeline-View inkl. „Fertig"-Spalte. */}
-            <KanbanBoard sessions={sessions} now={now} />
-            {/* PROJ-8: ABC-Fortschritt je Session direkt unter dem Kanban. */}
-            <section className="mt-6">
-              <h2 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
-                ABC-Fortschritt
-              </h2>
-              <GanttChart sessions={sessions} />
-            </section>
+            {sessions.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                {`Noch keine Sessions — starte eine über „+ Neue Session“.`}
+              </p>
+            ) : (
+              <>
+                {/* Kanban = voller Pipeline-View inkl. „Fertig"-Spalte. */}
+                <KanbanBoard sessions={sessions} now={now} />
+                {/* PROJ-8: ABC-Fortschritt je Session direkt unter dem Kanban. */}
+                <section className="mt-6">
+                  <h2 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
+                    ABC-Fortschritt
+                  </h2>
+                  <GanttChart sessions={sessions} />
+                </section>
+              </>
+            )}
           </TabsContent>
           <TabsContent value="werkzeuge" className="mt-4">
             <ToolsPanel />

@@ -47,6 +47,9 @@ COLUMNS: tuple[str, ...] = (
     "abc_feature",
     # PROJ-17: Recovery — Strang aus der Recovery-Ansicht verworfen (Vault-Log bleibt).
     "recovery_dismissed",
+    # PROJ-33: Zeitpunkt eines geordneten Drains (Shutdown). Gesetzt = bewusst beendet
+    # → Auto-Resume nach Neustart; NULL = Crash/unerwartet → kein Auto-Resume.
+    "drained_at",
 )
 
 SCHEMA_SQL = """
@@ -70,7 +73,8 @@ CREATE TABLE IF NOT EXISTS session_index (
     abc_phase         TEXT,
     abc_phase_reached TEXT,
     abc_feature       TEXT,
-    recovery_dismissed INTEGER DEFAULT 0
+    recovery_dismissed INTEGER DEFAULT 0,
+    drained_at         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 """
@@ -80,6 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 # host-native Migration via ``ALTER TABLE … ADD COLUMN`` (idempotent).
 _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("recovery_dismissed", "INTEGER DEFAULT 0"),
+    ("drained_at", "TEXT"),  # PROJ-33
 )
 
 
