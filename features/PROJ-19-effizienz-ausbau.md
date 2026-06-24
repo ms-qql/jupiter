@@ -1,6 +1,6 @@
 # PROJ-19: Effizienz-Ausbau — Pointer/RAG, Späher-Agenten, Prompt-Caching, Token-Dashboard
 
-## Status: In Progress
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 **Bausteine:** #23, #26, #27, #28
@@ -293,5 +293,7 @@ Empfohlen als Nächstes: `/abc-qa 19` (alle ACs + Security/Tenant-Red-Team gegen
 **Production-ready (Backend):** ✅ **YES** — keine Critical/High.
 **Offen (nicht-blockierend):** optionale Frontend-Politur (Dashboard auf `/usage` umstellen; RAG-/Cache-/Späher-UI). Die ACs sind durch das vorhandene Dashboard + die Endpunkte erfüllt.
 
-## Deployment
-_To be added by /abc-deploy_
+## Deployment (/abc-deploy, 2026-06-24)
+- **Production-URL:** https://jupiter.auxevo.tech · **Version:** 0.8.0 · **Tag:** `v0.8.0` · **Deployed:** 2026-06-24
+- **Promotion:** `dev → main` (gemeinsam mit PROJ-20 ausgeliefert).
+- **Geliefert:** Pointer/RAG über den Vault, billige Späher-Agenten, Prompt-Caching + Cache-Treffer-Sichtbarkeit, Token-/Kosten-Dashboard (`/usage`) inkl. Frontend-Politur.

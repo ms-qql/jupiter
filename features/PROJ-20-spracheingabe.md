@@ -1,6 +1,6 @@
 # PROJ-20: Spracheingabe / Push-to-Talk (abo-frei, DSGVO-konform)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 **Baustein:** #29
@@ -232,5 +232,11 @@ und inferiert ohne Crash (`tiny`-Modell gegen ffmpeg-Testaudio). faster-whisper 
 
 **Production-Ready: JA.**
 
-## Deployment
-_To be added by /abc-deploy_
+## Deployment (/abc-deploy, 2026-06-24)
+- **Production-URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-24 · **Version:** 0.8.0 · **Tag:** `v0.8.0`
+- **Host:** Dev-VPS, host-native (systemd: backend/frontend/webhook + Caddy TLS), GitHub-Webhook Auto-Deploy auf `main` (kein Dokploy/Docker).
+- **Promotion:** `dev → main` (zusammen mit PROJ-19 ausgeliefert).
+- **Geliefert:** Push-to-Talk-Diktat (Smart-Launcher + Decision-Card-Kommentar), self-hosted faster-whisper (`small`, Default) + optionaler Groq-Cloud-Fallback, „Sprache"-Tab in den Einstellungen, `POST /transcription` + `GET/PATCH /settings/transcription`.
+- **Host-Vorbereitung:** `faster-whisper` (+ ctranslate2/av) vor dem Deploy manuell in die `Dashboard`-Env installiert (`pip install -r backend/requirements.txt`); `ffmpeg` auf dem VPS vorhanden.
+- **Manueller Smoke nach Deploy (Browser-only):** echtes Diktat im „Neue Session"-Feld + in einer Decision-Card-Antwort testen (Mikrofon-Permission, Transkript editierbar, kein Auto-Submit). Erst-Diktat lädt das `small`-Modell (~470 MB) → spürbare Erst-Latenz, danach gecached.
