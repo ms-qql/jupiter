@@ -1,6 +1,6 @@
 # PROJ-33: Session-Lifecycle-Härtung (Restart-Resilienz + prozess-verifiziertes Liveness)
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -73,7 +73,83 @@ Dieses Feature härtet den Session-Lebenszyklus: prozess-verifizierte Lebendigke
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-24 · **Stack:** FastAPI (conda `Dashboard`, In-Memory-Registry + SQLite-Live-Index, 1 uvicorn-Worker) + kleiner Next.js-Zusatz (Card + Indikator) + kein Neon/MinIO · **Branch:** main (mit Nutzer entschieden 2026-06-24 — PROJ-33 wird auf `main` weitergebaut; Teil-1-Commit `48cf886` + Spec liegen bereits dort).
+
+### Leitidee
+Drei Bausteine, alle auf vorhandenen Pfaden — **keine** zweite Buchhaltung:
+1. **Drain** beim geordneten Shutdown: laufende Sessions als „bewusst beendet" markieren (Flag `drained_at`), bevor systemd die Prozesse killt.
+2. **Auto-Resume** beim Startup: genau diese gedrainten Sessions automatisch via `claude --resume` fortsetzen (nicht die crash-verwaisten — die bleiben „tot" + Knopf, PROJ-27-Regel).
+3. **Selbst-Restart-Gate**: ein Tool-Aufruf, der den eigenen Host neustartet, wird zur Freigabe-Card (bypass-fest), bevor er läuft.
+
+### A) Ablauf-Logik (Klartext)
+```
+Backend-Shutdown (lifespan finally, vor repo.close, main.py:86)
+  └─ manager.drain(): je aktiver Session  → pause()  + drained_at=jetzt + persist()
+                      (schnell: nur markieren/spiegeln, NICHT auf Turn-Ende warten)
+
+systemd killt danach die cgroup → claude-Kindprozesse enden (Drain-Marke ist schon persistiert)
+
+Backend-Startup (rehydrate, manager.py:910)
+  ├─ Zeile hatte drained_at?  → JA  → Auto-Resume (claude --resume), Flag löschen
+  │                              NEIN → wie bisher „Verwaist/ERROR" + Reaktivieren-Knopf
+  └─ Auto-Resume mit Limit/Backoff (kein Sturm bei Crash-Loop) + Session-Limit (PROJ-14)
+
+Tool-Gate (request_decision, vor Policy-Evaluate, manager.py:~495)
+  └─ Bash-Kommando trifft Selbst-Restart-Muster? → „self_restart"-Card (pausiert, bypass-fest)
+```
+
+### B) Datenmodell (alles Live-Index/In-Memory, kein Neon)
+- **Neue Spalte `drained_at TEXT`** im SQLite-Live-Index (`session_index`) — über den vorhandenen idempotenten `_MIGRATIONS`-Mechanismus (`ALTER TABLE … ADD COLUMN`), genau wie zuletzt `recovery_dismissed`. Gesetzt beim Drain, gelöscht nach erfolgreichem Auto-Resume. **Das ist das „Drain ≠ Crash"-Signal.**
+- In-Memory: ein kleines `resume_on_restart`/Drain-Kennzeichen am `SessionState` (reist über `_row()` in den Index).
+- **Kein neues Turn-Transkript-Checkpoint nötig:** die maßgebliche Konversation persistiert **Claude selbst** (`claude --resume` lädt sie). Jupiters In-Memory-Transkript-Ansicht baut sich nach dem Resume aus dem Live-Stream neu auf. „Kein Turn-Verlust" wird also über Claudes eigene Session-Persistenz + Resume erreicht, nicht über ein eigenes Checkpoint.
+
+### C) API-/Komponenten-Form
+```
+Backend
+├── main.py            lifespan: drain() im finally (vor repo.close); rehydrate ruft Auto-Resume
+├── manager.py         drain(); rehydrate() um drained_at-Zweig + _auto_resume_from_row()
+│                       request_decision: harte self_restart-Reißleine vor Policy-Evaluate
+│                       (Muster-Check auf tool_input["command"]) → _open_card(card_type="self_restart")
+├── db/session_index.py  _MIGRATIONS += ("drained_at","TEXT"); COLUMNS erweitert
+└── config              Selbst-Restart-Muster (z. B. in policy.yaml o. eigener Liste),
+                        Auto-Resume-Limit/Backoff (analog Liveness-Schwellen)
+
+Frontend (minimal)
+├── decision-card.tsx  Render-Zweig card_type="self_restart" (Freigeben/Ablehnen, wie watchdog_pause)
+└── (optional) Indikator „nach Neustart fortgesetzt" am Session-Tile
+```
+- **Keine neuen Endpunkte:** Drain/Resume sind interner Lifecycle; das Self-Restart-Gate nutzt die bestehenden Decision-Card-Endpunkte (Freigeben/Ablehnen).
+
+### D) Tech-Entscheidungen (WARUM)
+- **`drained_at`-Flag statt Heuristik:** nur ein *geordneter* Shutdown setzt es → ein harter Crash/OOM (SIGKILL, kein lifespan-finally) hat es nicht → wird korrekt als Crash behandelt (kein Auto-Resume-Sturm; PROJ-27-Regel bleibt). Sauberste Unterscheidung Drain vs. Crash.
+- **Auto-Resume nur für gedrainte Sessions:** verträgt sich mit PROJ-27 („Orphans nach Restart nicht ungefragt auto-reanimieren") — die Crash-Orphans bleiben manuell, nur die *bewusst* gedrainten kommen automatisch zurück.
+- **Drain ist schnell (nur markieren+persistieren), nicht „Turn fertiglaufen lassen":** passt in das systemd-Stop-Fenster; die eigentliche Wiederaufnahme macht `claude --resume`.
+- **Self-Restart als harte Reißleine (bypass-fest), nicht als Policy-Regel:** `policy.evaluate` sieht den Kommando-Inhalt nicht (nur `tool_name`/role/skill/project) — daher ein inhaltsbasiertes Gate an derselben Stelle wie Watchdog-/Phasen-Gate, das auch im Bypass feuert (sonst könnte ein Agent den Host ungebremst neustarten).
+- **Wiederverwendung:** Drain nutzt `pause()`+`_persist()`, Resume den `_resume()`-/Rehydrierungs-Pfad, das Gate die `_open_card`-Mechanik — alles vorhanden.
+
+### E) Komplementär (Deployment, kein Code)
+- **`KillMode=mixed`** für `jupiter-backend.service` erwägen: SIGTERM zuerst nur an den Hauptprozess (Drain-Fenster), erst nach `TimeoutStopSec` SIGKILL an den Rest. Gibt dem Drain Luft, bevor die Kinder sterben. (Reines Unit-File-Tuning, human-gated.)
+
+### F) Dependencies
+Keine neuen Pakete (vorhandenes `asyncio`/`PyYAML`/SQLite). Frontend: nur ein Card-Render-Zweig.
+
+### Mapping Akzeptanzkriterien → Bausteine / Verantwortliche
+| Kriterium | Baustein | Spezialist |
+|---|---|---|
+| Prozess-verifiziertes `is_alive` (Teil 1) | `base.pid_alive` + gehärtetes `is_alive` ✅ erledigt | Backend |
+| Graceful Drain beim Shutdown | `manager.drain()` im `lifespan`-finally + `drained_at` | Backend |
+| Auto-Resume beim Startup | `rehydrate()`-Zweig + `_auto_resume_from_row()` | Backend |
+| Kein Resume-Sturm | Limit/Backoff + `drained_at`-Unterscheidung | Backend |
+| In-flight-Turn nicht verloren | `claude --resume` (Claude-eigene Persistenz) | Backend |
+| Selbst-Restart-Gate | inhaltsbasierte Reißleine in `request_decision` + `self_restart`-Card | Backend + Frontend |
+| Harter Crash degradiert sauber | kein `drained_at` → bestehender Orphan/Recovery-Pfad | Backend |
+| Deutsche Texte; keine Regression | UI-Strings + Tests | Backend + Frontend |
+
+### Handoff-Reihenfolge
+Backend-lastig. **`/abc-backend 33`** (Drain/Auto-Resume, `drained_at`-Migration, Self-Restart-Gate, Tests) → **`/abc-frontend 33`** (self_restart-Card-Render) → **`/abc-qa 33`**. Alles auf **`main`** (Nutzer-Entscheidung).
+
+### Branch-Hinweis (geklärt)
+PROJ-33 wird bewusst auf **`main`** weitergebaut (Nutzer-Entscheidung 2026-06-24) — Teil-1 + Spec liegen bereits dort. Caveat: `main` ist bis zum Feature-Ende potenziell nicht clean-deploybar. Fremde uncommittete PROJ-17-Änderungen (`recovery.py`/`vault.py`) bleiben unangetastet (gehören einer anderen Session).
 
 ## QA Test Results
 _To be added by /abc-qa_
