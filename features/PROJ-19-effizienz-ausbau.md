@@ -226,7 +226,14 @@ Hauptsession delegiert "Fazit-Aufgabe" (viel lesen/suchen, wenig zurück)
 - **Backend-Typen** (`UsageSummaryRead`/`UsageDrilldownRead` etc.) in `lib/types.ts`.
 - **Tests:** `lib/usage.test.ts` um Cache-Aggregation + `summaryFromBackend`-Adapter erweitert; volle Frontend-Suite **86 passed**, Lint + Typecheck sauber.
 
-> Weiterhin optional/offen: eigenständige RAG-Vorschau-UI (#23) und Späher-Auslöser-UI (#26) — Endpunkte stehen, aber kein Cockpit-Bedarf im MVP.
+### RAG-Vorschau- + Späher-UI (#23/#26) — ✅ fertig (Branch `dev`)
+- **Werkzeuge-Tab erweitert** (`tools-panel.tsx`): neuer Block „Effizienz-Werkzeuge" ganz oben, **engine-unabhängig immer sichtbar** (eigene Endpunkte). Der Engine-Block (Startknöpfe/iFrames) liegt mit eigenen Lade-/Fehler-/Leer-Zuständen darunter.
+- **`rag-preview-panel.tsx`** — Query → `GET /vault/rag/preview`; zeigt gerankte Ausschnitte (Pfad:Zeile + getroffene Begriffe + Snippet) und die **messbare Ersparnis** („X% weniger Kontext", Zeichen RAG vs. Volltext). Leertreffer → Fallback-Hinweis.
+- **`scout-panel.tsx`** — Aufgabe (+ optionale Vault-Query für RAG-Kontext) → `POST /agents/scout`; zeigt nur das **Fazit** + Modell-Badge + Quellenzahl. Bei `usable=false` Eskalations-Hinweis + Button „Mit Opus wiederholen" (`model`-Override).
+- **API/Typen:** `getRagPreview`/`runScout` in `lib/api.ts`; `VaultRagPreview`/`VaultRagSnippet`/`ScoutRequest`/`ScoutResult` in `lib/types.ts`.
+- **Tests:** `efficiency-tools.test.tsx` (SSR-Render-Smoke beider Panels) grün; volle Frontend-Suite **88 passed**, Lint + Typecheck sauber.
+
+> PROJ-19 ist damit Backend **und** Frontend für alle vier Mechanismen vollständig umgesetzt.
 
 ### Status: Backend aller 4 Mechanismen fertig
 Alle vier Effizienz-Mechanismen sind backend-seitig implementiert, getestet und einzeln abschaltbar. **Offen (optionale Frontend-Politur):**
