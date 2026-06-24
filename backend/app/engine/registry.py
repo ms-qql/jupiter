@@ -96,8 +96,12 @@ class EngineProfile:
                 return False, "Claude-CLI nicht gefunden (`claude` installiert/eingeloggt?)."
             return True, None
         if self.driver == DRIVER_GENERIC_CLI:
-            if not self.bin or shutil.which(self.bin) is None:
-                return False, f"CLI „{self.bin or '?'}“ nicht im PATH gefunden."
+            # Binary = explizites `bin` ODER (fehlt es) das erste argv_template-Element —
+            # konsistent mit ``_coerce_profile`` (bin ODER argv_template genügt) und
+            # ``build_generic_argv`` (nimmt argv_template[0] als Programm, wenn kein bin).
+            cli = self.bin or (self.argv_template[0] if self.argv_template else None)
+            if not cli or shutil.which(cli) is None:
+                return False, f"CLI „{cli or '?'}“ nicht im PATH gefunden."
             if self.auth_env and not os.environ.get(self.auth_env):
                 return False, f"Umgebungsvariable {self.auth_env} fehlt (Key/Login)."
             return True, None

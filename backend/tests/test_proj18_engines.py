@@ -181,6 +181,22 @@ def test_availability_reports_missing_key(tmp_path, monkeypatch):
     assert reg.require("openai").availability() == (True, None)
 
 
+def test_generic_cli_without_bin_uses_argv_template_head(tmp_path):
+    """BUG-2-Regression: eine generic_cli-Engine NUR mit argv_template (ohne `bin`)
+    wird vom Parser akzeptiert → `availability()` muss das Programm aus
+    argv_template[0] prüfen, statt sie dauerhaft als „nicht verfügbar" zu melden."""
+    reg = _registry(
+        tmp_path,
+        "engines:\n"
+        "  - key: shtool\n    label: ShTool\n    kind: engine\n    driver: generic_cli\n"
+        "    argv_template: [sh, -c, ':']\n    adapter: plaintext\n",
+    )
+    prof = reg.require("shtool")
+    assert prof.bin is None and prof.argv_template[0] == "sh"
+    # `sh` liegt sicher im PATH → verfügbar (vorher: immer (False, "CLI „?“ …")).
+    assert prof.availability() == (True, None)
+
+
 def test_valid_model_per_profile(tmp_path):
     reg = _registry(tmp_path, _TWO_ENGINES_YAML)
     openrouter = reg.require("openrouter")

@@ -1,6 +1,6 @@
 # PROJ-18: Weitere Engines (Codex/Gemini/GLM/Ollama) + iFrame/Launch
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 **Baustein:** #13
@@ -172,7 +172,102 @@ GET/POST /sessions/{id}/...    → unverändert (start/input/pause/stop/transcri
 **Offen (nicht im Backend-Scope):** Frontend — Engine-Selector im `new-session-dialog`, `EmbedTab` (iFrame), `LaunchButton`, „n/v"-Degradation im `session-tile`. Realer Smoke-Turn gegen echte OpenAI-/OpenRouter-Keys (`/abc-qa-e2e`).
 
 ## QA Test Results
-_To be added by /abc-qa_
+
+**Tested:** 2026-06-24
+**Backend:** pytest gegen den **committeten** Stand (HEAD `1c9c5a7`, isolierte Worktree) — env `Dashboard`
+**Frontend:** nicht getestet — die Frontend-Deliverables (iFrame-Tab, Launch-Button, Engine-Selector, „n/v"-Degradation) sind laut Backend-Implementierungsnotiz **noch nicht gebaut** (offener Handoff).
+**Tester:** QA Engineer (AI)
+**Scope:** Backend-Lieferumfang von PROJ-18 (Registry, OpenAI-/OpenRouter-HTTP-Treiber, generischer CLI-Treiber, Adapter, `GET /engines`, `engine`-Feld in `POST /sessions`).
+
+### ⚠️ Blocker am `dev`-Arbeitsbaum (NICHT PROJ-18)
+Der **uncommittete** Arbeitsbaum von `dev` ist **nicht lauffähig**: `backend/app/schemas/settings.py:125` enthält einen **Syntaxfehler** (Fremd-Feature **PROJ-27 Liveness**, WIP). Ein ASCII-`"` schließt den String vorzeitig:
+```
+progress_timeout_seconds: int = Field(..., gt=0, description="Kein Fortschritt > X s → „hängt".")
+                                                                                            ^ ASCII-" statt „…"
+```
+→ `SyntaxError: unterminated string literal` ⇒ **das gesamte Backend importiert nicht**, keine Tests/kein `uvicorn` laufen im Arbeitsbaum. PROJ-18 selbst ist davon nicht betroffen (sauber committet); QA erfolgte daher gegen HEAD in einer separaten Worktree. **Muss vor jedem Deploy/QA-Lauf auf `dev` gefixt werden** (PROJ-27-Owner), siehe BUG-1.
+
+### Automatisierte Tests
+- **PROJ-18-Suite** `tests/test_proj18_engines.py`: **26 passed** (Registry, Adapter, OpenAIDriver für beide Anbieter, `GET /engines`, `POST /sessions`).
+- **Gesamtsuite Backend: 475 passed** (keine Regression durch PROJ-18).
+
+### Acceptance Criteria Status (Backend-Scope)
+
+#### AC-1: Generischer CLI-Treiber, gleiches Interface, per Konfig gemappt
+- [x] `GenericCliDriver` erfüllt `EngineDriver` (start/send_input/pause/stop/is_alive/pid)
+- [x] Verhalten (argv, prompt_via, input_format, adapter) kommt aus `engines.yaml` — kein Code pro Engine
+
+#### AC-2: OpenAI (1.) + OpenRouter (2.) über *einen* HTTP-Treiber
+- [x] Ein `OpenAIDriver` fährt beide Anbieter (parametrisierter Test über `api_base`/`auth_env`)
+- [x] SSE-Stream → Claude-förmige Events; Usage → Token-/Kontext-Anzeige; Key nur serverseitig
+
+#### AC-3: iFrame-Einbettung (DSGVO/CSP)
+- [~] Backend liefert iFrame-Profile (`kind: iframe`, `url`, `sandbox`) über `GET /engines` (verifiziert). **Rendering/CSP im Frontend nicht gebaut** → AC nur backendseitig erfüllt.
+
+#### AC-4: Launch-Button
+- [~] Backend liefert Launch-Einträge (`kind: launch`, `target`). **Button im Frontend nicht gebaut.**
+
+#### AC-5: Engine-agnostische Session-Sicht + saubere Degradation
+- [x] `engine`-Feld an `SessionState`/`SessionRead`; Usage nullbar → „n/v"-Haken vorhanden (Backend)
+- [~] „n/v"-Anzeige im `session-tile` (Frontend) nicht gebaut
+
+#### AC-6: Engine-Auswahl im Smart Launcher; Claude bleibt Default
+- [x] `POST /sessions` akzeptiert `engine` (Default `claude`, verifiziert)
+- [~] Selector im `new-session-dialog` (Frontend) nicht gebaut
+
+#### AC-7: Fehlende/fehlkonfigurierte Engine → klare Meldung, kein Crash, Claude nutzbar
+- [x] Unbekannte Engine → 400; fehlender Key/CLI → 503 mit deutschem Hinweis; kaputtes/fehlendes YAML → nur Claude + Warnung
+- [x] Claude läuft auf isoliertem Pfad (Default), unabhängig von defekten Profilen
+
+#### AC-8: Alle Texte deutsch
+- [x] Alle Treiber-/Registry-/Route-Meldungen deutsch
+
+### Edge Cases Status
+- [x] **EC-1** Engine ohne Stream-JSON → `plaintext`-Adapter degradiert sichtbar (kein Crash)
+- [x] **EC-2** iFrame verweigert Einbettung → Profil trägt `sandbox`; Fallback-Rendering ist Frontend-Aufgabe (nicht testbar)
+- [x] **EC-3** Engine ohne Usage → result-Event ohne `usage`/`modelUsage` → Anzeige „n/v"
+- [x] **EC-4** Auth/Key fehlt → Engine ausgegraut (`available:false` + Grund), Start → 503
+- [x] **EC-5** Defekter Einzel-Eintrag wird übersprungen, Rest lädt (mit Warnung)
+
+### Security Audit Results
+- [x] **Secret-frei:** `GET /engines` und `EngineProfile.to_read()` enthalten **kein** `auth_env`/`bin`/`argv` (Test verifiziert). API-Keys nur serverseitig aus `os.environ`.
+- [x] **Keine Shell-Injection:** `GenericCliDriver` nutzt `create_subprocess_exec(*argv)` (kein Shell), `{prompt}`/`{model}`-Substitution landet als einzelnes argv-Element — keine Shell-Interpretation.
+- [x] **Kein SQL/DB-Schreibpfad** in diesem Feature (Registry ist read-only YAML; Live-Index-Persistenz nutzt bestehende parametrisierte Helfer).
+- [x] **Auth/Tenant:** unverändert zum MVP (kein JWT/RLS im MVP, siehe Stack-Overrides) — kein neuer Angriffsvektor.
+- [i] **iFrame-URL-Schema wird nicht validiert** (`url: javascript:…` würde übernommen). Quelle ist die *server-seitige, operator-kontrollierte* `engines.yaml` (kein User-Input) → kein praktischer Vektor; dennoch sollte das Frontend `frame-src`/CSP strikt setzen und nur `https:` erlauben. Informativ.
+
+### Bugs Found
+
+#### BUG-1: `dev`-Arbeitsbaum nicht lauffähig — Syntaxfehler in `schemas/settings.py` (Fremd-Feature PROJ-27) — ✅ BEHOBEN (2026-06-24)
+- **Severity:** Critical (build-breaking) — **gehörte zu PROJ-27, nicht PROJ-18**
+- **Steps to Reproduce:**
+  1. Auf `dev` (Arbeitsbaum) `conda run -n Dashboard python -m pytest backend/tests` ausführen
+  2. Erwartet: Tests laufen
+  3. Tatsächlich: `SyntaxError: unterminated string literal` in `backend/app/schemas/settings.py:125` → Collection bricht ab, Backend importiert nicht
+- **Fix:** Zeile auf ASCII-sauberen Text geändert (`"Kein Fortschritt seit > X s gilt als haengt."`) — vom PROJ-27-Owner. Verifiziert: `ast.parse` OK, Gesamtsuite collected wieder vollständig (498 passed).
+- **Priority:** Fix before deployment ✅ erledigt
+
+#### BUG-2: `generic_cli` mit `argv_template` ohne `bin` ist dauerhaft „nicht verfügbar" — ✅ BEHOBEN (2026-06-24)
+- **Severity:** Low
+- **Steps to Reproduce:**
+  1. In `engines.yaml` eine `driver: generic_cli`-Engine **nur** mit `argv_template` (Binary als erstes Element), **ohne** `bin`, konfigurieren — der Registry-Parser (`_coerce_profile`) **akzeptiert** das (`bin` ODER `argv_template` genügt)
+  2. `build_generic_argv` baut korrekt ein lauffähiges argv (z. B. `['/bin/echo','hi']`)
+  3. Erwartet: Engine ist verfügbar/startbar
+  4. Tatsächlich (vorher): `EngineProfile.availability()` prüfte nur `self.bin` → lieferte immer `(False, "CLI „?" nicht im PATH gefunden.")` → `GET /engines` graut aus, `POST /sessions` → 503. Die Engine konnte nie starten.
+- **Fix:** `availability()` (registry.py) fällt nun auf `argv_template[0]` zurück, wenn `bin` fehlt — konsistent mit `_coerce_profile` und `build_generic_argv`. Regressionstest `test_generic_cli_without_bin_uses_argv_template_head` hinzugefügt.
+- **Priority:** Fix in next sprint ✅ vorgezogen erledigt
+
+### Empfehlung Real-Smoke (für `/abc-qa-e2e`)
+- Echter Turn gegen reale `OPENAI_API_KEY`/`OPENROUTER_API_KEY`-Schlüssel (Stream + Usage end-to-end).
+- OpenRouter empfiehlt die Header `HTTP-Referer` + `X-Title`; der Treiber sendet sie nicht. Ohne sie funktioniert OpenRouter i. d. R., kann aber Einschränkungen erfahren — beim Real-Smoke prüfen, ggf. als kleine Treiber-Ergänzung nachziehen.
+
+### Summary
+- **Acceptance Criteria (Backend-Scope):** 5/8 voll bestanden (AC-1,2,5*,7,8); 3 teilweise (AC-3,4,6) — backendseitig erfüllt, **Frontend-Anteil noch nicht gebaut**.
+- **Bugs Found:** 2 — **beide behoben (2026-06-24)**. BUG-1 (Critical, *außerhalb* PROJ-18 / PROJ-27) ✅, BUG-2 (Low, PROJ-18) ✅ inkl. Regressionstest. + 1 informativer Security-Hinweis (iFrame-URL-Schema → Frontend-CSP).
+- **Tests nach Fix:** PROJ-18-Suite **27 passed**, Gesamtsuite **498 passed**.
+- **Security:** Pass (secret-frei, keine Shell-Injection, kein neuer DB-/Auth-Vektor).
+- **Production Ready (Backend):** Backend-Lieferumfang ist **solide, grün, ohne offene Bugs**. Die **Gesamt-Feature** bleibt dennoch **NICHT deploybar**, solange die Frontend-Deliverables (iFrame-Tab/Launch-Button/Engine-Selector/„n/v"-Degradation) fehlen.
+- **Recommendation:** PROJ-18-**Backend ist abgenommen** (keine Critical/High/Low offen). Status der Gesamt-Feature bleibt **In Review** bis `/abc-frontend 18` (Frontend) + `/abc-qa-e2e` (Real-Smoke gegen echte Keys) erledigt sind.
 
 ## Deployment
 _To be added by /abc-deploy_
