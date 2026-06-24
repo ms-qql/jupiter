@@ -9,6 +9,7 @@ import { KanbanBoard } from "@/components/cockpit/kanban-board";
 import { GanttChart } from "@/components/cockpit/gantt-chart";
 import { ArchivedSection } from "@/components/cockpit/archived-section";
 import { ToolsPanel } from "@/components/cockpit/tools-panel";
+import { UsageDashboard } from "@/components/cockpit/usage-dashboard";
 import { NewSessionDialog } from "@/components/cockpit/new-session-dialog";
 import { SettingsDialog } from "@/components/cockpit/settings-dialog";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
@@ -76,6 +77,8 @@ export default function CockpitPage() {
             <TabsTrigger value="kanban">Kanban</TabsTrigger>
             {/* PROJ-18: eingebettete Apps (iFrame) + externe Startknöpfe. */}
             <TabsTrigger value="werkzeuge">Werkzeuge</TabsTrigger>
+            {/* PROJ-19 (#28): Token-/Kosten-Verbrauch je Modell/Projekt. */}
+            <TabsTrigger value="verbrauch">Verbrauch</TabsTrigger>
           </TabsList>
           <TabsContent value="kacheln" className="mt-4">
             {sessions.length === 0 ? (
@@ -114,6 +117,9 @@ export default function CockpitPage() {
           </TabsContent>
           <TabsContent value="werkzeuge" className="mt-4">
             <ToolsPanel />
+          </TabsContent>
+          <TabsContent value="verbrauch" className="mt-4">
+            <UsageDashboard sessions={sessions} nowMs={now} />
           </TabsContent>
         </Tabs>
       )}

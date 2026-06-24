@@ -1,6 +1,6 @@
 # PROJ-19: Effizienz-Ausbau — Pointer/RAG, Späher-Agenten, Prompt-Caching, Token-Dashboard
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 **Bausteine:** #23, #26, #27, #28
@@ -168,6 +168,24 @@ Hauptsession delegiert "Fazit-Aufgabe" (viel lesen/suchen, wenig zurück)
 - **Kosten-Genauigkeit** bei Subscription-Auth: nur Schätzung möglich — klar im UI kennzeichnen.
 - **Caching-Reichweite** hängt an der jeweiligen Engine — bei Fremd-Engines ggf. No-op.
 - **Späher-Qualität:** Haiku-Fazit kann zu dünn sein → Eskalationspfad ist Pflicht, nicht optional.
+
+## Implementierungs-Notizen (Frontend)
+
+### Sub-Phase 1 — Token-/Kosten-Dashboard (#28) — ✅ Frontend fertig (Branch `dev`)
+- **Neuer Cockpit-Tab „Verbrauch"** (`app/(cockpit)/page.tsx`) neben Kacheln/Kanban/Werkzeuge.
+- **`components/cockpit/usage-dashboard.tsx`** — Zeitraum-Filter (Heute · 7 Tage · 30 Tage · Gesamt), Kennzahlen-Leiste (Tokens · geschätzte Kosten · Sessions), Verteilungen je Modell/Projekt (Balken), Drilldown-Tabelle (Projekt · Rolle/Phase · Modell · Tokens · Kosten), expliziter Leer-Zustand.
+- **`lib/usage.ts`** — reine, getestete Aggregations-Logik (`aggregateUsage`/`filterByRange`/`rangeStartMs` + Formatter). Speist sich aus der **bereits gepollten** Session-Liste (sessions-provider) → kein Extra-Request, keine neue Erhebung (erfüllt AC „nutzt vorhandene Usage-Daten").
+- **Kosten-Degradation:** Subscription/Fremd-Engine ohne echte Kosten → `costStatus` `none`/`partial`, UI zeigt „n/v" bzw. „~$…" + Hinweis statt falscher Nullen (erfüllt Edge Cases „Engine ohne Usage" / „Schätzung vs. Ist"). Nutzt die vorhandene `engineShowsCost`-Konvention (PROJ-18).
+- **`lib/status.ts`** — kleiner Helper `phaseLabel()` ergänzt (ABC_PHASES bleibt Single Source of Truth).
+- **Tests:** `lib/usage.test.ts` (9 Fälle: Range-Grenzen, Filter, Gruppierung Modell/Projekt, Kosten-Lagen, Formatierung) — grün. Lint sauber, Typecheck der neuen Dateien fehlerfrei.
+
+**Abweichung vom Tech-Design:** Charts als **reine DOM-/Tailwind-Balken** statt `recharts` — konsistent mit dem bestehenden `gantt-chart.tsx`, kein neues Bundle/keine neue Abhängigkeit. `recharts` damit vorerst **nicht** nötig.
+
+**Hinweis Daten-Reichweite:** Das Dashboard aggregiert die aktuell im Live-Index geführten Sessions (das, was der Provider liefert). Eine echte historische „heute/7d/30d"-Summe über bereits archivierte/gelöschte Sessions liefert später die geplante Backend-Route `GET /usage/summary` (Sub-Phase 1 Backend, noch offen) — die Frontend-Aggregation ist so geschnitten, dass sie dann nur die Datenquelle wechselt.
+
+### Offen (nächste Sub-Phasen)
+- Sub-Phase 1 **Backend**: `GET /usage/summary` + `/usage/drilldown` (Aggregation über `session_index`, performant für viele/historische Sessions) — optional, das UI steht bereits.
+- Sub-Phase 2 **Pointer/RAG (#23)**, 3 **Prompt-Caching (#27)**, 4 **Späher-Agenten (#26)** — laut Tech-Design.
 
 ## QA Test Results
 _To be added by /abc-qa_
