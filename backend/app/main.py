@@ -38,6 +38,7 @@ def create_app(
     driver_factory: Callable[[], EngineDriver] | None = None,
     vault_service: VaultService | None = None,
     session_index_repo: SessionIndexRepository | None = None,
+    engine_factory: Callable[..., EngineDriver] | None = None,
 ) -> FastAPI:
     # PROJ-14: Live-Index-Repository (SQLite, host-nativ). Tests können eine
     # eigene/In-Memory-Variante einschleusen; ohne Angabe greift die Settings-Factory.
@@ -72,7 +73,10 @@ def create_app(
     app.state.files = FileService()
     app.state.session_index_repo = repo
     app.state.manager = SessionManager(
-        driver_factory=driver_factory, vault=vault_service, repo=repo
+        driver_factory=driver_factory,
+        vault=vault_service,
+        repo=repo,
+        engine_factory=engine_factory,
     )
     # PROJ-17: Recovery-Sicht über Live-Index (verwaiste Stränge) + Vault (Handover/Log).
     app.state.recovery = RecoveryService(app.state.manager, vault_service)

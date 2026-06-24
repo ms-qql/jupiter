@@ -30,7 +30,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-15 | Vault Stufe 3 (lebendes Gehirn + Kuratierung) | P1 | Deployed | PROJ-2, PROJ-4, PROJ-5 | [Spec](PROJ-15-vault-stufe-3.md) |
 | PROJ-16 | Amok-Watchdog + Limits | P1 | Deployed | PROJ-1, PROJ-4, PROJ-10 | [Spec](PROJ-16-amok-watchdog.md) |
 | PROJ-17 | Recovery über den Vault | P1 | Approved | PROJ-2, PROJ-5, PROJ-14 | [Spec](PROJ-17-recovery-vault.md) |
-| PROJ-18 | Weitere Engines + iFrame/Launch | P1 | Architected | PROJ-1 | [Spec](PROJ-18-weitere-engines.md) |
+| PROJ-18 | Weitere Engines + iFrame/Launch | P1 | In Progress | PROJ-1 | [Spec](PROJ-18-weitere-engines.md) |
 | PROJ-19 | Effizienz-Ausbau (RAG/Späher/Caching/Token-Dashboard) | P1 | Planned | PROJ-1, PROJ-2, PROJ-5 | [Spec](PROJ-19-effizienz-ausbau.md) |
 | PROJ-20 | Spracheingabe / Push-to-Talk (abo-frei) | P1 | Planned | PROJ-9, PROJ-4 | [Spec](PROJ-20-spracheingabe.md) |
 | PROJ-21 | Session-Löschen / Cockpit-Aufräumen | P1 | Deployed | PROJ-1, PROJ-14, PROJ-3 | [Spec](PROJ-21-session-loeschen-cockpit-aufraeumen.md) |
@@ -39,7 +39,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 
 | ID | Feature | Prio | Status | Abhängigkeiten | Spec |
 |----|---------|------|--------|----------------|------|
-| PROJ-27 | Verifizierter Liveness-Indikator + Reanimieren hängender Sessions | P1 | Planned | PROJ-1, PROJ-3, PROJ-14, PROJ-16 | [Spec](PROJ-27-liveness-reanimieren.md) |
+| PROJ-27 | Verifizierter Liveness-Indikator + Reanimieren hängender Sessions | P1 | Architected | PROJ-1, PROJ-3, PROJ-14, PROJ-16 | [Spec](PROJ-27-liveness-reanimieren.md) |
 | PROJ-28 | Fileexplorer Drei-Spalten-Layout (Sidebar · Panel · Ansicht) | P1 | Planned | PROJ-11, PROJ-7 | [Spec](PROJ-28-fileexplorer-drei-spalten.md) |
 | PROJ-29 | Eingabefeld-Höhe symmetrisch zu den 3 Buttons | P2 | Planned | PROJ-3, PROJ-11 | [Spec](PROJ-29-eingabefeld-hoehe-symmetrie.md) |
 | PROJ-30 | Kanban-Phasenerkennung im Bypass-Mode (QA/Deploy) | P1 | Planned | PROJ-8, PROJ-1 | [Spec](PROJ-30-kanban-phasen-bypass.md) |

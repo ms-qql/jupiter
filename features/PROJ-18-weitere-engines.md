@@ -1,6 +1,6 @@
 # PROJ-18: Weitere Engines (Codex/Gemini/GLM/Ollama) + iFrame/Launch
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 **Baustein:** #13
@@ -151,6 +151,25 @@ GET/POST /sessions/{id}/...    → unverändert (start/input/pause/stop/transcri
 ### Zuständigkeiten (Handoff)
 - **Backend:** `registry.py`, `openai_driver.py` (HTTP-Treiber für OpenAI **und** OpenRouter), `generic_cli_driver.py`, `adapters.py`, `events.py`-Refaktor (Claude-Logik in den `claude`-Adapter ziehen), `manager.py`-driver_factory-Erweiterung, `engine`-Feld + `GET /engines`, `engines.yaml` (OpenAI- + OpenRouter-Profil).
 - **Frontend:** Engine-Selector im `new-session-dialog`, `EmbedTab`, `LaunchButton`, „n/v"-Degradation in `session-tile`, Ausgrau-/Fehlermeldungslogik aus `/engines`.
+
+## Implementierung (Backend) — 2026-06-24
+**Branch:** dev · **Status:** Backend steht, Tests grün (26 PROJ-18-Tests, Gesamtsuite 475 passed).
+
+**Neu:**
+- `engine/registry.py` — `EngineRegistry` (YAML, live mtime-reload nach PolicyStore-Muster); Claude immer eingebaut → rückwärtskompatibel. Defekte Einträge/Datei degradieren auf „nur Claude" + Warnung, kein Crash.
+- `engine/openai_driver.py` — HTTP-Treiber (`OpenAIDriver`). **Erste Test-Engine OpenAI**; **OpenRouter** läuft über **denselben** Treiber (OpenAI-API-kompatibel → nur anderer `api_base`/`auth_env`). SSE-Streaming → Claude-förmige Events; Usage → Token-/Kontext-Anzeige; Key nur serverseitig aus `auth_env`.
+- `engine/generic_cli_driver.py` + `engine/adapters.py` (`claude`/`jsonl`/`plaintext`) — fremde CLIs (Codex/Gemini/GLM/Ollama) ohne Code pro Engine.
+- `routes/engines.py` + `schemas/engines.py` — `GET /engines` (secret-frei, `available` + deutscher `unavailable_reason`).
+- `config/engines.example.yaml` — OpenAI (1.) + OpenRouter (2.) als Test-Engines; Ollama/Codex als `generic_cli`-Beispiele.
+
+**Geändert:**
+- `engine/manager.py` — `engine`-Feld an `SessionState`; `driver_factory` wählt Treiber je Profil (`_make_driver`); Verfügbarkeit + Modell-Validierung pro Profil; neue `EngineUnavailableError`.
+- `schemas/sessions.py` — `engine`-Feld in `SessionCreate`/`SessionRead`; strikte Claude-Modell-Whitelist nur noch für `engine=claude`.
+- `routes/sessions.py` — `engine` durchgereicht; `EngineUnavailableError` → **HTTP 503**, unbekannte Engine/Modell → **400**.
+- `main.py` — `create_app(engine_factory=…)` als Test-Seam (symmetrisch zu `driver_factory`).
+
+**Verifizierte AC:** generischer Treiber (✓), zwei Test-Engines exemplarisch lauffähig — OpenAI + OpenRouter über *einen* Treiber (✓), engine-agnostische Session-Sicht + Degradation (✓), Engine-Auswahl in `POST /sessions`, Claude bleibt Default (✓), fehlende Engine/Key → klare Meldung, kein Crash (✓), deutsche Texte (✓).
+**Offen (nicht im Backend-Scope):** Frontend — Engine-Selector im `new-session-dialog`, `EmbedTab` (iFrame), `LaunchButton`, „n/v"-Degradation im `session-tile`. Realer Smoke-Turn gegen echte OpenAI-/OpenRouter-Keys (`/abc-qa-e2e`).
 
 ## QA Test Results
 _To be added by /abc-qa_
