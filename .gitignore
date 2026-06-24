@@ -41,3 +41,6 @@ backend/config/policy.yaml
 
 # PROJ-16: Laufzeit-Watchdog-Limits (nutzer-editiert, live) — nicht versionieren.
 backend/config/watchdog.yaml
+
+# PROJ-18: Laufzeit-Engine-Registry (deployment-lokal, box-spezifische URLs) — nicht versionieren.
+backend/config/engines.yaml
