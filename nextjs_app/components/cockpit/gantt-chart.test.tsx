@@ -20,6 +20,8 @@ function session(overrides: Partial<Session> = {}): Session {
     created_at: "2026-06-22T10:00:00Z",
     last_activity: "2026-06-22T10:01:00Z",
     tokens_used: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
     context_fill_pct: 0,
     context_known: false,
     context_fill_threshold_pct: 85,

@@ -43,6 +43,9 @@ COLUMNS: tuple[str, ...] = (
     "created_at",
     "last_activity",
     "tokens_used",
+    # PROJ-19 (#27): kumulative Cache-Tokens (Sichtbarkeit der Treffer übers Dashboard).
+    "cache_read_tokens",
+    "cache_creation_tokens",
     "total_cost_usd",
     "parent_session_id",
     "child_session_id",
@@ -72,6 +75,8 @@ CREATE TABLE IF NOT EXISTS session_index (
     created_at        TEXT,
     last_activity     TEXT,
     tokens_used       INTEGER DEFAULT 0,
+    cache_read_tokens     INTEGER DEFAULT 0,
+    cache_creation_tokens INTEGER DEFAULT 0,
     total_cost_usd    REAL DEFAULT 0,
     parent_session_id TEXT,
     child_session_id  TEXT,
@@ -90,7 +95,9 @@ CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("recovery_dismissed", "INTEGER DEFAULT 0"),
     ("drained_at", "TEXT"),  # PROJ-33
-    ("engine", "TEXT DEFAULT 'claude'"),  # PROJ-19
+    ("engine", "TEXT DEFAULT 'claude'"),  # PROJ-19 (#28)
+    ("cache_read_tokens", "INTEGER DEFAULT 0"),  # PROJ-19 (#27)
+    ("cache_creation_tokens", "INTEGER DEFAULT 0"),  # PROJ-19 (#27)
 )
 
 

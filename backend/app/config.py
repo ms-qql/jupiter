@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     # `claude --resume` fortsetzen. False → Sessions bleiben verwaist + manueller Knopf.
     auto_resume_on_restart: bool = True
 
+    # PROJ-19 (#27): Prompt-Caching. An → stabile Prompt-Bestandteile (Konstitution/
+    # Rolle) bilden das cache-freundliche Präfix + werden über einen Inhalts-Hash
+    # identifiziert (Änderung = automatische Invalidierung). Aus → identische
+    # Assemblierung, nur ohne Cache-Key (No-op-Fallback, kein Hard-Fail).
+    prompt_cache_enabled: bool = True
+
     # --- Decision Cards / Freigabe-Hook (PROJ-4) ---------------------------
     # Freigabe-Flow aktivieren: Sessions starten mit dem PreToolUse-Hook.
     enable_decision_cards: bool = True

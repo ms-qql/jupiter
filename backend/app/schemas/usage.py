@@ -29,6 +29,12 @@ class UsageSummary(BaseModel):
     total_tokens: int
     total_cost_usd: float
     cost_status: CostStatus
+    # PROJ-19 (#27): Prompt-Cache-Sichtbarkeit.
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    cache_hit_ratio: float = Field(
+        default=0.0, description="Anteil cachefähiger Tokens aus dem Cache (read / (read+creation)) in %."
+    )
     by_model: list[UsageGroup]
     by_project: list[UsageGroup]
 

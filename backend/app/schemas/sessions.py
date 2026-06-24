@@ -117,6 +117,9 @@ class SessionRead(BaseModel):
     created_at: str
     last_activity: str
     tokens_used: int
+    # PROJ-19 (#27): kumulative Cache-Tokens — sichtbare Cache-Treffer (read = wiederverwendet).
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
     context_fill_pct: float
     context_known: bool = False
     context_fill_threshold_pct: int = 85

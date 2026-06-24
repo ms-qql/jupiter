@@ -86,6 +86,9 @@ export interface Session {
   created_at: string; // ISO
   last_activity: string; // ISO
   tokens_used: number;
+  /** PROJ-19 (#27): kumulative Cache-Tokens — sichtbare Cache-Treffer (read = wiederverwendet). */
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   context_fill_pct: number;
   /** PROJ-5: false → Treiber lieferte noch keine Token-Daten (Gauge „unbekannt"). */
   context_known: boolean;

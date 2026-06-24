@@ -29,7 +29,8 @@ from .claude_driver import ClaudeCodeDriver
 from .generic_cli_driver import GenericCliDriver
 from .openai_driver import OpenAIDriver
 from .registry import DRIVER_OPENAI, EngineProfile, engine_registry
-from .constitution import combine_with_extra, resolve_constitution
+from .cache_manager import CacheManager
+from .constitution import resolve_constitution
 from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
 from .handover import build_handover_md, build_title
 from .events import (
@@ -170,10 +171,17 @@ class SessionState:
     role: str | None = None
     constitution_source: str | None = None
     effective_constitution: str = ""
+    # PROJ-19 (#27): Inhalts-Hash des cachefähigen Prompt-Präfixes (None = Caching aus).
+    cache_key: str | None = None
     status: str = STARTING
     created_at: datetime = field(default_factory=_now)
     last_activity: datetime = field(default_factory=_now)
     tokens_used: int = 0
+    # PROJ-19 (#27): kumulative Cache-Tokens — Sichtbarkeit der Treffer. ``read`` =
+    # aus dem Cache wiederverwendet (Ersparnis), ``creation`` = einmalig in den Cache
+    # geschrieben.
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
     context_fill_pct: float = 0.0
     total_cost_usd: float = 0.0
     num_turns: int = 0
@@ -226,6 +234,8 @@ class SessionState:
             "created_at": self.created_at.isoformat(),
             "last_activity": self.last_activity.isoformat(),
             "tokens_used": self.tokens_used,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
             "context_fill_pct": self.context_fill_pct,
             "context_known": self.context_known,
             "context_fill_threshold_pct": self.effective_threshold_pct,
@@ -441,6 +451,9 @@ class SessionRuntime:
             # Das modellabhängige Kontextfenster liefert nur das result-Event (modelUsage).
             self._ctx_window = usage.context_window
             self.state.tokens_used += usage.billed_tokens
+            # PROJ-19 (#27): Cache-Treffer kumulieren (sichtbar im Dashboard/Tile).
+            self.state.cache_read_tokens += usage.cache_read_input_tokens
+            self.state.cache_creation_tokens += usage.cache_creation_input_tokens
             if usage.total_cost_usd is not None:
                 self.state.total_cost_usd += float(usage.total_cost_usd)
             # PROJ-16: abgerechnete Tokens ins Watchdog-Fenster (+ zählt als Fortschritt).
@@ -870,6 +883,8 @@ class SessionManager:
         self._create_lock = asyncio.Lock()
         # Referenzen auf laufende best-effort-Persist-Tasks (gegen vorzeitiges GC).
         self._persist_tasks: set[asyncio.Task] = set()
+        # PROJ-19 (#27): Prompt-Caching — plant das cache-freundliche Prompt-Präfix.
+        self._cache_manager = CacheManager(settings.prompt_cache_enabled)
 
     # --- PROJ-18: Engine → Treiber ----------------------------------------
 
@@ -913,6 +928,8 @@ class SessionManager:
             "created_at": s.created_at.isoformat(),
             "last_activity": s.last_activity.isoformat(),
             "tokens_used": s.tokens_used,
+            "cache_read_tokens": s.cache_read_tokens,
+            "cache_creation_tokens": s.cache_creation_tokens,
             "total_cost_usd": float(s.total_cost_usd),
             "parent_session_id": s.parent_session_id,
             "child_session_id": s.child_session_id,
@@ -1081,6 +1098,8 @@ class SessionManager:
             created_at=_dt(row.get("created_at")),
             last_activity=_dt(row.get("last_activity")),
             tokens_used=int(row.get("tokens_used") or 0),
+            cache_read_tokens=int(row.get("cache_read_tokens") or 0),
+            cache_creation_tokens=int(row.get("cache_creation_tokens") or 0),
             total_cost_usd=float(row.get("total_cost_usd") or 0.0),
             error=(str(e) if (e := row.get("error")) is not None else None),
             parent_session_id=row.get("parent_session_id"),
@@ -1143,7 +1162,11 @@ class SessionManager:
         # Knappheits-Konstitution auflösen (#24): global + optionaler Rollen-Override,
         # danach optionaler session-spezifischer Zusatz (kann Konstitution nicht entfernen).
         resolved = resolve_constitution(role, settings.constitution_dir)  # ValueError bei ungültiger Rolle
-        effective = combine_with_extra(resolved.text, extra_system_prompt)
+        # PROJ-19 (#27): Prompt-Caching — stabile Konstitution als cache-freundliches
+        # Präfix + Inhalts-Hash (Invalidierung). Assemblierung identisch zu
+        # combine_with_extra (stabil zuerst) → Verhalten unverändert.
+        plan = self._cache_manager.plan(resolved.text, extra_system_prompt)
+        effective = plan.prompt
 
         session_id = str(uuid.uuid4())
         state = SessionState(
@@ -1156,6 +1179,7 @@ class SessionManager:
             role=resolved.role,
             constitution_source=resolved.source,
             effective_constitution=effective,
+            cache_key=plan.cache_key,
             parent_session_id=parent_session_id,
             # PROJ-8: sprechendes Gantt-Label; ohne Angabe der Verzeichnis-Basename.
             project_name=(project_name or "").strip() or os.path.basename(real_path) or real_path,

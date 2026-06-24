@@ -204,10 +204,16 @@ Hauptsession delegiert "Fazit-Aufgabe" (viel lesen/suchen, wenig zurück)
 - **Wiederverwendung:** baut auf der vorhandenen Vault-Such-Infrastruktur auf (Walk, `_MAX_FILE_BYTES`-Cap, `_resolve_read`-Pfadhärtung) — keine neue Vektor-DB (Schnittstelle aber austauschbar, s. Tech-Design).
 - **Tests:** `backend/tests/test_proj19_rag.py` (7 Fälle: Terme, dichtestes Fenster, Ranking, Leer-Treffer, Ersparnis-Messung, Fallback, Endpunkt) grün; volle Suite **566 passed**, keine Regression.
 
+### Sub-Phase 3 — Prompt-Caching (#27) — ✅ Backend fertig (Branch `dev`)
+- **`backend/app/engine/cache_manager.py`** — `CacheManager.plan(stable_prefix, variable_suffix)` → `CachePlan{enabled, cache_key, prompt, stable_chars}`. Stabile Konstitution/Rolle bildet das **cache-freundliche Präfix** (zuerst), variabler Seed-Kontext zuletzt — Assemblierung **identisch** zu `combine_with_extra` (per Test abgesichert → Verhalten unverändert). `cache_key` = SHA-256 des stabilen Präfixes → Änderung an Rolle/Skill/Konstitution invalidiert automatisch (Edge Case). Feature-Flag `settings.prompt_cache_enabled` (Default an); aus → identischer Prompt ohne Key (No-op-Fallback, kein Hard-Fail).
+- **Manager-Integration:** `SessionManager` hält einen `CacheManager`; `create()` nutzt `plan()` statt `combine_with_extra` und legt `cache_key` auf den `SessionState`. Einziger Assemblier-Punkt (Resume/Recovery nutzen das bereits assemblierte `effective_constitution`).
+- **Cache-Treffer sichtbar (AC):** `_apply_usage` akkumuliert nun `cache_read_tokens` + `cache_creation_tokens` (waren erfasst, aber nicht kumuliert) auf result-Events. Exponiert über `SessionState.to_read()` → `SessionRead` (+ TS-`Session`-Typ), persistiert im Live-Index (neue Spalten + `_MIGRATIONS`, additiv/idempotent), und aggregiert in `GET /usage/summary` als `cache_read_tokens` / `cache_creation_tokens` / `cache_hit_ratio` (read / (read+creation)).
+- **Engine-bedingt:** funktioniert dort, wo die Engine cacht (Claude Code CLI cacht das System-Prompt-Präfix automatisch); Fremd-Engines ohne Cache-Tokens → Quote 0 / keine Treffer (kein Fehler).
+- **Tests:** `backend/tests/test_proj19_cache.py` (7 Fälle: Assemblierung==combine_with_extra, Hash-Invalidierung, No-op-Fallback, leeres Präfix, Cache-Quote im Aggregat, Manager-Akkumulation) grün; volle Suite **573 passed**, keine Regression; Index-Round-Trip der neuen Spalten + Aggregat manuell verifiziert. Frontend-Typecheck sauber.
+
 ### Offen (nächste Sub-Phasen)
-- Sub-Phase 1 **Frontend↔Backend-Anbindung** (optional, s. o.).
-- Sub-Phase 2 **Frontend**: RAG-Vorschau im UI (optional — Endpunkt liefert bereits Debug-/Sichtbarkeit).
-- Sub-Phase 3 **Prompt-Caching (#27)**, 4 **Späher-Agenten (#26)** — laut Tech-Design.
+- Sub-Phase 1 **Frontend↔Backend-Anbindung** (optional) · Sub-Phase 2 **Frontend** RAG-Vorschau (optional) · Sub-Phase 3 **Frontend** Cache-Quote/-Tokens im Dashboard anzeigen (optional — Daten liegen in `SessionRead` + `/usage/summary`).
+- Sub-Phase 4 **Späher-Agenten (#26)** — laut Tech-Design (größter Brocken).
 
 ## QA Test Results
 _To be added by /abc-qa_

@@ -123,14 +123,28 @@ def _model_label(model: str | None) -> str:
     return model or "—"
 
 
+def _sum_cache(rows: list[dict]) -> tuple[int, int]:
+    read = sum(int(r.get("cache_read_tokens") or 0) for r in rows)
+    creation = sum(int(r.get("cache_creation_tokens") or 0) for r in rows)
+    return read, creation
+
+
 def aggregate_summary(rows: list[dict], range_: UsageRange, now: datetime) -> dict:
     scoped = filter_by_range(rows, range_, now)
+    cache_read, cache_creation = _sum_cache(scoped)
+    cache_total = cache_read + cache_creation
+    # Cache-Treffer-Quote: Anteil des cachefähigen Prompts, der aus dem Cache kam
+    # (read) statt neu geschrieben wurde (creation). Sichtbarkeit der Treffer (#27).
+    cache_hit_ratio = round(100.0 * cache_read / cache_total, 1) if cache_total > 0 else 0.0
     return {
         "range": range_,
         "session_count": len(scoped),
         "total_tokens": _sum_tokens(scoped),
         "total_cost_usd": round(_sum_cost(scoped), 4),
         "cost_status": _cost_status(scoped),
+        "cache_read_tokens": cache_read,
+        "cache_creation_tokens": cache_creation,
+        "cache_hit_ratio": cache_hit_ratio,
         "by_model": _group(
             scoped, lambda r: _model_label(r.get("model")), lambda r: _model_label(r.get("model"))
         ),
