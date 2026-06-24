@@ -16,6 +16,7 @@ import { ApiError, resolveDecision, stopSession } from "@/lib/api";
 import { projectName } from "@/lib/status";
 import type { AskUserQuestionInput, PendingDecision } from "@/lib/types";
 import { QuestionCard } from "./question-card";
+import { PushToTalkButton } from "./push-to-talk-button";
 
 type CardProps = {
   decision: PendingDecision;
@@ -404,7 +405,15 @@ function ApproveDenyCard({ decision, showJump = true, className }: CardProps) {
                 className="text-sm"
                 autoFocus
               />
-              <div className="mt-1.5 flex justify-end">
+              <div className="mt-1.5 flex items-center justify-between gap-2">
+                {/* PROJ-20: Begründung diktieren statt tippen. */}
+                <PushToTalkButton
+                  className="size-8"
+                  disabled={busy}
+                  onTranscript={(t) =>
+                    setComment((c) => (c.trimEnd() ? `${c.trimEnd()} ${t}` : t))
+                  }
+                />
                 <Button
                   size="sm"
                   variant="outline"

@@ -208,6 +208,52 @@ export interface UsageDrilldownRead {
   rows: UsageDrilldownRow[];
 }
 
+// --- PROJ-19 (#23): Pointer/RAG-Vorschau -----------------------------------
+
+/** Ein gerankter Vault-Ausschnitt aus GET /vault/rag/preview. */
+export interface VaultRagSnippet {
+  path: string;
+  line: number;
+  snippet: string;
+  score: number;
+  terms_matched: number;
+  full_chars: number;
+}
+
+/** Antwort von GET /vault/rag/preview — Ausschnitte + Ersparnis-Messung + Fallback. */
+export interface VaultRagPreview {
+  query: string;
+  snippets: VaultRagSnippet[];
+  fallback: boolean;
+  reason: string | null;
+  context_chars: number;
+  fulltext_chars: number;
+  reduction_pct: number;
+}
+
+// --- PROJ-19 (#26): Späher-Agenten -----------------------------------------
+
+/** Eingabe für POST /agents/scout. */
+export interface ScoutRequest {
+  task: string;
+  query?: string | null;
+  paths?: string[];
+  project_path?: string | null;
+  model?: string | null;
+  top_n?: number;
+}
+
+/** Antwort von POST /agents/scout — verdichtetes Fazit + Eskalations-Signal. */
+export interface ScoutResult {
+  task: string;
+  model_used: string;
+  summary: string;
+  sources: string[];
+  context_chars: number;
+  usable: boolean;
+  note: string | null;
+}
+
 /** Globale Kontext-Schwelle + erlaubter Bereich (PROJ-5). */
 export interface ThresholdSetting {
   threshold_pct: number;

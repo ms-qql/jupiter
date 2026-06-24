@@ -40,6 +40,13 @@ import type {
   PermissionMode,
 } from "@/lib/types";
 import { useSessions } from "./sessions-provider";
+import { PushToTalkButton } from "./push-to-talk-button";
+
+// PROJ-20: diktierten Text ans Feld anhängen (kein Überschreiben), durch Leerzeichen getrennt.
+function appendDictation(prev: string, addition: string): string {
+  const base = prev.trimEnd();
+  return base ? `${base} ${addition}` : addition;
+}
 
 function phaseLabel(phase: AbcPhase | null): string {
   return ABC_PHASES.find((p) => p.key === phase)?.label ?? "—";
@@ -263,7 +270,14 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
             />
 
             <div className="grid gap-2">
-              <Label htmlFor="initial_prompt">Initial-Prompt</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="initial_prompt">Initial-Prompt</Label>
+                {/* PROJ-20: Auftrag diktieren statt tippen. */}
+                <PushToTalkButton
+                  className="size-7"
+                  onTranscript={(t) => setPrompt((p) => appendDictation(p, t))}
+                />
+              </div>
               <Textarea
                 id="initial_prompt"
                 value={prompt}

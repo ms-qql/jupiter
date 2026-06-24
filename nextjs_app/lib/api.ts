@@ -33,6 +33,9 @@ import type {
   UsageDrilldownRead,
   UsageRange,
   UsageSummaryRead,
+  ScoutRequest,
+  ScoutResult,
+  VaultRagPreview,
   VaultSearchResult,
   VaultWriteResult,
   WatchdogLimits,
@@ -195,6 +198,29 @@ export function searchVault(
 ): Promise<VaultSearchResult> {
   const params = new URLSearchParams({ q, scope, limit: String(limit) });
   return request<VaultSearchResult>(`/vault/search?${params.toString()}`, { signal });
+}
+
+// --- PROJ-19 (#23): Pointer/RAG-Vorschau -----------------------------------
+
+/** Gerankte relevante Vault-Ausschnitte statt Volltext + Ersparnis-Messung/Fallback. */
+export function getRagPreview(
+  q: string,
+  topN = 5,
+  scope: "all" | "curated" = "all",
+  signal?: AbortSignal,
+): Promise<VaultRagPreview> {
+  const params = new URLSearchParams({ q, top_n: String(topN), scope });
+  return request<VaultRagPreview>(`/vault/rag/preview?${params.toString()}`, { signal });
+}
+
+// --- PROJ-19 (#26): Späher-Agenten -----------------------------------------
+
+/** Fazit-Aufgabe an einen günstigen Späher delegieren → nur das verdichtete Fazit. */
+export function runScout(body: ScoutRequest): Promise<ScoutResult> {
+  return request<ScoutResult>("/agents/scout", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 // --- PROJ-5: Context-Management & Handover ---------------------------------
