@@ -1,6 +1,6 @@
 # PROJ-17: Recovery über den Vault
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #20 (kritischstes Failure-Szenario)
@@ -178,7 +178,11 @@ Branch `dev`. Read-only Sicht über Live-Index (PROJ-14) + Vault (PROJ-2/PROJ-5)
 - MVP ohne JWT/RLS (projektweite Entscheidung) — keine Tenant-Isolation zu prüfen.
 
 ### Bugs
-**BUG-1 (Medium) — `restore` validiert die Orphan-Eigenschaft nicht.**
+**BUG-1 (Medium) — ✅ BEHOBEN (2026-06-24).**
+Fix: `_is_orphan_strand(state)` (Status `error` + „Verwaist"-Marker) als Guard in `_candidate_for()` — eine nicht-verwaiste In-Memory-Session ist kein Kandidat → `restore` liefert **404**. Der Idempotenz-Fall (Orphan mit `child_session_id`) bleibt bewusst ausgenommen und läuft weiter über `recover()` → **409**. Regressionstests: `test_restore_active_session_rejected`, `test_api_restore_active_session_404`. 16/16 PROJ-17-Tests + 76 Regression grün.
+
+_Ursprünglicher Befund:_
+**`restore` validiert die Orphan-Eigenschaft nicht.**
 `RecoveryService._candidate_for()` baut für **jede** im Speicher liegende Session einen Kandidaten — unabhängig vom Status. `POST /recovery/{id}/restore` mit der ID einer **aktiven** (z. B. `waiting`/`running`) Session läuft daher durch: es entsteht eine Duplikat-Kind-Session für einen lebenden Strang und `child_session_id` wird gesetzt (verifiziert: aus `waiting` → `active_count() == 2`).
 - *Reproduktion:* aktive Session erstellen → `POST /recovery/{id}/restore` → 201 statt Ablehnung.
 - *Impact:* über die UI nicht auslösbar (nur Kandidaten haben Buttons), aber im no-auth-MVP per direktem API-Call erreichbar; verletzt „1 Strang = 1 Nachfolger" und kann eine Claude-Session doppeln (Kosten).
@@ -194,7 +198,7 @@ Branch `dev`. Read-only Sicht über Live-Index (PROJ-14) + Vault (PROJ-2/PROJ-5)
 Der Idempotenz-Guard in `recover()` (Parent-Scan) liegt außerhalb des `_create_lock`; zwei exakt gleichzeitige Restores desselben Strangs könnten beide passieren. Sehr unwahrscheinlich; ggf. Guard in den Lock ziehen.
 
 ### Produktionsreife
-**NOT READY (knapp)** — keine Critical/High-Bugs, aber **BUG-1 (Medium)** ist eine echte Korrektheitslücke mit sehr kleinem Fix. Empfehlung: BUG-1 fixen (2-Zeilen-Guard + Test), danach **Approved**. BUG-2–4 sind optional/Phase-2.
+**READY → Approved (2026-06-24).** BUG-1 (Medium) behoben + durch Regressionstests abgesichert. Keine Critical/High/Medium offen. BUG-2–4 (Low) bleiben als optionale Phase-2-Härtung dokumentiert (kein Blocker).
 
 ## Deployment
 _To be added by /abc-deploy_

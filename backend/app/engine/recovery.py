@@ -33,6 +33,19 @@ _SUGGESTION_CHARS = 400
 _SEED_LOG_CHARS = 4000
 
 
+def _is_orphan_strand(state) -> bool:
+    """Ist dieser In-Memory-Strang ein verwaister Recovery-Kandidat?
+
+    Nur nach einem Reboot/Crash verwaiste Stränge (Status ``error`` mit dem
+    „Verwaist"-Marker aus ``rehydrate()``) dürfen wiederhergestellt werden — eine
+    aktive (``running``/``waiting``) oder sauber beendete Session ist KEIN Kandidat
+    (sonst ließe sich ein lebender Strang über die Recovery-API doppeln, BUG-1).
+    Der ``child_session_id``-Zustand wird hier bewusst NICHT geprüft: die
+    Idempotenz (1 Strang = 1 Nachfolger) verantwortet ``manager.recover()`` → 409.
+    """
+    return state.status == ERROR and (state.error or "").startswith(_ORPHAN_MARKER)
+
+
 def _pname(path: str | None) -> str | None:
     if not path:
         return None
@@ -139,7 +152,7 @@ class RecoveryService:
         out = []
         for rt in self._manager.list():
             s = rt.state
-            if s.status != ERROR or not (s.error or "").startswith(_ORPHAN_MARKER):
+            if not _is_orphan_strand(s):
                 continue
             if s.child_session_id is not None or s.recovery_dismissed:
                 continue
@@ -176,6 +189,10 @@ class RecoveryService:
         """Einzelnen Kandidaten bauen (In-Memory-Verwaister bevorzugt, sonst Vault)."""
         rt = self._manager.get(session_id)
         if rt is not None:
+            # BUG-1-Fix: eine im Speicher liegende, aber NICHT verwaiste Session
+            # (aktiv/terminal) ist kein Recovery-Kandidat → kein Kandidat (→ 404).
+            if not _is_orphan_strand(rt.state):
+                return None
             return self._candidate_from_state(rt.state)
         source, body, created, warning = self._load_source(session_id)
         if source == "incomplete":

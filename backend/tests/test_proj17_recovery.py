@@ -89,6 +89,28 @@ async def test_active_session_is_not_candidate(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_restore_active_session_rejected(monkeypatch):
+    """BUG-1: eine AKTIVE (nicht verwaiste) Session darf nicht restorebar sein —
+    sonst entstünde ein Duplikat-Strang für einen lebenden Prozess."""
+    mgr, vault, svc = await _setup(monkeypatch)
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="x", model="haiku")
+    with pytest.raises(KeyError):  # kein Kandidat → Route übersetzt zu 404
+        await svc.restore(rt.state.session_id)
+    assert rt.state.child_session_id is None
+    assert mgr.active_count() == 1  # kein zweiter Strang entstanden
+
+
+def test_api_restore_active_session_404(monkeypatch):
+    monkeypatch.setattr(settings, "max_parallel_sessions", 5)
+    app = create_app(driver_factory=lambda: FakeDriver())
+    with TestClient(app) as client:
+        sid = client.post(
+            "/sessions", json={"project_path": PROJECT, "initial_prompt": "x", "model": "haiku"}
+        ).json()["session_id"]
+        assert client.post(f"/recovery/{sid}/restore", json={}).status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_incomplete_without_handover_or_log(monkeypatch):
     mgr, vault, svc = await _setup(monkeypatch)
     rt = await mgr.create(project_path=PROJECT, initial_prompt="x", model="haiku")
@@ -219,6 +241,7 @@ async def test_dismiss_survives_rehydrate(tmp_path, monkeypatch):
     sid = rt.state.session_id
     _orphan(rt)
     mgr._persist(rt)  # verwaisten Stand spiegeln
+    await _drain(mgr)  # erst diesen Write abschließen (sonst Race auf dieselbe Zeile)
     svc.dismiss(sid)  # Flag setzen + spiegeln
     await _drain(mgr)
 
