@@ -162,6 +162,33 @@ GET  /sessions  +  WS /sessions/{id}/stream      (bestehend)
 2. **Frontend (`/abc-frontend`):** `decision-card.tsx` Variante „Wissens-Vorschlag" (eigene Farbe, Editieren-Textarea, Freigeben/Editieren/Verwerfen); kuratierte Suche (Treffer + Backlink) im Cockpit; `lib/api.ts` Decision-Call um `edited_*`.
 3. **QA (`/abc-qa`):** AC + Edge-Cases (Doppelvorschlag→append, Geschwätzigkeit→Entprellung, Editieren→Roh-Log unberührt, Konflikt→nie überschreiben, Vault nicht schreibbar→Card bleibt, großes Log→Pointer); Red-Team: kuratierte Suche leakt keine fremden Schreibbereiche, Card-Approve schreibt nur in `Knowledge/`.
 
+## Implementation Notes (Backend Developer)
+**Datum:** 2026-06-24 · **Branch:** dev · **Env:** conda `Dashboard` · **Stand:** Backend fertig, QA ausstehend · **Tests:** `pytest` → **407 grün** (16 neue in `test_proj15_curation.py`, keine Regression — inkl. paralleler PROJ-16/PROJ-21-Suiten).
+
+### Gebaute Teile (rein additiv auf PROJ-2-Vault + PROJ-4-Card-Flow)
+- **`engine/vault.py`** — dritte Schicht `curated` → `_TYPE_DIRS["curated"] = "Knowledge"`. `write()` um `extra_meta` (zusätzliche Frontmatter-Felder) + `dated` (themen-stabiler Dateiname ohne Datums-/ID-Präfix) erweitert. Neu: **`write_curated_note(...)`** (schreibt nach `Knowledge/`, `dated=False` → gleicher Titel = gleiche Datei = **Append-Dedup**, nie blindes Überschreiben; Frontmatter `type=curated`, `source_session_id`, `curation_marker`) und **`search_curated()`** (Suche auf `Knowledge/` eingegrenzt; `search()` nimmt jetzt optional `subdir`).
+- **`engine/curation.py` (NEU)** — reine Funktionen: `detect_marker` (Bug gelöst / ADR / Sackgasse, konservative Phrasen-Heuristik), `build_proposal` (Titel = Themen-Slug pro Marker+Projekt → Dedup-Basis; Body = gekappter Auszug + Quell-Pointer aufs Roh-Log, **kein Volltext**), `proposal_title`.
+- **`engine/decisions.py`** — `card_type` erweitert um `knowledge_proposal`; neue editierbare Felder `proposal_title`/`proposal_body` (+ `to_read`).
+- **`engine/manager.py`** —
+  - `SessionRuntime._maybe_propose_knowledge()` hängt sich an den bestehenden Assistenten-/Denk-Strom in `handle_event` (kein zweiter Parser); **Entprellung** über `_seen_markers` (je Marker-Art max. 1 Vorschlag/Session).
+  - **Nicht-blockierende Card:** der Vorschlag wird wie eine futurelose Notiz in `pending` gehängt — **kein** `asyncio.Future`, **kein** `awaiting_approval`; die Session läuft weiter.
+  - `SessionRuntime.resolve_knowledge()` (Freigeben/Editieren/Verwerfen): bei Freigabe schreibt der Vault-Writer **vor** dem Auflösen — schlägt er fehl, **bleibt die Card offen** (kein Verlust). `SessionManager.resolve_decision()` dispatcht knowledge-Cards dorthin; `_write_curated_note()` persistiert (owner/Quelle/Marker gestempelt).
+  - `send_input`-Guard verfeinert: nicht-blockierende `knowledge_proposal`-Cards sperren die Eingabe **nicht** (nur echte Freigabe-Cards tun das weiterhin).
+- **`config.py`** — `enable_curation` (Default an).
+- **API:** `routes/sessions.py` — Decision-Body um `edited_title`/`edited_body`; Vault-Schreibfehler → **503** (Card bleibt offen). `routes/vault.py` — `GET /vault/search?scope=all|curated`. Schemas: `PendingDecisionRead` (+`proposal_*`), `DecisionResolve` (+`edited_*`), `VaultType` (+`curated`).
+
+### AC-Abdeckung (Tests)
+Zwei Schichten roh↔kuratiert ✓ · Lesen/Rückschreiben ohne Überschreiben (Append-Dedup) ✓ · Trigger Bug/ADR/Sackgasse ✓ · Decision-Card Freigeben/Editieren/Verwerfen ✓ · freigegeben→`Knowledge/`, verworfen→nichts ✓ · projektübergreifende kuratierte Suche mit Pfad/Backlink ✓ · Nachvollziehbarkeit (owner/created/source_session_id) + idempotent (atomarer Write/Append) ✓ · deutsch ✓.
+Edge-Cases getestet: Doppelvorschlag→Append, Geschwätzigkeit→Entprellung, Editieren, Vault nicht schreibbar→Card bleibt offen (503), Eingabe nie gesperrt.
+
+### Offen / Hinweise für QA & Deploy
+- **Kein Git-Commit gesetzt (bewusst):** `manager.py`, `config.py`, `schemas/sessions.py` tragen im geteilten `dev`-Working-Tree gleichzeitig **PROJ-16-Watchdog** (Parallel-Agent). Ein sauberer feature-isolierter Commit war ohne Mit-Einsacken der Fremdarbeit nicht möglich → Code liegt getestet im Working Tree; Promotion koordiniert `abc-deploy`/Nutzer.
+- **Marker-Heuristik bewusst einfach** (Phrasen). Semantischer Klassifikator = RAG-Ausbau PROJ-19 (Non-Goal hier).
+- **Cross-Day-Dedup:** Themen-Datei ist datumslos → echte Dedup über Tage hinweg; sehr großer Body wird als Auszug+Pointer kuratiert (kein Volltext).
+- **Session-Tod mit offenem Vorschlag** → Card wird wie andere via `abandon_decisions` obsolet (Roh-Log behält den Marker-Kontext).
+
+→ Bereit für `/abc-frontend` (Card-Variante „Wissens-Vorschlag" + kuratierte Suche) und danach `/abc-qa`.
+
 ## QA Test Results
 _To be added by /abc-qa_
 

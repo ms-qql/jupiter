@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 
 from ..config import MAX_INPUT_CHARS
 
-# type → Unterordner: session_log → Sessions/, handover → Handovers/.
-VaultType = Literal["session_log", "handover"]
+# type → Unterordner: session_log → Sessions/, handover → Handovers/, curated → Knowledge/.
+VaultType = Literal["session_log", "handover", "curated"]
 OnExists = Literal["append", "version", "error"]
 
 
