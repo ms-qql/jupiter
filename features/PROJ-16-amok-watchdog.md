@@ -1,6 +1,6 @@
 # PROJ-16: Amok-Watchdog + Limits
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 **Baustein:** #19 (kritischstes Failure-Szenario)
@@ -187,8 +187,47 @@ Stack: FastAPI + **dateibasierter** Watchdog (YAML, kein DB). Branch `dev`. In-M
 
 **Tests** (`tests/test_proj16_watchdog.py`, 16): Monitor (Schleife vs. Iteration, Token-Fenster+Ablauf, Stillstand, Schreibrate nur für Write-Tools, Reset+Cooldown, disabled), Store (Defaults/Save+Live-Reload/Defekt-Fallback/Key-Merge/`save` lehnt ≤0 ab), REST (GET-Defaults, PUT-live, 422 bei ≤0), Integration (Schleife öffnet `watchdog_pause`-Card → Fortsetzen → running; **sticht Bypass-auto-allow**). **Gesamt-Suite: 423 passed.**
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (2026-06-24)
+**Tester:** QA/Red-Team · **Branch:** dev · **Methode:** pytest (Unit + Tool-Gate-Integration) + Live-REST-Smoke (TestClient) + Code-Red-Team. **Suite: 427 passed** (20 PROJ-16-spezifisch: 16 `test_proj16_watchdog.py` + 4 `test_proj16_qa.py`), Frontend `tsc` sauber.
+**Jupiter-Override:** kein JWT/RLS/MinIO/Multi-Tenancy → Tenant-Isolations-Audit entfällt; geprüft wurden Limit-Durchsetzung, Bypass-Festigkeit, Config-Robustheit, Injection/Path-Traversal über die Watchdog-Felder.
+
+### Acceptance Criteria
+| # | Kriterium | Ergebnis |
+|---|-----------|----------|
+| 1 | Konfigurierbare Limits (Tokens/Zeit, Laufzeit-o.-Fortschritt, identische Calls, Schreibrate) | ✅ PASS — 4 Limits in `watchdog.yaml` + `/settings/watchdog`; Token- & Schreibraten-Riss end-to-end am Gate getestet |
+| 2 | Bei Überschreiten **pausiert** (Prozess nicht getötet), klar erkennbarer Zustand | ✅ PASS — `_open_card(card_type="watchdog_pause")`, Status `awaiting_approval`, Future blockt (Prozess lebt) |
+| 3 | **Decision Card**: Grund/Metrik, Ausschnitt, Fortsetzen/Abbrechen/Korrigieren | ✅ PASS — `triggering_rule`=Metrik-Klartext, `excerpt`=blockierter Call; FE rendert 3 Aktionen (Fortsetzen=approve, Korrigieren=deny+Kommentar, Abbrechen=stopSession) |
+| 4 | Live auf Event-Stream, Schleife ≠ legitime Iteration | ✅ PASS — Fingerprint-Serie (identisch in Folge), unterschiedlicher Input bricht die Serie |
+| 5 | Watchdog **sticht auto-allow** (PROJ-10) | ✅ PASS — `evaluate` steht **vor** Phasen-Gate UND Bypass-Auto-Allow; Test pausiert im `bypassPermissions`-Modus |
+| 6 | Fortsetzen setzt Zähler des ausgelösten Limits zurück | ✅ PASS — `reset(metric)` + Cooldown; nächster identischer Call läuft wieder durch |
+| 7 | Zentral konfigurierbar, sinnvolle Defaults (#4) | ✅ PASS — Defaults 200k/60s · 180s · 5 · 30/60s; YAML live mtime-reload |
+| 8 | Alle Texte deutsch | ✅ PASS |
+
+### Edge Cases
+| Edge Case | Ergebnis |
+|-----------|----------|
+| False Positive (legitime lange Aufgabe) → Fortsetzen reibungslos | ✅ approve gibt frei + Counter-Reset + Cooldown |
+| Mehrfach-Alarm in Folge → keine Card-Flut | ✅ 30-s-Cooldown nach Auflösung; nur erst-geprüfte Metrik feuert |
+| **Session stirbt während Pause → Card obsolet** | ✅ PASS — `stop` → `abandon_decisions` löst Future (deny), Card `obsolete`, kein Hang (`test_pause_card_obsolete_when_session_dies`) |
+| Schreibrate-Spike legitim (Codegen) | ✅ verschiedene Pfade laufen unter Limit durch; identische Wiederholung fängt zusätzlich die Schleifen-Metrik |
+| Limit-Konfig fehlt → konservative Defaults, nie „kein Watchdog" | ✅ fehlende/defekte Datei → eingebaute Defaults (+ Warnung) |
+
+### Security / Red-Team
+- ✅ **Kein Injection/Code-Risiko:** `yaml.safe_load`; PUT validiert per Pydantic (`Field(gt=0)` → 422; String in numerisches Feld → 422). Keine Felder fließen in SQL/eval/Pfad.
+- ✅ **Kein Path-Traversal:** `save()` schreibt auf den **fixen** Serverpfad (`settings.watchdog_config_path`), nie aus Client-Payload.
+- ✅ **Bypass hebelt die Reißleine nicht aus** — die Alarm-Prüfung steht vor dem Bypass-Auto-Allow.
+- ⚠️ **Betriebs-Caveat (kein Bug):** `enabled:false` schaltet den Watchdog bewusst global ab — bewusste Nutzer-Wahl, **distinkt** von der „fehlende Config → Defaults"-Garantie (die nur für *fehlende/defekte* Datei gilt). Konsistent mit PROJ-10s abschaltbarem Phasen-Gate.
+
+### Findings (alle Info/Low — nicht blockierend)
+- **[Info] Stillstands-Erkennung am Tool-Gate, kein Hintergrund-Timer.** `max_idle_seconds` wird beim **nächsten** Tool-Aufruf ausgewertet — eine komplett hängende Session ohne weiteren Call wird erst beim nächsten Aufruf pausiert. Für die realen Amok-Fälle (Schleife/Token-Burn/Schreib-Spike) feuert das Gate ohnehin. Background-Timer = optionaler Ausbau. (Im Tech-Design bereits notiert.)
+- **[Info] Phasen-Detektion bei Watchdog-Kurzschluss übersprungen.** Pausiert der Watchdog einen Tool-Call, wird `_detect_abc`/Phasen-Gate für **genau diesen** Call übersprungen; der nächste Call detektiert neu. Gantt kann max. einen Call nachlaufen — vernachlässigbar.
+- **[Info] Schreibraten-Pfad-Diversität nur grob.** Die Rate zählt rohe Writes; identisches Hämmern fängt zusätzlich die Schleifen-Metrik. Eine feinere Pfad-Diversitäts-Heuristik ist ein optionaler Tuning-Schritt (im Tech-Design als offene Designwahl markiert).
+
+### Tests hinzugefügt
+- `tests/test_proj16_qa.py` (4): Token-Riss & Schreibraten-Riss am Gate, Korrektur-Pfad (deny+Kommentar) mit Counter-Reset, „Session stirbt während Pause" → Card obsolet.
+
+### Verdict
+Alle 8 Acceptance Criteria ✅, alle Edge-Cases abgedeckt, Security sauber. **Keine Critical/High/Medium** — nur 3 Info-Findings (dokumentierte Design-Grenzen) + 1 Betriebs-Caveat. **Produktionsreif → APPROVED.** Suite **427 passed**, Frontend TS/Build sauber.
 
 ## Deployment
 _To be added by /abc-deploy_

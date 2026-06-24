@@ -28,7 +28,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-13 | Git-Branch-Handling (in-App, abc-konform) | P1 | Planned | PROJ-3 | [Spec](PROJ-13-git-branch-handling.md) |
 | PROJ-14 | PROJ-1-Härtung: Limit + Persistenz | P1 | Deployed | PROJ-1 | [Spec](PROJ-14-engine-haertung-limit-persistenz.md) |
 | PROJ-15 | Vault Stufe 3 (lebendes Gehirn + Kuratierung) | P1 | Planned | PROJ-2, PROJ-4, PROJ-5 | [Spec](PROJ-15-vault-stufe-3.md) |
-| PROJ-16 | Amok-Watchdog + Limits | P1 | In Progress | PROJ-1, PROJ-4, PROJ-10 | [Spec](PROJ-16-amok-watchdog.md) |
+| PROJ-16 | Amok-Watchdog + Limits | P1 | Approved | PROJ-1, PROJ-4, PROJ-10 | [Spec](PROJ-16-amok-watchdog.md) |
 | PROJ-17 | Recovery über den Vault | P1 | Planned | PROJ-2, PROJ-5, PROJ-14 | [Spec](PROJ-17-recovery-vault.md) |
 | PROJ-18 | Weitere Engines + iFrame/Launch | P1 | Planned | PROJ-1 | [Spec](PROJ-18-weitere-engines.md) |
 | PROJ-19 | Effizienz-Ausbau (RAG/Späher/Caching/Token-Dashboard) | P1 | Planned | PROJ-1, PROJ-2, PROJ-5 | [Spec](PROJ-19-effizienz-ausbau.md) |
