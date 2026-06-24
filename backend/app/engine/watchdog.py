@@ -192,6 +192,10 @@ class WatchdogMonitor:
         self._last_fp: str | None = None
         self._repeat: int = 0
         self._cooldown_until: float = 0.0
+        # PROJ-32: läuft GERADE ein Tool? Gesetzt bei record() (Tool-Start), gelöscht,
+        # sobald das Modell wieder produziert (note_progress/feed_usage). Steuert in
+        # derive_liveness die höhere In-Flight-Geduld (langer Build/Test ≠ Hänger).
+        self._tool_in_flight: bool = False
 
     # --- Füttern aus dem Event-Pfad (handle_event/_apply_usage) -----------
 
@@ -201,10 +205,19 @@ class WatchdogMonitor:
         if billed_tokens and billed_tokens > 0:
             self._tokens.append((now, int(billed_tokens)))
         self._last_progress = now
+        self._tool_in_flight = False  # PROJ-32: Modell produziert wieder → kein Tool mehr in-flight.
 
     def note_progress(self) -> None:
         """Echte Aktivität (Assistenten-Output/Result) → Fortschritts-Uhr zurücksetzen."""
         self._last_progress = self._clock()
+        self._tool_in_flight = False  # PROJ-32: Assistenten-Output → kein Tool mehr in-flight.
+
+    @property
+    def tool_in_flight(self) -> bool:
+        """PROJ-32: True, solange ein erlaubter Tool-Aufruf läuft (Tool-Start bis
+        zum nächsten Assistenten-/Result-Event). Liest derive_liveness, um die höhere
+        In-Flight-Geduld anzuwenden."""
+        return self._tool_in_flight
 
     def seconds_since_progress(self) -> float:
         """Sekunden seit dem letzten echten Fortschritt (für PROJ-27-Liveness).
@@ -268,13 +281,23 @@ class WatchdogMonitor:
         return None
 
     def record(self, tool_name: str, tool_input: dict | None) -> None:
-        """Erlaubten (nicht pausierten) Tool-Aufruf in die Fenster aufnehmen."""
+        """Erlaubten (nicht pausierten) Tool-Aufruf in die Fenster aufnehmen.
+
+        Wird in ``request_decision`` NACH ``evaluate`` aufgerufen — die gate-zeitige
+        ``max_idle``-Prüfung (PROJ-16) sieht also noch die alte Uhr; erst danach gilt
+        der Tool-Start als Fortschritt.
+        """
         now = self._clock()
         fp = _fingerprint(tool_name, tool_input)
         self._repeat = self._repeat + 1 if fp == self._last_fp else 1
         self._last_fp = fp
         if tool_name in WRITE_TOOLS:
             self._writes.append(now)
+        # PROJ-32: Tool-Start = echte Aktivität → Fortschritts-Uhr zurücksetzen + Tool als
+        # in-flight markieren. Berührt NUR _last_progress, nicht die Loop-/Schreibraten-
+        # Buchhaltung (eigene Deques) — die Amok-Erkennung bleibt scharf.
+        self._last_progress = now
+        self._tool_in_flight = True
 
     def reset(self, metric: str) -> None:
         """Nach „Fortsetzen"/„Korrigieren": ausgelöstes Limit-Fenster leeren + Cooldown.

@@ -9,9 +9,14 @@
 enabled_auto_reanimation: true
 
 # Kein Fortschritt seit > X Sekunden → Zustand „hängt" (analog Watchdog max_idle_seconds).
-# Fortschritt = neuer Assistenten-Output / Result (PROJ-16-Uhr). Legitime Wartestellung
-# (Eingabe/Decision Card/Watchdog-Pause) zählt NICHT als Stillstand.
+# Fortschritt = neuer Assistenten-Output / Result / Tool-Start (PROJ-16-Uhr, PROJ-32).
+# Legitime Wartestellung (Eingabe/Decision Card/Watchdog-Pause) zählt NICHT als Stillstand.
 progress_timeout_seconds: 180
+
+# PROJ-32: höhere Geduld, SOLANGE ein Tool läuft (langer Build/Test/Explore ist kein
+# Hänger — Jupiter sieht währenddessen keinen Event-Strom). Wird auch diese überschritten,
+# gilt der Tool-Call doch als „hängt" (Auto-Reanimierung/Knopf greifen). Muss > 0 sein.
+tool_in_flight_timeout_seconds: 600
 
 # Frequenz des Hintergrund-Auswerters (Sekunden). Niedrig halten — er pollt nur.
 poll_interval_seconds: 15

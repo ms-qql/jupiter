@@ -123,6 +123,10 @@ class LivenessLimitsPut(BaseModel):
         default=True, description="Globaler Schalter: Auto-Reanimierung an/aus (Indikator + Knopf bleiben)."
     )
     progress_timeout_seconds: int = Field(..., gt=0, description="Kein Fortschritt seit > X s gilt als haengt.")
+    tool_in_flight_timeout_seconds: int = Field(
+        ..., gt=0,
+        description="Hoehere Geduld, solange ein Tool laeuft (langer Build/Test ist kein Haenger).",
+    )
     poll_interval_seconds: int = Field(..., gt=0, description="Frequenz des Hintergrund-Auswerters (s).")
     max_auto_attempts: int = Field(..., gt=0, description="Max. automatische Reanimations-Versuche.")
     backoff_seconds: int = Field(..., ge=0, description="Wartezeit zwischen Auto-Versuchen (s).")

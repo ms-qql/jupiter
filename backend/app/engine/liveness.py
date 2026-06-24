@@ -37,6 +37,9 @@ LIVENESS_DEAD = "tot"        # beendet / verwaist / nicht (mehr) steuerbar.
 DEFAULTS: dict = {
     "enabled_auto_reanimation": True,  # globaler Schalter; aus → nur Indikator + Knopf.
     "progress_timeout_seconds": 180,   # kein Fortschritt > X → „hängt" (analog max_idle_seconds).
+    # PROJ-32: höhere Geduld, SOLANGE ein Tool läuft (langer Build/Test/Explore ist kein
+    # Hänger). Greift erst, wenn auch diese überschritten wird (echter Tool-Hänger).
+    "tool_in_flight_timeout_seconds": 600,
     "poll_interval_seconds": 15,       # Frequenz des Hintergrund-Auswerters.
     "max_auto_attempts": 2,            # danach nur noch der manuelle Knopf.
     "backoff_seconds": 30,             # Wartezeit zwischen Auto-Versuchen.
@@ -45,6 +48,7 @@ DEFAULTS: dict = {
 # Positive-Integer-Felder (> 0). ``backoff_seconds`` darf 0 sein (kein Backoff).
 _POSITIVE_FIELDS: tuple[str, ...] = (
     "progress_timeout_seconds",
+    "tool_in_flight_timeout_seconds",
     "poll_interval_seconds",
     "max_auto_attempts",
 )

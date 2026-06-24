@@ -271,6 +271,12 @@ class SessionRuntime:
         # STARTING/RUNNING bei lebendem Prozess: die Fortschritts-Uhr entscheidet.
         if timeout is None:
             timeout = liveness.liveness_store.config()["progress_timeout_seconds"]
+        # PROJ-32: Läuft gerade ein Tool (langer Build/Test/Explore), gilt die höhere
+        # In-Flight-Geduld statt des normalen Timeouts — ein einzelner langer Tool-Call
+        # ist kein Hänger. Wird auch diese überschritten (Tool produziert ewig nichts),
+        # greift die reguläre Hänger-Erkennung/Auto-Reanimierung wie gehabt.
+        if self.watchdog.tool_in_flight:
+            timeout = liveness.liveness_store.config()["tool_in_flight_timeout_seconds"]
         if self.watchdog.seconds_since_progress() > timeout:
             return liveness.LIVENESS_HANGING
         return liveness.LIVENESS_ACTIVE

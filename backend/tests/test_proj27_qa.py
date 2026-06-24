@@ -2,9 +2,10 @@
 
 Ergänzt die Entwickler-Tests (test_proj27_liveness.py) um:
 - das KRITISCHE Finding BUG-1 (False-Positive „hängt" bei legitimer langer Aufgabe) —
-  als ``xfail(strict)``, damit es automatisch grün/auffällig wird, sobald PROJ-32 die
-  Fortschritts-Definition um Tool-Aktivität erweitert;
-- die Wurzelursache (Tool-Aufzeichnung zählt nicht als Fortschritt);
+  inzwischen durch **PROJ-32** behoben; die Tests verifizieren jetzt den Fix (Tool-
+  Aktivität zählt als Fortschritt + In-Flight-Geduld);
+- die ehemalige Wurzelursache (Tool-Aufzeichnung zählte nicht als Fortschritt) — jetzt
+  als Regressions-Schutz, dass record() die Fortschritts-Uhr setzt;
 - Red-Team rund um das Session-Limit (hängende = aktive Session belegt keinen 2. Slot);
 - Settings-Validierung (negativ / Nicht-Ganzzahl → 422);
 - Automatik global aus → Indikator + manueller Knopf bleiben.
@@ -65,41 +66,38 @@ def _app() -> object:
 # --- BUG-1 (HIGH): False-Positive „hängt" bei legitimer langer Aufgabe ------
 
 
-def test_bug1_root_cause_toolcall_is_not_progress():
-    """Wurzelursache von BUG-1: ein laufender Tool-Call (watchdog.record) setzt die
-    Fortschritts-Uhr NICHT zurück — nur Assistenten-Output/Result tun das. Damit wächst
-    `seconds_since_progress` während eines langen Tools ungebremst über den Timeout."""
+def test_bug1_fix_toolcall_counts_as_progress():
+    """Fix von BUG-1 (PROJ-32): ein laufender Tool-Call (watchdog.record) setzt die
+    Fortschritts-Uhr jetzt zurück und markiert „in-flight" — ein langer Tool-Call gilt
+    damit nicht mehr nach `progress_timeout` als Stillstand."""
     clk = Clock()
     m = WatchdogMonitor(watchdog.watchdog_store, clock=clk)
     m.note_progress()  # letzter echter Fortschritt bei t=0
     clk.advance(100)
     m.record("Bash", {"command": "npm run build"})  # Tool-Aktivität (manager.py:502)
-    assert m.seconds_since_progress() == 100  # record() hat die Uhr NICHT zurückgesetzt
-    clk.advance(100)
-    assert m.seconds_since_progress() == 200  # > Default-Timeout 180 → würde „hängt"
+    assert m.seconds_since_progress() == 0  # PROJ-32: record() setzt die Uhr zurück
+    assert m.tool_in_flight is True
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG-1 (Fix: PROJ-32): Tool-Aktivität zählt nicht als Fortschritt → ein "
-    "legitimer langer Tool-Call (>180s ohne Assistenten-Output) wird fälschlich als "
-    "'hängt' gewertet und auto-reanimiert (verwirft Arbeit). Spec-AC: bleibt 'aktiv'.",
-)
-async def test_bug1_long_toolcall_should_stay_active():
+async def test_bug1_long_toolcall_should_stay_active(monkeypatch):
     """Spec (Beschreibung Zeile 23 + Edge Case Zeile 37): eine legitim arbeitende lange
     Aufgabe darf NICHT als „hängt" gewertet werden. Repro: Claude startet einen langen
     Tool-Call (z. B. `npm run build`); das Tool wird aufgezeichnet, produziert aber
-    minutenlang keinen Assistenten-Output → Fortschritts-Uhr läuft ab. Erwartet: aktiv."""
+    minutenlang keinen Assistenten-Output. Nach PROJ-32: bleibt „aktiv", solange die
+    In-Flight-Geduld (600 s) nicht überschritten ist."""
+    monkeypatch.setattr(
+        liveness, "liveness_store",
+        StubLivenessStore(progress_timeout_seconds=180, tool_in_flight_timeout_seconds=600),
+    )
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="hi")
     clk = Clock()
     rt.watchdog = WatchdogMonitor(watchdog.watchdog_store, clock=clk)
     rt.watchdog.note_progress()
     rt.watchdog.record("Bash", {"command": "npm run build"})  # langer Tool-Call beginnt
-    clk.advance(200)  # Tool läuft > progress_timeout, kein Assistenten-Output dazwischen
+    clk.advance(200)  # Tool läuft > progress_timeout (180), aber < In-Flight-Geduld (600)
     rt.state.status = RUNNING
-    # Soll-Verhalten laut Spec — aktuell liefert derive_liveness „hängt" (→ xfail).
     assert rt.derive_liveness(180) == LIVENESS_ACTIVE
 
 

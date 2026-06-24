@@ -346,6 +346,7 @@ def test_put_liveness_live(monkeypatch, tmp_path):
         json={
             "enabled_auto_reanimation": False,
             "progress_timeout_seconds": 60,
+            "tool_in_flight_timeout_seconds": 500,  # PROJ-32
             "poll_interval_seconds": 5,
             "max_auto_attempts": 1,
             "backoff_seconds": 0,
@@ -353,6 +354,7 @@ def test_put_liveness_live(monkeypatch, tmp_path):
     )
     assert resp.status_code == 200
     assert resp.json()["progress_timeout_seconds"] == 60
+    assert resp.json()["tool_in_flight_timeout_seconds"] == 500  # PROJ-32
     assert liveness.liveness_store.config()["enabled_auto_reanimation"] is False
 
 
