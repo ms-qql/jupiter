@@ -320,7 +320,10 @@ export default function SessionDetailPage({
           Eingabe gesperrt — bitte erst die offene Freigabe oben entscheiden.
         </p>
       )}
-      <form onSubmit={handleSend} className="flex items-end gap-2">
+      {/* items-stretch: Textarea übernimmt die Höhe der Button-Spalte (Symmetrie,
+          PROJ-29). Die Buttons selbst bleiben h-8 und oben ausgerichtet; wächst die
+          Textarea beim Tippen (field-sizing-content), wächst die Zeile mit. */}
+      <form onSubmit={handleSend} className="flex items-stretch gap-2">
         <Textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

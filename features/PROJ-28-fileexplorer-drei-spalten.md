@@ -1,8 +1,12 @@
 # PROJ-28: Fileexplorer Drei-Spalten-Layout (Sidebar · Datei-Panel · Ansicht)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
+
+## Deployment
+- **Live:** https://jupiter.auxevo.tech · **Datum:** 2026-06-24 · **Version:** 0.9.0 (Batch mit PROJ-29)
+- Ausgeliefert: Drei-Spalten-Fileexplorer (Sidebar · Datei-Panel · Ansicht) inkl. `file-preview`.
 
 ## Implementation Notes (Frontend, 2026-06-24)
 - **`app/(cockpit)/dateien/page.tsx`** → Thin-Wrapper, rendert nur noch `<FileExplorer />` (volles Layout liegt wie bei Doku in der Komponente).
