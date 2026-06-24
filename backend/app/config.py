@@ -112,6 +112,14 @@ class Settings(BaseSettings):
     # Assemblierung, nur ohne Cache-Key (No-op-Fallback, kein Hard-Fail).
     prompt_cache_enabled: bool = True
 
+    # PROJ-19 (#26): billige Späher-Agenten. Kurzlebiger, nicht-steuerbarer Lauf auf
+    # dem günstigen Modell, der viel liest/sucht und nur das Fazit zurückgibt. Aus →
+    # Endpunkt liefert 503 (kein Hard-Fail im Treiber-Pfad).
+    scout_enabled: bool = True
+    scout_default_model: str = "haiku"  # günstiges Modell für Fazit-Aufgaben.
+    scout_timeout_seconds: int = 180
+    scout_max_context_chars: int = 40_000  # eingelesener Kontext gedeckelt (Kosten-Schutz).
+
     # --- Decision Cards / Freigabe-Hook (PROJ-4) ---------------------------
     # Freigabe-Flow aktivieren: Sessions starten mit dem PreToolUse-Hook.
     enable_decision_cards: bool = True

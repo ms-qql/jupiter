@@ -211,9 +211,22 @@ Hauptsession delegiert "Fazit-Aufgabe" (viel lesen/suchen, wenig zurück)
 - **Engine-bedingt:** funktioniert dort, wo die Engine cacht (Claude Code CLI cacht das System-Prompt-Präfix automatisch); Fremd-Engines ohne Cache-Tokens → Quote 0 / keine Treffer (kein Fehler).
 - **Tests:** `backend/tests/test_proj19_cache.py` (7 Fälle: Assemblierung==combine_with_extra, Hash-Invalidierung, No-op-Fallback, leeres Präfix, Cache-Quote im Aggregat, Manager-Akkumulation) grün; volle Suite **573 passed**, keine Regression; Index-Round-Trip der neuen Spalten + Aggregat manuell verifiziert. Frontend-Typecheck sauber.
 
-### Offen (nächste Sub-Phasen)
-- Sub-Phase 1 **Frontend↔Backend-Anbindung** (optional) · Sub-Phase 2 **Frontend** RAG-Vorschau (optional) · Sub-Phase 3 **Frontend** Cache-Quote/-Tokens im Dashboard anzeigen (optional — Daten liegen in `SessionRead` + `/usage/summary`).
-- Sub-Phase 4 **Späher-Agenten (#26)** — laut Tech-Design (größter Brocken).
+### Sub-Phase 4 — Späher-Agenten (#26) — ✅ Backend fertig (Branch `dev`)
+- **`backend/app/engine/scout.py`** — `ScoutService.scout(task, query?, paths?, project_path?, model?, top_n)` → `ScoutResult`. Kurzlebiger, nicht-steuerbarer Lauf auf dem günstigen Modell (Default `scout_default_model="haiku"`): liest Kontext via **RAG** (`query` → `relevant_snippets`, #23) und/oder **Datei-Pointer** (`paths` → `vault.read_file`), baut einen knappen Prompt und gibt **nur das Fazit** zurück. Kontext gedeckelt (`scout_max_context_chars`). Lauf über `runner` injizierbar (Tests = Fake; Default = einmaliger `claude -p`, kein Stream/Hook/Tools).
+- **Eskalation (Edge Case):** dünnes/leeres Fazit → `usable=False` + `note` (mit größerem Modell wiederholen). Der `model`-Parameter erlaubt der Hauptsession die nachvollziehbare Eskalation (sonnet/opus). Fehlender/ungültiger Datei-Pointer wird übersprungen (kein Hard-Fail).
+- **Doppelte Ersparnis:** günstiges Modell **+** Pointer/RAG-Kontext statt Volltext.
+- **Route `POST /agents/scout`** (`routes/agents.py`) → `ScoutResult`. Kein JWT (vgl. übrige Routen). Feature-Flag `scout_enabled` (aus → 503). Fehler-Mapping: claude fehlt → 503, Timeout → 504, Lauf-Fehler → 502.
+- **Schemas:** `ScoutRequest` / `ScoutResult` (`schemas/agents.py`). Registrierung: `app.state.scout = ScoutService(vault)` + Router in `main.py`.
+- **Tests:** `backend/tests/test_proj19_scout.py` (6 Fälle: RAG-Kontext+günstiges Modell, Datei-Pointer inkl. fehlend, Modell-Override/Eskalation, dünnes-Fazit-Flag, Endpunkt, Feature-Flag-503) grün; volle Suite **579 passed**, keine Regression; Route registriert.
+
+### Status: Backend aller 4 Mechanismen fertig
+Alle vier Effizienz-Mechanismen sind backend-seitig implementiert, getestet und einzeln abschaltbar. **Offen (optionale Frontend-Politur):**
+- Sub-Phase 1: Dashboard auf `/usage`-Endpunkte umstellen (Fallback auf Client-Aggregation).
+- Sub-Phase 2: RAG-Vorschau-UI (Endpunkt `GET /vault/rag/preview` liefert bereits Sichtbarkeit).
+- Sub-Phase 3: Cache-Quote/-Tokens im Dashboard anzeigen (Daten in `SessionRead` + `/usage/summary`).
+- Sub-Phase 4: Späher-Auslöser im UI (Endpunkt `POST /agents/scout` steht).
+
+Empfohlen als Nächstes: `/abc-qa 19` (alle ACs + Security/Tenant-Red-Team gegen die neuen Endpunkte).
 
 ## QA Test Results
 _To be added by /abc-qa_

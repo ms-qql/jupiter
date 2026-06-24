@@ -23,9 +23,11 @@ from .engine.launcher import LauncherService
 from .engine.manager import SessionManager
 from .engine.md_reader import MdReaderService
 from .engine.recovery import RecoveryService
+from .engine.scout import ScoutService
 from .engine.usage import UsageService
 from .engine.vault import VaultService
 from .routes import (
+    agents,
     constitution,
     engines,
     files,
@@ -125,6 +127,8 @@ def create_app(
     app.state.recovery = RecoveryService(app.state.manager, vault_service)
     # PROJ-19 (#28): Token-/Kosten-Aggregat über den persistenten Live-Index.
     app.state.usage = UsageService(repo)
+    # PROJ-19 (#26): billige Späher-Agenten (RAG-Kontext + günstiges Modell → nur Fazit).
+    app.state.scout = ScoutService(vault_service)
     app.include_router(sessions.router)
     app.include_router(constitution.router)
     app.include_router(vault.router)
@@ -136,6 +140,7 @@ def create_app(
     app.include_router(recovery.router)
     app.include_router(engines.router)
     app.include_router(usage.router)
+    app.include_router(agents.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:
