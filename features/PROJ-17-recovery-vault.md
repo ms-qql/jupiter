@@ -127,6 +127,22 @@ Stack: Next.js Cockpit (kein Flutter — projektweite Abweichung). Branch `dev`.
 
 **Status-/Lade-/Leer-/Fehler-Zustände:** Banner unsichtbar bis geladen; Dialog zeigt Leerzustand „Keine wiederherstellbaren Sessions"; pro Aktion Busy-Label + Erfolg/Fehler-Toast. Alle Texte deutsch. Responsive (`flex-wrap`, `ScrollArea max-h-[60vh]`).
 
+### Backend-Umsetzung (abc-backend, 2026-06-24)
+Branch `dev`. Read-only Sicht über Live-Index (PROJ-14) + Vault (PROJ-2/PROJ-5); kein neues DB-Schema außer einem Flag.
+
+**Neue Dateien**
+- `backend/app/engine/recovery.py` — `RecoveryService(manager, vault)`. `candidates()` aggregiert verwaiste In-Memory-Stränge (Status `error` + Fehler beginnt mit „Verwaist", `child_session_id is None`, nicht `recovery_dismissed`) **und** reine Vault-Kandidaten (Frontmatter-`session_id` aus `Handovers/`/`Sessions/`, nicht im Speicher). 3-stufige Quelle: Handover → Session-Log → `incomplete` (nur Metadaten). „Hier ging's weiter" = `## Offen`/`## Wo stehen wir?`-Extrakt bzw. letzter Log-Block. `restore()` baut den Seed (Handover-Body bzw. mechanisches Gerüst via `build_handover_md`) und ruft `manager.recover()`. `dismiss()` = In-Process-Set + persistiertes Flag. Idempotenz über „existiert bereits ein Strang mit diesem `parent_session_id`?".
+- `backend/app/schemas/recovery.py` — `RecoveryCandidate`, `RecoveryList`, `RecoveryRestoreRequest`.
+- `backend/app/routes/recovery.py` — `GET /recovery`, `POST /recovery/{id}/restore` (201/404/409/400/503), `POST /recovery/{id}/dismiss` (204, idempotent).
+- `backend/tests/test_proj17_recovery.py` — 14 Tests (alle AC + Edge-Cases: jüngster Handover gewinnt, beschädigter Handover → Warnung, Projektpfad weg → blockiert, reiner Vault-Wiederaufbau, Idempotenz, Dismiss überdauert Rehydrate, API-Flow). Grün.
+
+**Geänderte Dateien**
+- `backend/app/engine/manager.py` — `SessionState.recovery_dismissed`; `recover()` (wie `reset()`, aber ohne `stop()`, Seed serverseitig, Idempotenz-Guard → `RuntimeError`/409); `mark_recovery_dismissed()`; `_row`/`_state_from_row` um das Flag erweitert.
+- `backend/app/db/session_index.py` — Spalte `recovery_dismissed` + leichtgewichtige `ALTER TABLE`-Migration für bestehende DBs.
+- `backend/app/main.py` — `RecoveryService` als `app.state.recovery`, Router registriert.
+
+**Vertrag erfüllt** wie im Frontend-Abschnitt dokumentiert (Felder/Status-Codes identisch). Regression: 447 Tests grün (14 neu + 433 bestehend; volle Suite nur batch-weise wegen Speicher).
+
 ## QA Test Results
 _To be added by /abc-qa_
 

@@ -147,6 +147,9 @@ class SessionState:
     abc_feature: str | None = None  # Feature-Referenz, z. B. „8" (aus Skill-Arg/berührtem Spec).
     # PROJ-10: zuletzt aufgerufener Skill (für Skill-Kontext der Trust-Policy).
     current_skill: str | None = None
+    # PROJ-17: aus der Recovery-Ansicht verworfen (kein Recovery-Kandidat mehr).
+    # Der Vault-Eintrag/das Log bleibt unberührt — nur die Sicht blendet ihn aus.
+    recovery_dismissed: bool = False
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -801,6 +804,7 @@ class SessionManager:
             "abc_phase": s.abc_phase,
             "abc_phase_reached": s.abc_phase_reached,
             "abc_feature": s.abc_feature,
+            "recovery_dismissed": 1 if s.recovery_dismissed else 0,
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -907,6 +911,7 @@ class SessionManager:
             abc_phase=row.get("abc_phase"),
             abc_phase_reached=row.get("abc_phase_reached"),
             abc_feature=row.get("abc_feature"),
+            recovery_dismissed=bool(row.get("recovery_dismissed")),
         )
 
     async def create(
@@ -1244,6 +1249,74 @@ class SessionManager:
         )
         old_state.child_session_id = child.state.session_id
         return child
+
+    async def recover(
+        self,
+        session_id: str,
+        *,
+        seed_context: str,
+        initial_prompt: str | None = None,
+        project_path: str | None = None,
+        model: str | None = None,
+        permission_mode: str | None = None,
+        role: str | None = None,
+        owner: str | None = None,
+        project_name: str | None = None,
+    ) -> SessionRuntime:
+        """PROJ-17: einen verwaisten/aus dem Vault rekonstruierten Strang wieder als
+        Live-Session aufnehmen — wie ``reset()``, aber OHNE ``stop()`` (der alte Strang
+        ist bereits terminal/verwaist) und mit serverseitig verdichtetem Seed.
+
+        Idempotent (1 Strang = 1 Nachfolger): existiert schon eine Session, deren
+        ``parent_session_id`` auf diesen Strang zeigt, wird abgebrochen (→ 409). Das
+        deckt sowohl In-Memory-Verwaiste (mit ``child_session_id``) als auch reine
+        Vault-Kandidaten ab. Liegt der alte Strang noch im Speicher, werden seine
+        Metadaten übernommen; sonst müssen sie (Projektpfad etc.) übergeben werden.
+        """
+        if any(r.state.parent_session_id == session_id for r in self._sessions.values()):
+            raise RuntimeError("Dieser Strang wurde bereits wiederhergestellt.")
+        old = self._sessions.get(session_id)
+        if old is not None:
+            s = old.state
+            project_path = s.project_path
+            model = s.model
+            permission_mode = s.permission_mode
+            role = s.role
+            owner = s.owner
+            project_name = s.project_name
+        if not project_path:
+            raise ValueError(
+                "Projektpfad nicht rekonstruierbar — Wiederherstellung nicht möglich."
+            )
+        child = await self.create(
+            project_path=project_path,
+            initial_prompt=initial_prompt or _DEFAULT_RESET_PROMPT,
+            model=_model_alias(model or settings.default_model),
+            permission_mode=permission_mode or settings.default_permission_mode,
+            role=role,
+            extra_system_prompt=seed_context,
+            owner=owner,
+            parent_session_id=session_id,
+            project_name=project_name,
+        )
+        if old is not None:
+            old.state.child_session_id = child.state.session_id
+            self._persist(old)  # Staffelstab-Verknüpfung spiegeln (best-effort).
+        return child
+
+    def mark_recovery_dismissed(self, session_id: str) -> bool:
+        """PROJ-17: einen verwaisten Strang aus der Recovery-Ansicht ausblenden.
+
+        Setzt nur das Flag (Status/Log bleiben unberührt) und spiegelt es best-effort
+        in den Live-Index, damit das Verwerfen einen Neustart überdauert. ``True``,
+        wenn der Strang im Speicher lag (sonst übernimmt der RecoveryService die
+        In-Process-Ausblendung für reine Vault-Kandidaten)."""
+        runtime = self._sessions.get(session_id)
+        if runtime is None:
+            return False
+        runtime.state.recovery_dismissed = True
+        self._persist(runtime)
+        return True
 
     def transcript_text(self, session_id: str) -> str:
         """Gesamtes Transkript als Klartext (Copy-out)."""
