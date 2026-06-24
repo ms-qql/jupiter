@@ -176,6 +176,18 @@ PROJ-33 wird bewusst auf **`main`** weitergebaut (Nutzer-Entscheidung 2026-06-24
 
 **Nächster Schritt:** `/abc-frontend 33` (self_restart-Card), dann `/abc-qa 33`.
 
+## Implementierungsnotizen — Frontend (2026-06-24, `/abc-frontend`, Next.js, Branch `main`)
+
+**Status:** Frontend implementiert + geprüft (Vitest **75 grün**, ESLint sauber, tsc fehlerfrei außer vorbestehendem `md-tree.test.ts`). Bereit für `/abc-qa`.
+
+**Geänderte Dateien (minimal):**
+- `nextjs_app/lib/types.ts` — `card_type`-Union um `"self_restart"` ergänzt.
+- `nextjs_app/components/cockpit/decision-card.tsx` — neuer Render-Zweig für `self_restart` in `ApproveDenyCard`: **rote** Warnumrandung + `ShieldAlert`-Badge „Host-Neustart", Button „Neustart freigeben"/„Ablehnen"/„Mit Kommentar zurück" (blockierende Freigabe über die bestehenden Decision-Endpunkte — kein neuer API-Call). Approve-Toast „Neustart freigegeben".
+
+**Verhalten:** Will ein Agent den eigenen Host/Backend neustarten (`systemctl restart jupiter-backend`, `deploy.sh`, `reboot`), erscheint eine rote Freigabe-Card statt eines stillen Restarts; der Nutzer gibt frei oder lehnt ab (→ Claude bekommt die Ablehnung inline). Fällt in den Standard-Approve/Deny-Pfad (NICHT die Watchdog-Abbrechen-Aktion), da hier nur der Restart abgelehnt, nicht die Session gestoppt wird.
+
+**Nächster Schritt:** `/abc-qa 33`.
+
 ## QA Test Results
 _To be added by /abc-qa_
 
