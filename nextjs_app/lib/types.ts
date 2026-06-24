@@ -12,6 +12,14 @@ export type SessionStatus =
   | "done"
   | "error";
 
+/** PROJ-27: verifizierter Liveness-Zustand — nicht „läuft die Uhr", sondern „lebt der
+ *  Prozess wirklich + Fortschritt". „aktiv" (lebt + Fortschritt/legitime Wartestellung),
+ *  „hängt" (lebt, aber kein Fortschritt), „tot" (beendet/verwaist). */
+export type Liveness = "aktiv" | "hängt" | "tot";
+
+/** PROJ-27: Rückmeldung des letzten (Auto-/manuellen) Reanimations-Versuchs. */
+export type LivenessResult = "läuft_wieder" | "fehlgeschlagen" | null;
+
 /** Offene Decision Card (PROJ-4) — spiegelt PendingDecisionRead. */
 export interface PendingDecision {
   decision_id: string;
@@ -92,6 +100,12 @@ export interface Session {
   /** PROJ-8: Feature-Referenz, z. B. „8" (aus Skill-Arg/berührtem Spec). */
   abc_feature: string | null;
   pending_decisions: PendingDecision[];
+  /** PROJ-27: verifizierter Heartbeat (aktiv/hängt/tot) — eigenes Signal neben der Ampel. */
+  liveness: Liveness;
+  /** PROJ-27: bisher unternommene automatische Reanimierungs-Versuche dieser Episode. */
+  liveness_auto_attempts: number;
+  /** PROJ-27: Ergebnis des letzten Reanimations-Versuchs (für die UI-Rückmeldung). */
+  liveness_last_result: LivenessResult;
 }
 
 /** PROJ-8: kanonische ABC-Workflow-Phasen (spiegelt backend/app/engine/abc_phases.py). */
@@ -206,6 +220,29 @@ export interface WatchdogSetting extends WatchdogLimits {
   /** Herkunft: z. B. „config/watchdog.yaml" oder „default" (keine Datei gepflegt). */
   source: string;
   /** Warnung bei kaputter/ungültiger Config (sonst null) — UI zeigt Fallback-Hinweis. */
+  warning: string | null;
+}
+
+// --- PROJ-27: Verifizierter Liveness-Indikator + Auto-Reanimierung ----------
+
+/** Konfigurierbare Liveness-Schwellen (editierbarer Teil von GET/PUT /settings/liveness).
+ *  Spiegelt backend/app/schemas/settings.py LivenessLimitsPut. */
+export interface LivenessLimits {
+  /** Globaler Schalter der Automatik. Aus → nur Indikator + manueller Knopf. */
+  enabled_auto_reanimation: boolean;
+  /** Kein Fortschritt seit > X s → Zustand „hängt" (analog Watchdog-Stillstand). */
+  progress_timeout_seconds: number;
+  /** Frequenz des Hintergrund-Auswerters (s). */
+  poll_interval_seconds: number;
+  /** Max. automatische Reanimations-Versuche; danach nur noch der manuelle Knopf. */
+  max_auto_attempts: number;
+  /** Wartezeit zwischen automatischen Versuchen (s); 0 = kein Backoff. */
+  backoff_seconds: number;
+}
+
+/** Gesamte Liveness-Config (GET /settings/liveness) — Schwellen + Herkunft/Warnung. */
+export interface LivenessSetting extends LivenessLimits {
+  source: string;
   warning: string | null;
 }
 

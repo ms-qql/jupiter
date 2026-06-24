@@ -12,6 +12,8 @@ import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { ContextGauge } from "@/components/cockpit/context-gauge";
 import { ThresholdBadge } from "@/components/cockpit/threshold-badge";
 import { HandoverDialog } from "@/components/cockpit/handover-dialog";
+import { HeartbeatDot } from "@/components/cockpit/heartbeat-dot";
+import { ReanimateButton } from "@/components/cockpit/reanimate-button";
 import { ResetSessionButton } from "@/components/cockpit/reset-session-button";
 import { SessionThresholdControl } from "@/components/cockpit/threshold-control";
 import { SessionClipboardButton } from "@/components/cockpit/session-clipboard-button";
@@ -20,12 +22,14 @@ import { useNow } from "@/components/cockpit/sessions-provider";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { ApiError, getSession, sendInput, stopSession } from "@/lib/api";
 import {
+  canReanimate,
   contextLabel,
   formatDuration,
   modelLabel,
   projectName,
   statusMeta,
 } from "@/lib/status";
+import { cn } from "@/lib/utils";
 import type { SessionDetail } from "@/lib/types";
 
 export default function SessionDetailPage({
@@ -137,6 +141,13 @@ export default function SessionDetailPage({
 
       <header className="flex flex-wrap items-center gap-3 border-b border-border pb-3">
         {meta && <Ampel color={meta.ampel} />}
+        {head && (
+          <HeartbeatDot
+            liveness={head.liveness}
+            autoAttempts={head.liveness_auto_attempts}
+            size="md"
+          />
+        )}
         <h1 className="text-lg font-semibold">
           {head ? projectName(head.project_path) : "Session"}
         </h1>
@@ -213,6 +224,42 @@ export default function SessionDetailPage({
           threshold={head.context_fill_threshold_pct}
           className="pb-1"
         />
+      )}
+
+      {/* PROJ-27: Liveness-Banner — hängende/tote Sessions reanimieren, mit Rückmeldung. */}
+      {head && canReanimate(head.liveness) && (
+        <div
+          className={cn(
+            "my-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border px-3 py-2 text-sm",
+            head.liveness === "hängt"
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+              : "border-zinc-500/40 bg-zinc-500/10 text-muted-foreground",
+          )}
+        >
+          <HeartbeatDot
+            liveness={head.liveness}
+            autoAttempts={head.liveness_auto_attempts}
+            size="md"
+          />
+          <span>
+            {head.liveness === "hängt"
+              ? "Diese Session hängt — der Prozess lebt, macht aber keinen Fortschritt."
+              : "Session beendet/nicht steuerbar."}
+            {head.liveness_auto_attempts > 0 &&
+              ` Automatische Reanimierung ${head.liveness_auto_attempts}× versucht.`}
+          </span>
+          {head.liveness_last_result === "läuft_wieder" && (
+            <span className="font-medium text-emerald-600 dark:text-emerald-400">
+              ✓ läuft wieder
+            </span>
+          )}
+          {head.liveness_last_result === "fehlgeschlagen" && (
+            <span className="font-medium text-red-600 dark:text-red-400">
+              Reanimation fehlgeschlagen
+            </span>
+          )}
+          <ReanimateButton sessionId={id} variant="full" className="ml-auto" />
+        </div>
       )}
 
       {head?.status === "error" && head.error && (

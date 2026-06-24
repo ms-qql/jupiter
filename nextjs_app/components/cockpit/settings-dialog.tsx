@@ -4,6 +4,7 @@
 //  - Allgemein (PROJ-5): Kontext-Schwelle für Warnung + Handover-Vorschlag.
 //  - Trust-Policy (PROJ-10): abgestuftes Vertrauen + Phasen-Übergangs-Gate.
 //  - Watchdog (PROJ-16): Reißleine — Token-/Zeit-/Wiederholungs-/Schreib-Limits.
+//  - Liveness (PROJ-27): verifizierter Heartbeat + Auto-Reanimierung hängender Sessions.
 // Über das Zahnrad im Mission-Control-Header.
 
 import { SettingsIcon } from "lucide-react";
@@ -21,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ThresholdControl } from "./threshold-control";
 import { PolicyControl } from "./policy-control";
 import { WatchdogControl } from "./watchdog-control";
+import { LivenessControl } from "./liveness-control";
 
 export function SettingsDialog() {
   return (
@@ -44,6 +46,7 @@ export function SettingsDialog() {
             <TabsTrigger value="allgemein">Allgemein</TabsTrigger>
             <TabsTrigger value="policy">Trust-Policy</TabsTrigger>
             <TabsTrigger value="watchdog">Watchdog</TabsTrigger>
+            <TabsTrigger value="liveness">Liveness</TabsTrigger>
           </TabsList>
           <TabsContent value="allgemein" className="py-2">
             <ThresholdControl />
@@ -56,6 +59,11 @@ export function SettingsDialog() {
           <TabsContent value="watchdog" className="py-2">
             <ScrollArea className="max-h-[60vh] pr-3">
               <WatchdogControl />
+            </ScrollArea>
+          </TabsContent>
+          <TabsContent value="liveness" className="py-2">
+            <ScrollArea className="max-h-[60vh] pr-3">
+              <LivenessControl />
             </ScrollArea>
           </TabsContent>
         </Tabs>

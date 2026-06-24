@@ -198,3 +198,27 @@ Backend-lastiges Feature. Empfehlung: **`/abc-backend`** zuerst (Liveness-Ableit
 **Abweichungen/Entscheidungen:** Liveness ist ein **abgeleitetes** Feld (frisch je Snapshot), keine gespeicherte Zustandsmaschine. Auto-Reanimierung feuert strukturell nur auf „hängt" (= aktive Session mit belegtem Slot), daher kein Limit-Bypass; die manuelle Reanimierung einer terminalen Session prüft das Limit explizit. Restart-Orphans (DeadDriver/ERROR) sind „tot" → keine Auto-Reanimierung.
 
 **Nächster Schritt:** `/abc-frontend` (HeartbeatDot + Reaktivieren-Knopf + Reanimations-Rückmeldung), dann `/abc-qa`.
+
+---
+
+## Implementierungsnotizen — Frontend (2026-06-24, `/abc-frontend`, Next.js, Branch `dev`)
+
+**Status:** Frontend implementiert + getestet (64 Frontend-Tests grün, Lint sauber, TypeScript fehlerfrei). Bereit für `/abc-qa`.
+
+**Neue/geänderte Dateien:**
+- `nextjs_app/components/cockpit/heartbeat-dot.tsx` (neu) — additiver Heartbeat-Indikator NEBEN der Status-Ampel (Herz-Icon, klar abgesetzt vom runden Ampel-Punkt): `aktiv` = pulsierender Herzschlag (grün), `hängt` = Riss (amber), `tot` = durchgestrichen (grau), mit erklärendem Tooltip (inkl. Auto-Versuchs-Zähler).
+- `nextjs_app/components/cockpit/reanimate-button.tsx` (neu) — manueller „Reaktivieren"-Knopf (Varianten `icon` für die Kachel, `full` fürs Detail); ruft `POST /sessions/{id}/reanimate`, deutsche Toasts (409 = läuft bereits, 429 = Limit), Provider-Refetch.
+- `nextjs_app/components/cockpit/liveness-control.tsx` (neu) — Settings-Tab „Liveness": Schwellen (Timeout/Poll/Versuche/Backoff) + globaler Auto-Schalter (`GET/PUT /settings/liveness`, live), Muster wie Watchdog-Control.
+- `nextjs_app/lib/types.ts` — `Liveness`/`LivenessResult`-Typen, 3 neue `Session`-Felder, `LivenessLimits`/`LivenessSetting`.
+- `nextjs_app/lib/status.ts` — `livenessMeta()` + `canReanimate()` (Knopf nur bei `hängt`/`tot`).
+- `nextjs_app/lib/api.ts` — `reanimateSession()`, `getLiveness()`, `setLiveness()`.
+- `nextjs_app/components/cockpit/session-tile.tsx` — HeartbeatDot neben der Ampel + Reaktivieren-Knopf (bei `hängt`/`tot`).
+- `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx` — HeartbeatDot im Header + Liveness-Banner mit Reaktivieren-Knopf und Rückmeldung („✓ läuft wieder" / „Reanimation fehlgeschlagen").
+- `nextjs_app/components/cockpit/settings-dialog.tsx` — neuer „Liveness"-Tab.
+- Tests: `lib/status.test.ts` (+ Liveness-Helfer), beide Session-Factories (`status.test.ts`, `gantt-chart.test.tsx`) um die Liveness-Defaultfelder ergänzt.
+
+**Kerngedanke der UI:** Der Heartbeat liegt NEBEN der Ampel — eine grün-pulsierende „arbeitet"-Ampel kann lügen, wenn die Session in Wahrheit hängt; der amber-Herzriss deckt genau das auf. `liveness` reist über das bestehende Polling/WS mit (kein Extra-Fetch); der Live-Stream aktualisiert Indikator + Banner sofort nach Auto-/manueller Reanimierung.
+
+**Review lokal:** `cd nextjs_app && npm run dev` (Backend per `conda run -n Dashboard --no-capture-output uvicorn app.main:app --reload --app-dir backend`).
+
+**Nächster Schritt:** `/abc-qa` (Akzeptanzkriterien + Edge Cases gegen Front- und Backend).

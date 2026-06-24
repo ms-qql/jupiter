@@ -22,6 +22,8 @@ import type {
   Session,
   SessionCreate,
   SessionDetail,
+  LivenessLimits,
+  LivenessSetting,
   ThresholdSetting,
   TrustPolicy,
   UploadResult,
@@ -102,6 +104,15 @@ export function sendInput(id: string, text: string): Promise<{ ok: boolean }> {
 
 export function stopSession(id: string): Promise<{ ok: boolean }> {
   return request(`/sessions/${id}/stop`, { method: "POST" });
+}
+
+// --- PROJ-27: Liveness + Reanimieren ---------------------------------------
+
+/** Hängende/tote Session manuell reaktivieren (claude --resume-Pfad). Liefert den
+ *  aktualisierten Session-Zustand. 409 = läuft bereits · 429 = Session-Limit greift
+ *  · 503 = Resume/CLI-Fehler (→ ApiError.status). */
+export function reanimateSession(id: string): Promise<Session> {
+  return request<Session>(`/sessions/${id}/reanimate`, { method: "POST" });
 }
 
 // --- PROJ-21: Session-Löschen / Cockpit-Aufräumen --------------------------
@@ -252,6 +263,21 @@ export function getWatchdog(signal?: AbortSignal): Promise<WatchdogSetting> {
  *  übernommen (kein Neustart, laufende Sessions bleiben ununterbrochen). */
 export function setWatchdog(limits: WatchdogLimits): Promise<WatchdogSetting> {
   return request<WatchdogSetting>("/settings/watchdog", {
+    method: "PUT",
+    body: JSON.stringify(limits),
+  });
+}
+
+// --- PROJ-27: Liveness-Schwellen + Auto-Reanimierung -----------------------
+
+/** Aktuelle Liveness-Schwellen lesen (Timeout/Poll/Versuche/Backoff + Herkunft/Warnung). */
+export function getLiveness(signal?: AbortSignal): Promise<LivenessSetting> {
+  return request<LivenessSetting>("/settings/liveness", { signal });
+}
+
+/** Liveness-Schwellen ersetzen — serverseitig validiert und LIVE übernommen. */
+export function setLiveness(limits: LivenessLimits): Promise<LivenessSetting> {
+  return request<LivenessSetting>("/settings/liveness", {
     method: "PUT",
     body: JSON.stringify(limits),
   });

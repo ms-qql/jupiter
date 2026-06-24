@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ABC_PHASES,
+  canReanimate,
   columnFor,
   contextLabel,
   countStatuses,
@@ -8,6 +9,7 @@ import {
   formatDuration,
   gaugeColor,
   isTerminalStatus,
+  livenessMeta,
   modelLabel,
   phaseIndex,
   projectName,
@@ -44,6 +46,9 @@ function session(overrides: Partial<Session> = {}): Session {
     abc_phase_reached: null,
     abc_feature: null,
     pending_decisions: [],
+    liveness: "aktiv",
+    liveness_auto_attempts: 0,
+    liveness_last_result: null,
     ...overrides,
   };
 }
@@ -239,5 +244,20 @@ describe("gaugeColor — PROJ-5", () => {
   });
   it("grün im grünen Bereich", () => {
     expect(gaugeColor(10, 85)).toBe("bg-emerald-500");
+  });
+});
+
+describe("Liveness-Helfer — PROJ-27", () => {
+  it("livenessMeta: nur „aktiv“ pulsiert (verifizierter Heartbeat)", () => {
+    expect(livenessMeta("aktiv")).toEqual({ label: "Aktiv", color: "emerald", pulse: true });
+    expect(livenessMeta("hängt")).toEqual({ label: "Hängt", color: "amber", pulse: false });
+    expect(livenessMeta("tot")).toEqual({ label: "Beendet", color: "zinc", pulse: false });
+  });
+  it("canReanimate: nur hängende/tote Sessions zeigen den Knopf", () => {
+    expect(canReanimate("hängt")).toBe(true);
+    expect(canReanimate("tot")).toBe(true);
+    expect(canReanimate("aktiv")).toBe(false);
+    expect(canReanimate(null)).toBe(false);
+    expect(canReanimate(undefined)).toBe(false);
   });
 });
