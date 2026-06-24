@@ -169,6 +169,24 @@ API-Kontrakt gebaut; Backend (Monitor + Enforcement + `/settings/watchdog`) folg
 
 **Offene Punkte für Backend:** Kontrakt `WatchdogSetting`/`WatchdogLimits` (Feldnamen oben) umsetzen; Watchdog-Card mit `card_type="watchdog_pause"` + Metrik-Text in `triggering_rule`; Per-Session-Override (optional, analog Threshold) noch nicht im UI.
 
+## Backend-Implementierung (2026-06-24)
+Stack: FastAPI + **dateibasierter** Watchdog (YAML, kein DB). Branch `dev`. In-Memory/Datei-Ansatz wie PROJ-10.
+
+**Neu/geändert:**
+- `engine/watchdog.py` (neu) — **`WatchdogStore`** (YAML, mtime-Live-Reload, fehlende Keys mergen mit Defaults, defekt → Defaults + Warnung, `save()` validiert `> 0`) + **`WatchdogMonitor`** (pro Session): Sliding Windows als Zeitstempel-Deques für Tokens & Schreibrate, Fortschritts-Uhr (Stillstand), Fingerprint-Serie (Schleife ≠ Iteration). `evaluate()` = reine Lese-Prüfung am Tool-Gate, `record()` nimmt erlaubte Calls auf, `reset(metric)` leert das ausgelöste Fenster + setzt **Cooldown** (30 s). Injizierbarer `clock` für Tests. Modul-Singleton `watchdog_store`. Defaults: 200k Tokens/60 s · 180 s Stillstand · 5 identische Calls · 30 Writes/60 s.
+- `engine/manager.py` — `SessionRuntime` hält einen `WatchdogMonitor`. `request_decision` prüft **ZUERST** (vor Phasen-Gate **und** vor Bypass-Auto-Allow) `watchdog.evaluate(...)`; bei Alarm → `_open_card(card_type="watchdog_pause", triggering_rule=<Metrik-Klartext>)` (pausiert, Prozess lebt), nach Auflösung `reset(metric)`. Kein Alarm → `record(...)`. `_apply_usage` füttert `feed_usage(billed_tokens)`; Assistenten-Output ruft `note_progress()`. → **Watchdog sticht auto-allow** (auch im Bypass).
+- `schemas/settings.py` — `WatchdogLimitsPut` (alle Zähler `Field(gt=0)` → 422) + `WatchdogSettingRead` (+ `source`/`warning`).
+- `routes/settings.py` — `GET /settings/watchdog`, `PUT /settings/watchdog` (validiert, schreibt YAML, live).
+- `schemas/sessions.py` — `card_type`-Kommentar um `watchdog_pause` ergänzt (Feld ist freier `str`, Wert reist ohne Schema-Bruch ins Frontend).
+- `config.py` — `watchdog_config_path` (Default `backend/config/watchdog.yaml`, muss nicht existieren).
+- `config/watchdog.example.yaml` (dokumentierte Vorlage, nicht geladen); Laufzeit-`watchdog.yaml` in `.gitignore`.
+
+**Abweichung vom Tech-Design:** keine `JUPITER_WATCHDOG_*`-Einzel-Envs — die YAML-Datei (+ eingebaute Defaults) ist die alleinige Konfig-Fläche, 1:1 wie PROJ-10s `policy.yaml`. Reduziert Oberfläche, eine Quelle der Wahrheit.
+
+**Bekannte Grenze (für QA):** Stillstands-Erkennung (`max_idle_seconds`) wird **am nächsten Tool-Gate** ausgewertet, nicht von einem Hintergrund-Timer — eine komplett hängende Session ohne weiteren Tool-Call wird erst beim nächsten Aufruf pausiert. Für die realen Amok-Fälle (Schleife/Token-Burn/Schreib-Spike) feuert das Gate ohnehin. Background-Timer wäre ein optionaler Ausbau.
+
+**Tests** (`tests/test_proj16_watchdog.py`, 16): Monitor (Schleife vs. Iteration, Token-Fenster+Ablauf, Stillstand, Schreibrate nur für Write-Tools, Reset+Cooldown, disabled), Store (Defaults/Save+Live-Reload/Defekt-Fallback/Key-Merge/`save` lehnt ≤0 ab), REST (GET-Defaults, PUT-live, 422 bei ≤0), Integration (Schleife öffnet `watchdog_pause`-Card → Fortsetzen → running; **sticht Bypass-auto-allow**). **Gesamt-Suite: 423 passed.**
+
 ## QA Test Results
 _To be added by /abc-qa_
 

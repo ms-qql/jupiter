@@ -23,7 +23,7 @@ from ..config import (
     settings,
 )
 from ..db import NullSessionIndexRepository, SessionIndexRepository
-from . import abc_phases, policy
+from . import abc_phases, policy, watchdog
 from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .constitution import combine_with_extra, resolve_constitution
@@ -220,6 +220,9 @@ class SessionRuntime:
         # assistant-Events, das (modellabhängige) Kontextfenster aus result-Events.
         self._ctx_occupancy: int = 0
         self._ctx_window: int = 0
+        # PROJ-16: Amok-Watchdog — Sliding-Window-Monitor (Tokens/Zeit, Stillstand,
+        # Schleife, Schreibrate). Liest die Limits live aus dem Modul-Singleton.
+        self.watchdog = watchdog.WatchdogMonitor(watchdog.watchdog_store)
 
     def to_read(self) -> dict:
         """Lese-Snapshot inkl. offener Decision Cards (für REST-Liste + WS-Broadcast)."""
@@ -288,6 +291,8 @@ class SessionRuntime:
             reasoning = text or thinking
             if reasoning:
                 self._last_assistant_text = reasoning
+                # PROJ-16: Assistenten-Output = echter Fortschritt → Stillstands-Uhr resetten.
+                self.watchdog.note_progress()
             self._apply_usage(event)
 
         elif event.type == "result":
@@ -346,6 +351,8 @@ class SessionRuntime:
             self.state.tokens_used += usage.billed_tokens
             if usage.total_cost_usd is not None:
                 self.state.total_cost_usd += float(usage.total_cost_usd)
+            # PROJ-16: abgerechnete Tokens ins Watchdog-Fenster (+ zählt als Fortschritt).
+            self.watchdog.feed_usage(usage.billed_tokens)
 
         window = self._ctx_window or DEFAULT_CONTEXT_WINDOW
         if self._ctx_occupancy and window > 0:
@@ -416,6 +423,26 @@ class SessionRuntime:
         2. **Operativer Evaluator**: ``auto-allow`` → durch; ``deny`` → nie ausgeführt
            (ablehnende Notiz); ``card`` → Freigabe nötig (im Bypass durchlässig).
         """
+        # PROJ-16: Watchdog-Reißleine ZUERST — vor jedem anderen Gate UND vor dem
+        # Bypass-Auto-Allow (Reißleine sticht Komfort). Reißt ein Limit (Tokens/Zeit,
+        # Stillstand, Schleife, Schreibrate), wird DIESER Aufruf in eine Watchdog-Card
+        # umgelenkt: die Session pausiert (Prozess lebt), bis der Nutzer Fortsetzen/
+        # Korrigieren/Abbrechen wählt.
+        alarm = self.watchdog.evaluate(tool_name, tool_input)
+        if alarm is not None:
+            outcome = await self._open_card(
+                decision_id, tool_name, tool_input,
+                card_type="watchdog_pause",
+                triggering_rule=alarm.reason,
+                action=f"Watchdog-Pause: {alarm.reason}",
+            )
+            # Fortsetzen ODER Mit-Kommentar-korrigieren: ausgelöstes Limit zurücksetzen
+            # + Cooldown, damit es nicht sofort erneut feuert (AC + Card-Flut-Schutz).
+            self.watchdog.reset(alarm.metric)
+            return outcome
+        # Kein Alarm → diesen erlaubten Aufruf in die Watchdog-Fenster aufnehmen.
+        self.watchdog.record(tool_name, tool_input)
+
         # PROJ-8/PROJ-10: prospektive Phase/Feature OHNE Seiteneffekt berechnen — die
         # Übernahme erfolgt erst NACH einem evtl. Phasen-Gate (QA-Bug B: ein abgelehnter
         # Übergang darf die Phase NICHT vorrücken).

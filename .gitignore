@@ -38,3 +38,6 @@ Thumbs.db
 
 # PROJ-10: Laufzeit-Trust-Policy (nutzer-editiert, live) — nicht versionieren.
 backend/config/policy.yaml
+
+# PROJ-16: Laufzeit-Watchdog-Limits (nutzer-editiert, live) — nicht versionieren.
+backend/config/watchdog.yaml

@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from ..config import THRESHOLD_MAX_PCT, THRESHOLD_MIN_PCT, clamp_threshold, settings
-from ..engine import policy
+from ..engine import policy, watchdog
 from ..engine.abc_phases import ABC_PHASES
 from ..engine.files import FileService
 from ..schemas.settings import (
@@ -20,6 +20,8 @@ from ..schemas.settings import (
     ThresholdSettingRead,
     TrustPolicyPut,
     TrustPolicyRead,
+    WatchdogLimitsPut,
+    WatchdogSettingRead,
 )
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -99,3 +101,20 @@ async def preview_policy(
     """Trockenlauf: welche Stufe + Regel würde für den Kontext greifen (Nachvollziehbarkeit)."""
     d = policy.policy_store.evaluate(tool, role=role, skill=skill, project=project)
     return {"level": d.level, "rule": d.rule}
+
+
+# --- Amok-Watchdog (PROJ-16) ----------------------------------------------
+
+@router.get("/watchdog", response_model=WatchdogSettingRead)
+async def get_watchdog() -> dict:
+    """Aktuelle Watchdog-Limits + Herkunft/Warnung (live aus der Datei)."""
+    return watchdog.watchdog_store.snapshot()
+
+
+@router.put("/watchdog", response_model=WatchdogSettingRead)
+async def put_watchdog(payload: WatchdogLimitsPut) -> dict:
+    """Limits ersetzen — Pydantic erzwingt > 0 (422); in YAML geschrieben, **live** aktiv."""
+    try:
+        return watchdog.watchdog_store.save(payload.model_dump())
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

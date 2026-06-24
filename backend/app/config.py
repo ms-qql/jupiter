@@ -12,6 +12,10 @@ _DEFAULT_CONSTITUTION_DIR = str(Path(__file__).resolve().parent.parent / "consti
 # existieren — fehlt sie, gilt der konservative Default (rückwärtskompatibel zu PROJ-4).
 _DEFAULT_POLICY_PATH = str(Path(__file__).resolve().parent.parent / "config" / "policy.yaml")
 
+# Standard-Ort der Watchdog-Limits (PROJ-16): backend/config/watchdog.yaml. Muss
+# NICHT existieren — fehlt/defekt → eingebaute konservative Defaults (nie „kein Watchdog").
+_DEFAULT_WATCHDOG_PATH = str(Path(__file__).resolve().parent.parent / "config" / "watchdog.yaml")
+
 # Im MVP unterstützte Modell-Aliase (werden 1:1 an `claude --model` durchgereicht).
 VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
 
@@ -107,6 +111,11 @@ class Settings(BaseSettings):
     # bei JEDER Auswertung mtime-geprüft (live editierbar ohne Neustart). Fehlt/kaputt
     # → konservativer Default + sichtbare Warnung.
     policy_config_path: str = _DEFAULT_POLICY_PATH
+
+    # Watchdog-Limits-Datei (PROJ-16): vier Schwellen (Tokens/Zeit, Laufzeit-ohne-
+    # Fortschritt, identische Tool-Calls, Schreibrate) als Reißleine. Wird live
+    # mtime-geprüft (editierbar ohne Neustart). Fehlt/kaputt → konservative Defaults.
+    watchdog_config_path: str = _DEFAULT_WATCHDOG_PATH
 
     # Hal-Vault (PROJ-2): Lese-/Such-Wurzel = GANZER Vault; geschrieben wird NUR im
     # Jupiter-Unterbaum (Agentic OS/Jupiter), ohne die PARA-Struktur zu verändern.
