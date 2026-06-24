@@ -1,6 +1,6 @@
 # PROJ-33: Session-Lifecycle-Härtung (Restart-Resilienz + prozess-verifiziertes Liveness)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -227,8 +227,8 @@ Suiten: **Backend 550 passed** (21 PROJ-33: 7 is_alive + 8 Drain/Resume + 6 QA),
 
 **Produktionsreife: JA** (0 Critical/High).
 
-## Deployment
-_To be added by /abc-deploy_
-
-## Deployment
-_To be added by /abc-deploy_
+## Deployment (2026-06-24, `/abc-deploy`)
+- **Production URL:** https://jupiter.auxevo.tech · **Version:** 0.7.0 · **Host:** Dev-VPS (host-nativ, systemd + GitHub-Webhook → `deploy.sh`).
+- **Geshippt mit v0.7.0:** PROJ-33 (prozess-verifiziertes `is_alive` + Graceful Drain/Auto-Resume + Self-Restart-Gate) zusammen mit den PROJ-18-Folgefixes (`dfbdc45`, `03c5e37`) und der PROJ-17-Recovery-Verbesserung (`8dfe06d`).
+- **Promotion:** `main` → `origin/main` (Push triggert Webhook-Rebuild + `systemctl restart`). `dev ⊂ main` (kein separater Stand).
+- **Caveat (dokumentiert):** Der Deploy-Restart selbst orphaned diesmal noch laufende Sessions (das laufende Backend hatte vor diesem Deploy kein Drain) — beim Deploy waren **0 aktive Sessions**, also kein Verlust. Ab dem **nächsten** Restart greift Drain + Auto-Resume. `KillMode=mixed` (systemd) ist als ergänzende Härtung empfohlen (human-gated, separat).
