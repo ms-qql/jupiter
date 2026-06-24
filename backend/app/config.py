@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     # Roh-Session-Logs beim Session-Ende automatisch in den Vault schreiben (Grundlage #8/#9).
     vault_autolog: bool = True
 
+    # --- Kuratierung / Vault Stufe 3 (PROJ-15) ---------------------------
+    # Ereignisgetriebene Wissens-Vorschläge: erkannte Marker (Bug gelöst / ADR /
+    # Sackgasse) im Session-Stream erzeugen eine nicht-blockierende Vorschlags-Card.
+    # False → kein Marker-Scan (wie vor PROJ-15).
+    enable_curation: bool = True
+
     # --- MD-Reader (PROJ-7) ----------------------------------------------
     # Standard-„Projekt"-Quelle des read-only MD-Readers (Feature-Specs unter
     # features/, Doku unter docs/). Muss innerhalb von allowed_roots liegen.

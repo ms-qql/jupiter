@@ -101,10 +101,12 @@ async def send_input(session_id: str, payload: SessionInput, request: Request) -
 async def resolve_decision(
     session_id: str, decision_id: str, payload: DecisionResolve, request: Request
 ) -> dict:
-    """Decision Card entscheiden (PROJ-4): Freigeben / Ablehnen / Mit Kommentar zurück.
+    """Decision Card entscheiden: Freigeben / Ablehnen / Mit Kommentar zurück (PROJ-4)
+    bzw. Wissens-Vorschlag Freigeben / Editieren / Verwerfen (PROJ-15).
 
     Die wartende Session wird entsperrt und läuft entsprechend weiter oder bricht
-    die Aktion ab.
+    die Aktion ab; ein freigegebener Wissens-Vorschlag wird kuratiert in den Vault
+    geschrieben.
     """
     manager = _manager(request)
     if manager.get(session_id) is None:
@@ -115,11 +117,17 @@ async def resolve_decision(
             decision_id,
             approve=payload.decision == "approve",
             comment=payload.comment,
+            edited_title=payload.edited_title,
+            edited_body=payload.edited_body,
         )
     except KeyError as exc:  # Card unbekannt (oder bereits aufgelöst/obsolet)
         raise HTTPException(status_code=404, detail="Decision Card nicht gefunden.") from exc
     except ValueError as exc:  # bereits entschieden
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (PermissionError, OSError) as exc:  # PROJ-15: Vault nicht schreibbar → Card bleibt offen
+        raise HTTPException(
+            status_code=503, detail=f"Wissensnotiz nicht geschrieben (Vault): {exc}"
+        ) from exc
     return {"ok": True, "decision": card.to_read()}
 
 

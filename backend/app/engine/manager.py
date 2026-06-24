@@ -23,7 +23,7 @@ from ..config import (
     settings,
 )
 from ..db import NullSessionIndexRepository, SessionIndexRepository
-from . import abc_phases, policy, watchdog
+from . import abc_phases, curation, policy, watchdog
 from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .constitution import combine_with_extra, resolve_constitution
@@ -216,6 +216,9 @@ class SessionRuntime:
         self.pending: dict[str, PendingDecision] = {}
         self._futures: dict[str, asyncio.Future] = {}
         self._last_assistant_text: str = ""
+        # PROJ-15: bereits vorgeschlagene Marker-Arten dieser Session (Entprellung —
+        # je Marker-Art max. ein Wissens-Vorschlag pro Session, keine Card-Flut).
+        self._seen_markers: set[str] = set()
         # Kontext-Füllstand korrekt rechnen (PROJ4-QA-3): aktuelle Turn-Belegung aus
         # assistant-Events, das (modellabhängige) Kontextfenster aus result-Events.
         self._ctx_occupancy: int = 0
@@ -291,6 +294,8 @@ class SessionRuntime:
             reasoning = text or thinking
             if reasoning:
                 self._last_assistant_text = reasoning
+                # PROJ-15: denselben Strom auf Kuratierungs-Marker scannen (entprellt).
+                self._maybe_propose_knowledge(reasoning)
                 # PROJ-16: Assistenten-Output = echter Fortschritt → Stillstands-Uhr resetten.
                 self.watchdog.note_progress()
             self._apply_usage(event)
@@ -646,6 +651,87 @@ class SessionRuntime:
         self._maybe_persist()  # PROJ-14: Rückkehr nach running spiegeln.
         return card
 
+    # --- Kuratierung / Wissens-Vorschläge (PROJ-15) ------------------------
+
+    def _maybe_propose_knowledge(self, text: str) -> None:
+        """Scannt den Assistenten-/Denk-Strom auf Kuratierungs-Marker → NICHT-blockierende Card.
+
+        Entprellung: je Marker-Art (Bug gelöst / ADR / Sackgasse) höchstens ein
+        Vorschlag pro Session (``_seen_markers``). Die Karte hält die Session NICHT an
+        (kein Future, kein ``awaiting_approval``) — Kuratierung darf nie blockieren.
+        """
+        if not settings.enable_curation:
+            return
+        marker = curation.detect_marker(text)
+        if marker is None or marker.kind in self._seen_markers:
+            return
+        self._seen_markers.add(marker.kind)
+        title, body = curation.build_proposal(
+            marker, text,
+            project_name=self.state.project_name,
+            session_id=self.state.session_id,
+        )
+        decision_id = f"know-{marker.kind}-{len(self._seen_markers)}"
+        card = PendingDecision(
+            decision_id=decision_id,
+            session_id=self.state.session_id,
+            tool_name="KnowledgeProposal",
+            action=f"Wissens-Vorschlag: {marker.label}",
+            excerpt=curation._clip(body, policy.MAX_EXCERPT_CHARS),
+            rationale=marker.label,
+            context={
+                "project_path": self.state.project_path,
+                "role": self.state.role,
+                "phase": self.state.abc_phase,
+                "curation_marker": marker.kind,
+            },
+            created_at=_now().isoformat(),
+            triggering_rule=f"Kuratierung: {marker.label} (Marker „{marker.keyword}“)",
+            card_type="knowledge_proposal",
+            proposal_title=title,
+            proposal_body=body,
+        )
+        self.pending[decision_id] = card  # nicht-blockierend: kein Future, kein awaiting_approval
+        self.state.last_activity = _now()
+        self._broadcast({"kind": "decision", "event": "proposed", "decision": card.to_read()})
+        self._broadcast({"kind": "state", **self.to_read()})
+
+    def resolve_knowledge(
+        self,
+        decision_id: str,
+        approve: bool,
+        edited_title: str | None,
+        edited_body: str | None,
+        writer: Callable[[PendingDecision], None],
+    ) -> PendingDecision:
+        """Wissens-Vorschlag entscheiden (Freigeben/Editieren/Verwerfen) — nicht-blockierend.
+
+        ``approve`` → ``writer`` schreibt die (ggf. editierte) Notiz **vor** dem Auflösen;
+        schlägt der Vault-Write fehl, propagiert der Fehler und die Card **bleibt offen**
+        (Edge-Case „Vault nicht schreibbar → kein Verlust"). ``deny`` (Verwerfen) → nichts
+        geschrieben (nur das Roh-Log dokumentiert den Marker).
+        """
+        card = self.pending.get(decision_id)
+        if card is None or card.card_type != "knowledge_proposal":
+            raise KeyError(decision_id)
+        if card.state != OPEN:
+            raise ValueError("Dieser Wissens-Vorschlag wurde bereits entschieden.")
+        if approve:
+            if edited_title:
+                card.proposal_title = edited_title
+            if edited_body:
+                card.proposal_body = edited_body
+            writer(card)  # kann werfen → Card bleibt OPEN, Route übersetzt in 503
+            card.resolution = "approve"
+        else:
+            card.resolution = "deny"
+        card.state = RESOLVED
+        self.pending.pop(decision_id, None)
+        self.state.last_activity = _now()
+        self._broadcast({"kind": "decision", "event": "resolved", "decision": card.to_read()})
+        self._broadcast({"kind": "state", **self.to_read()})
+        return card
+
     def abandon_decisions(
         self, reason: str = "Session beendet — Freigabe hinfällig."
     ) -> None:
@@ -927,7 +1013,10 @@ class SessionManager:
         # `send_input` den Status (awaiting_approval → running), während die Card-Future
         # ungelöst weiterhängt, und der Event-Strom der Session verkeilt (Bug PROJ4-QA-1).
         # Erst entscheiden (Freigeben/Ablehnen/Mit Kommentar zurück), dann weiter eingeben.
-        if runtime.pending:
+        # PROJ-15: nicht-blockierende Wissens-Vorschläge zählen NICHT als offene Freigabe —
+        # Kuratierung darf die Eingabe nie sperren.
+        blocking = [c for c in runtime.pending.values() if c.card_type != "knowledge_proposal"]
+        if blocking:
             raise RuntimeError(
                 "Offene Freigabe — bitte erst die Decision Card entscheiden, dann weiter eingeben."
             )
@@ -1059,10 +1148,44 @@ class SessionManager:
         )
 
     def resolve_decision(
-        self, session_id: str, decision_id: str, approve: bool, comment: str | None = None
+        self,
+        session_id: str,
+        decision_id: str,
+        approve: bool,
+        comment: str | None = None,
+        edited_title: str | None = None,
+        edited_body: str | None = None,
     ) -> PendingDecision:
-        """Nutzer-Entscheidung einspielen (Freigeben/Ablehnen/Mit Kommentar zurück)."""
-        return self._require(session_id).resolve_decision(decision_id, approve, comment)
+        """Nutzer-Entscheidung einspielen.
+
+        - **Wissens-Vorschlag** (PROJ-15, nicht-blockierend): Freigeben/Editieren →
+          kuratierte Notiz nach ``Knowledge/``; Verwerfen → nichts geschrieben.
+        - **Freigabe-Card** (PROJ-4): Freigeben/Ablehnen/Mit Kommentar zurück.
+        """
+        runtime = self._require(session_id)
+        card = runtime.pending.get(decision_id)
+        if card is not None and card.card_type == "knowledge_proposal":
+            return runtime.resolve_knowledge(
+                decision_id, approve, edited_title, edited_body,
+                writer=lambda c: self._write_curated_note(runtime, c),
+            )
+        return runtime.resolve_decision(decision_id, approve, comment)
+
+    def _write_curated_note(self, runtime: SessionRuntime, card: PendingDecision) -> None:
+        """PROJ-15: freigegebenen Wissens-Vorschlag als kuratierte MD-Notiz persistieren.
+
+        Fehler (Vault nicht verfügbar/schreibbar) werden bewusst **nicht** geschluckt →
+        ``resolve_knowledge`` lässt die Card offen, die Route meldet 503 (kein Verlust).
+        """
+        if self._vault is None:
+            raise RuntimeError("Vault nicht verfügbar — Wissensnotiz nicht geschrieben.")
+        self._vault.write_curated_note(
+            title=card.proposal_title or card.action,
+            body=card.proposal_body or "",
+            source_session_id=runtime.state.session_id,
+            marker=(card.context or {}).get("curation_marker") or card.triggering_rule,
+            owner=runtime.state.owner,
+        )
 
     # --- Context-Management & Handover (PROJ-5) ----------------------------
 
