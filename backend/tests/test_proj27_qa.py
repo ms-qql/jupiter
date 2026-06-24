@@ -101,6 +101,48 @@ async def test_bug1_long_toolcall_should_stay_active(monkeypatch):
     assert rt.derive_liveness(180) == LIVENESS_ACTIVE
 
 
+@pytest.mark.asyncio
+async def test_bug1fix_genuine_tool_hang_beyond_in_flight_is_still_hanging(monkeypatch):
+    """Re-QA-Schärfung: der Fix darf einen ECHTEN Tool-Hänger nicht ewig „aktiv" maskieren.
+    Überschreitet ein laufendes Tool auch die In-Flight-Geduld (600 s), gilt die Session
+    weiterhin als „hängt" (echter Hänger wird gefangen, nur später)."""
+    monkeypatch.setattr(
+        liveness, "liveness_store",
+        StubLivenessStore(progress_timeout_seconds=180, tool_in_flight_timeout_seconds=600),
+    )
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="hi")
+    clk = Clock()
+    rt.watchdog = WatchdogMonitor(watchdog.watchdog_store, clock=clk)
+    rt.watchdog.note_progress()
+    rt.watchdog.record("Bash", {"command": "haengendes-tool"})
+    clk.advance(700)  # Tool läuft > In-Flight-Geduld (600) → echter Tool-Hänger
+    rt.state.status = RUNNING
+    assert rt.derive_liveness(180) == LIVENESS_HANGING
+
+
+@pytest.mark.asyncio
+async def test_bug1fix_in_flight_patience_released_after_tool_finishes(monkeypatch):
+    """Re-QA-Schärfung: die großzügige In-Flight-Geduld darf NICHT über den Tool-Call
+    hinaus leaken. Sobald das Modell wieder produziert (note_progress), ist kein Tool mehr
+    in-flight → ein anschließender echter Stillstand greift wieder beim normalen Timeout."""
+    monkeypatch.setattr(
+        liveness, "liveness_store",
+        StubLivenessStore(progress_timeout_seconds=180, tool_in_flight_timeout_seconds=600),
+    )
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="hi")
+    clk = Clock()
+    rt.watchdog = WatchdogMonitor(watchdog.watchdog_store, clock=clk)
+    rt.watchdog.record("Bash", {"command": "kurzes-tool"})
+    assert rt.watchdog.tool_in_flight is True
+    rt.watchdog.note_progress()  # Tool fertig, Modell produziert wieder
+    assert rt.watchdog.tool_in_flight is False  # Geduld freigegeben
+    clk.advance(200)  # danach echter Stillstand > normalem Timeout (180), KEIN Tool mehr
+    rt.state.status = RUNNING
+    assert rt.derive_liveness(180) == LIVENESS_HANGING
+
+
 # --- Red-Team: Session-Limit (PROJ-14) -------------------------------------
 
 

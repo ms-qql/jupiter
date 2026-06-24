@@ -39,12 +39,12 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 
 | ID | Feature | Prio | Status | Abhängigkeiten | Spec |
 |----|---------|------|--------|----------------|------|
-| PROJ-27 | Verifizierter Liveness-Indikator + Reanimieren hängender Sessions | P1 | In Review | PROJ-1, PROJ-3, PROJ-14, PROJ-16 | [Spec](PROJ-27-liveness-reanimieren.md) |
+| PROJ-27 | Verifizierter Liveness-Indikator + Reanimieren hängender Sessions | P1 | Approved | PROJ-1, PROJ-3, PROJ-14, PROJ-16 | [Spec](PROJ-27-liveness-reanimieren.md) |
 | PROJ-28 | Fileexplorer Drei-Spalten-Layout (Sidebar · Panel · Ansicht) | P1 | Planned | PROJ-11, PROJ-7 | [Spec](PROJ-28-fileexplorer-drei-spalten.md) |
 | PROJ-29 | Eingabefeld-Höhe symmetrisch zu den 3 Buttons | P2 | Planned | PROJ-3, PROJ-11 | [Spec](PROJ-29-eingabefeld-hoehe-symmetrie.md) |
 | PROJ-30 | Kanban-Phasenerkennung im Bypass-Mode (QA/Deploy) | P1 | Planned | PROJ-8, PROJ-1 | [Spec](PROJ-30-kanban-phasen-bypass.md) |
 | PROJ-31 | Spec-Links im MD-Reader auflösen (Doku führt ins Leere) | P1 | Planned | PROJ-7, PROJ-12 | [Spec](PROJ-31-md-reader-spec-links.md) |
-| PROJ-32 | Fortschritts-Signal aus Tool-Aktivität (kein False-„hängt" bei langen Tools) | P1 | In Progress | PROJ-16, PROJ-27, PROJ-4 | [Spec](PROJ-32-fortschritt-aus-tool-aktivitaet.md) |
+| PROJ-32 | Fortschritts-Signal aus Tool-Aktivität (kein False-„hängt" bei langen Tools) | P1 | Approved | PROJ-16, PROJ-27, PROJ-4 | [Spec](PROJ-32-fortschritt-aus-tool-aktivitaet.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

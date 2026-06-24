@@ -1,6 +1,6 @@
 # PROJ-27: Verifizierter Liveness-Indikator + Reanimieren hängender Sessions
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -273,7 +273,34 @@ Volle Backend-Suite grün (506); Frontend-Suite grün (64); Lint/TS sauber. Kein
 **Fix:** als eigenes Feature **PROJ-32** spezifiziert (Fortschritt auch aus Tool-Aktivität ableiten + In-Flight-Timeout ~600 s); betrifft auch PROJ-16. Bis Behebung + Re-QA bleibt PROJ-27 „In Review".
 **Belegt durch:** `test_bug1_long_toolcall_should_stay_active` (xfail strict — flippt automatisch auf Alarm, sobald der Fix greift).
 
-### Fazit
+### Fazit (Runde 1 — historisch)
 Funktional vollständig und stabil bis auf die **eine** Fortschritts-Definition (BUG-1), die das KRITISCHE „kein False-hängt"-AC verletzt und ungewollte Auto-Reanimierungen produzieren kann. **Empfehlung: PROJ-32 umsetzen, dann Re-QA dieses ACs**; danach `/abc-deploy`. Bis dahin Status **In Review**.
 
-**Nächster Schritt:** PROJ-32 (Fortschritts-Definition härten) bauen → Re-QA von BUG-1 → bei Grün Status auf **Approved**.
+---
+
+## Re-QA Test Results (2026-06-24, `/abc-qa` Runde 2 — nach PROJ-32, Branch `dev`)
+
+**Anlass:** PROJ-32 (Fortschritts-Signal aus Tool-Aktivität + In-Flight-Geduld) ist gemergt. Gezieltes Re-QA von **BUG-1** + Voll-Regression.
+
+**Produktreife-Entscheidung: READY — Status → „Approved".** Keine offenen Critical/High mehr.
+
+### ✅ BUG-1 — BEHOBEN & verifiziert
+- **Fix (PROJ-32):** `WatchdogMonitor.record()` setzt die Fortschritts-Uhr jetzt zurück und markiert `tool_in_flight` (`watchdog.py:300`); `note_progress()`/`feed_usage()` löschen das Flag wieder (`:208`/`:213`). `derive_liveness` nutzt bei laufendem Tool die größere **In-Flight-Geduld** `tool_in_flight_timeout_seconds` (Default 600 s, `manager.py:278`) statt der 180-s-Schwelle.
+- **Verifiziert (alle grün):**
+  - `test_bug1_fix_toolcall_counts_as_progress` — `record()` setzt die Uhr zurück + `tool_in_flight=True`.
+  - `test_bug1_long_toolcall_should_stay_active` — langer Tool-Call (200 s, < 600 s) bleibt **„aktiv"**, keine Auto-Reanimierung (das ehemals verletzte AC).
+  - **Re-QA-Schärfungen (neu):** `test_bug1fix_genuine_tool_hang_beyond_in_flight_is_still_hanging` — echter Tool-Hänger > 600 s wird **weiterhin „hängt"** (Fix maskiert keine echten Hänger); `test_bug1fix_in_flight_patience_released_after_tool_finishes` — die 600-s-Geduld **leakt nicht** über den Tool-Call hinaus (nach `note_progress` greift wieder das normale Timeout).
+- Der frühere `xfail`-Wächter ist aufgelöst — die Tests prüfen jetzt das Soll-Verhalten direkt (kein xfail/xpass mehr in der Suite).
+
+### Regression (Runde 2)
+- Backend: **527 passed** (inkl. PROJ-32 + 2 neue Re-QA-Tests); 0 xfail/xpass.
+- Frontend: **75 passed** (inkl. PROJ-32-UI fürs neue Feld); Lint sauber, TypeScript fehlerfrei.
+- Keine Regression in PROJ-14/16/17/18.
+
+### Re-validierte Akzeptanzkriterien
+Alle 9 ACs jetzt **✅ Pass** — insbesondere **AC 2** („aktiv" = echter Heartbeat) ist mit dem PROJ-32-Fix erfüllt (Tool-Aktivität zählt als Fortschritt; legitime lange Aufgabe bleibt „aktiv"). Edge Case „Legitime lange Aufgabe → kein False-„hängt"" ist erfüllt.
+
+### Fazit (Runde 2 — final)
+PROJ-27 ist funktional vollständig, abgesichert und ohne offene Critical/High-Befunde. **READY for deploy.** Status **Approved**.
+
+**Nächster Schritt:** `/abc-deploy` (dev → main promoten).
