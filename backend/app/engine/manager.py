@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -58,6 +59,13 @@ class SessionLimitError(RuntimeError):
     """PROJ-14: Erstellung abgelehnt, weil das Limit aktiver Sessions erreicht ist.
 
     Die Route übersetzt das in HTTP 429 mit deutscher Meldung.
+    """
+
+
+class SessionActiveError(RuntimeError):
+    """PROJ-21: Löschen abgelehnt, weil die Session noch aktiv ist (nicht terminal).
+
+    Die Route übersetzt das in HTTP 409 mit deutscher Meldung.
     """
 
 # Default-Auftakt der Reset-Kind-Session, wenn der Nutzer keinen eigenen Prompt gibt.
@@ -701,6 +709,12 @@ class SessionManager:
         except Exception as exc:  # noqa: BLE001 — Persistenz ist best-effort.
             logger.warning("Session-Live-Index konnte nicht geschrieben werden: %s", exc)
 
+    async def _safe_delete(self, session_id: str) -> None:
+        try:
+            await self._repo.delete(session_id)
+        except Exception as exc:  # noqa: BLE001 — Persistenz ist best-effort.
+            logger.warning("Live-Index-Eintrag konnte nicht gelöscht werden: %s", exc)
+
     async def rehydrate(self) -> None:
         """PROJ-14: beim Startup den Live-Index laden und verwaiste Sessions markieren.
 
@@ -721,7 +735,10 @@ class SessionManager:
                 continue
             state = self._state_from_row(row)
             runtime = SessionRuntime(
-                state, DeadDriver(), on_done=self._write_session_log, on_persist=self._persist
+                state,
+                DeadDriver(pid=row.get("pid")),  # PROJ-21: PID für Orphan-Kill bewahren.
+                on_done=self._write_session_log,
+                on_persist=self._persist,
             )
             runtime._last_persisted_status = state.status
             if row.get("status") in ACTIVE_STATES:
@@ -943,6 +960,66 @@ class SessionManager:
         # Sicherheitsnetz: offene Cards auflösen (der closed-Event tut das i. d. R. schon).
         runtime.abandon_decisions("Session gestoppt — Freigabe hinfällig.")
         self._persist(runtime)  # PROJ-14: terminalen Zustand (PID weg) spiegeln.
+
+    # --- Löschen / Aufräumen (PROJ-21) -------------------------------------
+
+    async def delete(self, session_id: str) -> None:
+        """Eine **terminale** Session aus Registry + Live-Index entfernen.
+
+        - Unbekannte ID → ``KeyError`` (Route → 404).
+        - Aktive Session (Status in ``ACTIVE_STATES``) → ``SessionActiveError``
+          (Route → 409): laufende Arbeit darf nicht abgewürgt werden.
+        - Lebt eine persistierte PID noch (typisch: verwaiste Session nach
+          Backend-Neustart), wird der OS-Prozess best-effort per SIGTERM beendet,
+          damit kein Geister-Prozess Tokens verbrennt — Fehler blockieren das
+          Löschen nicht.
+        - Gelöscht wird nur der Live-Index (SQLite + In-Memory); das Session-Log
+          im Vault bleibt erhalten (Prinzip „Live-Index, nicht die Wahrheit").
+        """
+        runtime = self._require(session_id)  # KeyError → 404
+        if runtime.state.status in ACTIVE_STATES:
+            raise SessionActiveError(
+                "Aktive Session kann nicht gelöscht werden — zuerst stoppen."
+            )
+        self._terminate_orphan(runtime)
+        del self._sessions[session_id]
+        await self._safe_delete(session_id)
+
+    async def cleanup_terminal(self) -> int:
+        """Alle terminalen Sessions (done/error/verwaist) auf einmal entfernen.
+
+        Aktive Sessions werden **still übersprungen**. Gibt die Anzahl gelöschter
+        Sessions zurück und wendet dieselbe Orphan-Kill-Regel je Session an.
+        """
+        terminal_ids = [
+            sid
+            for sid, r in self._sessions.items()
+            if r.state.status not in ACTIVE_STATES
+        ]
+        deleted = 0
+        for sid in terminal_ids:
+            runtime = self._sessions.get(sid)
+            if runtime is None:  # konkurrierendes Einzel-Delete kam zuvor.
+                continue
+            self._terminate_orphan(runtime)
+            del self._sessions[sid]
+            await self._safe_delete(sid)
+            deleted += 1
+        return deleted
+
+    def _terminate_orphan(self, runtime: SessionRuntime) -> None:
+        """Best-effort-SIGTERM an einen evtl. noch lebenden, nicht steuerbaren
+        Prozess einer terminalen Session. Nur relevant für verwaiste Sessions mit
+        lebender PID; Fehler (Permission/Race) werden geschluckt — das Löschen darf
+        nie daran scheitern (geloggt als Warnung)."""
+        pid = getattr(runtime.driver, "pid", None)
+        if not self._pid_alive(pid):
+            return
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+            logger.info("Verwaisten Session-Prozess PID %s per SIGTERM beendet.", pid)
+        except Exception as exc:  # noqa: BLE001 — best-effort, blockiert das Löschen nicht.
+            logger.warning("SIGTERM an PID %s fehlgeschlagen: %s", pid, exc)
 
     # --- Decision Cards / Freigabe (PROJ-4) --------------------------------
 

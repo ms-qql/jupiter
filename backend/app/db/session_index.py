@@ -86,6 +86,10 @@ class SessionIndexRepository(Protocol):
     async def list_all(self) -> list[dict]:
         """Alle persistierten Sessions (für den Reconcile beim Startup)."""
 
+    async def delete(self, session_id: str) -> None:
+        """Eine Session aus dem Live-Index entfernen (PROJ-21). Idempotent —
+        eine unbekannte ID ist kein Fehler. Das Vault-Log bleibt unberührt."""
+
     async def close(self) -> None:
         """Ressourcen freigeben."""
 
@@ -101,6 +105,9 @@ class NullSessionIndexRepository:
 
     async def list_all(self) -> list[dict]:
         return []
+
+    async def delete(self, session_id: str) -> None:  # noqa: D401 - no-op
+        return None
 
     async def close(self) -> None:
         return None
@@ -149,6 +156,12 @@ class SqliteSessionIndexRepository:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def _delete_sync(self, session_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM session_index WHERE session_id = ?", (session_id,)
+            )
+
     # --- Async-Fassade -----------------------------------------------------
 
     async def init(self) -> None:
@@ -159,6 +172,9 @@ class SqliteSessionIndexRepository:
 
     async def list_all(self) -> list[dict]:
         return await asyncio.to_thread(self._list_all_sync)
+
+    async def delete(self, session_id: str) -> None:
+        await asyncio.to_thread(self._delete_sync, session_id)
 
     async def close(self) -> None:
         # Verbindungen sind kurzlebig (per-Operation) → nichts zu schließen.

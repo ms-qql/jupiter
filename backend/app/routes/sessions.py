@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from ..config import clamp_threshold
-from ..engine.manager import SessionLimitError, SessionManager
+from ..engine.manager import SessionActiveError, SessionLimitError, SessionManager
 from ..schemas.sessions import (
     ConstitutionRead,
     DecisionResolve,
@@ -62,6 +62,17 @@ async def session_limits(request: Request) -> dict:
     """PROJ-14: Limit-Status für das Cockpit (max + aktuell aktive Sessions)."""
     manager = _manager(request)
     return {"max_parallel_sessions": manager.max_parallel_sessions, "active": manager.active_count()}
+
+
+@router.post("/cleanup")
+async def cleanup_sessions(request: Request) -> dict:
+    """PROJ-21: alle terminalen Sessions (done/error/verwaist) auf einmal löschen.
+
+    Aktive Sessions werden serverseitig still übersprungen. Statisches Segment,
+    daher VOR der dynamischen ``/{session_id}``-Gruppe deklariert.
+    """
+    deleted = await _manager(request).cleanup_terminal()
+    return {"deleted": deleted}
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
@@ -128,6 +139,21 @@ async def stop_session(session_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Session nicht gefunden.")
     await manager.stop(session_id)
     return {"ok": True}
+
+
+@router.delete("/{session_id}", status_code=204, response_model=None)
+async def delete_session(session_id: str, request: Request) -> None:
+    """PROJ-21: eine terminale Session aus dem Live-Index entfernen (204).
+
+    404 wenn unbekannt; 409 wenn die Session noch aktiv ist (zuerst stoppen).
+    Das Session-Log im Vault bleibt erhalten.
+    """
+    try:
+        await _manager(request).delete(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.") from exc
+    except SessionActiveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/{session_id}/constitution", response_model=ConstitutionRead)
