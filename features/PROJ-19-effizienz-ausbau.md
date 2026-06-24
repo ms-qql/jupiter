@@ -229,7 +229,53 @@ Alle vier Effizienz-Mechanismen sind backend-seitig implementiert, getestet und 
 Empfohlen als Nächstes: `/abc-qa 19` (alle ACs + Security/Tenant-Red-Team gegen die neuen Endpunkte).
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-24 · **Branch:** dev · **Scope:** Backend aller 4 Mechanismen + Dashboard-Frontend (Sub-Phase 1).
+
+### Automatisierte Tests
+- **Backend:** volle Suite **579 passed** (0 fail). PROJ-19-spezifisch: `test_proj19_usage.py` (9), `test_proj19_rag.py` (7), `test_proj19_cache.py` (7), `test_proj19_scout.py` (6) = **29 neue Tests**, alle grün.
+- **Frontend (vitest):** `lib/usage.test.ts` (9) + `lib/status.test.ts` (42 inkl. neu) grün; Typecheck der neuen/berührten Dateien sauber (einziger tsc-Fehler in vorbestehender `md-tree.test.ts`, unberührt).
+
+### Acceptance Criteria
+| # | Kriterium | Ergebnis | Beleg |
+|---|-----------|----------|-------|
+| 1 | **Pointer/RAG** liefert relevante Ausschnitte (Pfad+Snippet), messbar weniger Kontext | ✅ PASS | `relevant_snippets`/`rag_preview` mit `reduction_pct`; `GET /vault/rag/preview`; Test `test_rag_preview_measures_reduction`. |
+| 2 | **Späher** delegierbar an günstige Engine (Haiku); Hauptsession erhält nur Fazit | ✅ PASS | `ScoutService` (Default-Modell `haiku`), `POST /agents/scout` gibt nur `summary`; Test `test_scout_uses_rag_context_and_cheap_model`. |
+| 3 | **Prompt-Caching** wiederverwendet stabile Teile; Treffer messbar/sichtbar | ✅ PASS | `CacheManager` (stabiles Präfix + Hash); `cache_read/creation_tokens` kumuliert → `SessionRead` + `cache_hit_ratio` in `/usage/summary`; Tests cache+manager. |
+| 4 | **Token-Dashboard** heute/pro Projekt/pro Modell + Drilldown auf Rollen/Tasks | ✅ PASS | Cockpit-Tab „Verbrauch" + `/usage/summary` (`by_model`/`by_project`) + `/usage/drilldown` (Rolle/`abc_phase`). |
+| 5 | Alle vier **einzeln abschaltbar**, Fail-Soft aufs heutige Verhalten | ✅ PASS | Flags `prompt_cache_enabled` (No-op-Fallback) + `scout_enabled` (503). RAG + Dashboard sind additiv/read-only (Opt-in-Endpunkt bzw. reine Aggregation) → können das heutige Verhalten nicht brechen; RAG hat `fallback`-Signal, Dashboard expliziten Leer-Zustand. |
+| 6 | Dashboard nutzt vorhandene Usage-Daten ohne Extra-Erhebung | ✅ PASS | Aggregation über `session_index`/sessions-provider; keine neue Erhebung. |
+| 7 | Texte deutsch; Lade-/Fehler-/Leer-Zustände explizit | ✅ PASS | Dashboard-Leerzustand + Fehler-/Lade-Pfade; deutsche Strings durchgehend. |
+
+### Edge Cases
+| Edge Case | Ergebnis | Beleg |
+|---|---|---|
+| RAG verfehlt → Fallback + Hinweis | ✅ | `rag_preview.fallback=True` + `reason`; Test `test_rag_preview_fallback`. |
+| Späher-Ergebnis unbrauchbar → Eskalation nachvollziehbar | ✅ | `usable=False` + `note`; `model`-Override; Test `test_scout_thin_result_flags_escalation`. |
+| Cache veraltet (Rolle/Skill geändert) → Invalidierung | ✅ | Cache-Key = SHA-256 des stabilen Präfixes; Test `test_plan_key_is_content_hash_and_invalidates`. |
+| Engine ohne Usage → „n/v" statt falscher Nullen | ✅ | `cost_status none/partial` → „n/v"/„~"; Tests usage. |
+| Kosten Schätzung vs. Ist | ✅ | Dashboard-Label „geschätzt"/„~$…"; `engine_shows_cost`. |
+
+### Security-Audit (Red-Team)
+| Vektor | Ergebnis |
+|---|---|
+| **Path-Traversal** über `vault.read_file` (Scout-`paths`) + RAG-`subdir` (`../`, absolut, `..`-Einschub) | ✅ Blockiert — `_resolve_read` wirft `ValueError`; Scout überspringt bösartige Pointer (kein Leak einer Datei außerhalb des Vaults; manuell verifiziert: `TOPSECRET` nicht im Prompt). |
+| **Shell-/Command-Injection** im Späher-Lauf | ✅ Keine — `asyncio.create_subprocess_exec` (kein `shell=True`), `task`/Prompt als einzelnes argv-Element. |
+| **SQL-Injection** in Usage-Aggregation | ✅ Keine — Aggregation rein in-memory über `repo.list_all()`, kein nutzergesteuertes SQL. |
+| **DoS** | ✅ Begrenzt — RAG `_MAX_FILE_BYTES`/`_RAG_MAX_POSITIONS`/`top_n≤20`; Scout `scout_max_context_chars` + `scout_timeout_seconds`; `paths≤50`, `task≤MAX_INPUT_CHARS` (Pydantic). |
+| **Eingabe-Validierung** | ✅ Pydantic-`Query`/`Field`-Grenzen (`top_n` ge/le, `range`-Pattern, `scope`-Pattern). |
+
+**Informational (Low, kein Blocker):**
+- **Kein JWT** auf den neuen Endpunkten — bewusst konsistent mit dem MVP-Single-User-Design (alle bestehenden Routen ohne Auth; echtes Auth ist PROJ-25). Kein Regress.
+- **Prompt-Injection über Vault-Dateiinhalte** in den Späher: der Späher hat **keine Tools** aktiv → schlimmstenfalls ein schlechtes Fazit auf dem eigenen Vault des Nutzers. Akzeptiert.
+
+### Regression
+- Volle Backend-Suite grün (579), inkl. Index-/Rehydrierungs-/Manager-Tests trotz neuer Spalten (`engine`, `cache_read_tokens`, `cache_creation_tokens`) — additive `_MIGRATIONS`, Round-Trip manuell verifiziert.
+- Frontend-`Session`-Typ um Cache-Felder erweitert; betroffene Test-Fixtures angepasst; vitest grün.
+
+### Ergebnis
+**Bugs:** 0 Critical · 0 High · 0 Medium · 2 Low (informational, s. o.).
+**Production-ready (Backend):** ✅ **YES** — keine Critical/High.
+**Offen (nicht-blockierend):** optionale Frontend-Politur (Dashboard auf `/usage` umstellen; RAG-/Cache-/Späher-UI). Die ACs sind durch das vorhandene Dashboard + die Endpunkte erfüllt.
 
 ## Deployment
 _To be added by /abc-deploy_
