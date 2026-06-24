@@ -97,6 +97,31 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# PROJ-33: Tools, über die ein Shell-Kommando läuft (der einzige Weg, den eigenen Host
+# neuzustarten). Andere Tools können den Host nicht neustarten → kein Gate nötig.
+SELF_RESTART_TOOLS: frozenset[str] = frozenset({"Bash", "Shell", "Execute"})
+
+
+def _is_self_restart(tool_name: str, tool_input: dict | None) -> bool:
+    """PROJ-33: Erkennt ein Kommando, das den eigenen Jupiter-Host/Backend neustartet
+    (→ würde die eigene und alle parallelen Sessions killen). Konservativ: nur klare
+    Backend-/Deploy-/Host-Neustarts, damit z. B. ein reiner Frontend-Restart nicht
+    fälschlich gegated wird."""
+    if tool_name not in SELF_RESTART_TOOLS:
+        return False
+    cmd = str((tool_input or {}).get("command", "")).lower()
+    if not cmd:
+        return False
+    if "deploy.sh" in cmd:  # der Auto-Deploy-Script startet das Backend neu
+        return True
+    if "systemctl" in cmd and "restart" in cmd and "jupiter-backend" in cmd:
+        return True
+    # Host-weite Neustarts killen ebenfalls alle Sessions.
+    if "reboot" in cmd or "shutdown" in cmd:
+        return True
+    return False
+
+
 def _model_alias(model: str) -> str:
     """Mappt eine ggf. aufgelöste Modell-ID (z. B. ``claude-haiku-4-5-…``) zurück
     auf den kurzen, garantiert von ``--model`` akzeptierten Alias."""
@@ -170,6 +195,9 @@ class SessionState:
     # PROJ-17: aus der Recovery-Ansicht verworfen (kein Recovery-Kandidat mehr).
     # Der Vault-Eintrag/das Log bleibt unberührt — nur die Sicht blendet ihn aus.
     recovery_dismissed: bool = False
+    # PROJ-33: Zeitpunkt eines GEORDNETEN Drains (Backend-Shutdown). Gesetzt = bewusst
+    # beendet → nach dem Neustart automatisch fortsetzen; None = Crash → kein Auto-Resume.
+    drained_at: str | None = None
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -506,6 +534,18 @@ class SessionRuntime:
             return outcome
         # Kein Alarm → diesen erlaubten Aufruf in die Watchdog-Fenster aufnehmen.
         self.watchdog.record(tool_name, tool_input)
+
+        # PROJ-33: Selbst-Restart-Reißleine (bypass-fest) — ein Kommando, das den eigenen
+        # Host/Backend neustartet (systemctl restart jupiter-backend / deploy.sh / reboot),
+        # killt die eigene UND alle parallelen Sessions. Vor jedem operativen Gate und vor
+        # dem Bypass-Auto-Allow: blockierende Freigabe-Card erzwingen.
+        if _is_self_restart(tool_name, tool_input):
+            return await self._open_card(
+                decision_id, tool_name, tool_input,
+                card_type="self_restart",
+                triggering_rule="Selbst-Restart des eigenen Hosts/Backends erkannt",
+                action="Host-/Backend-Neustart — beendet laufende Sessions",
+            )
 
         # PROJ-8/PROJ-10: prospektive Phase/Feature OHNE Seiteneffekt berechnen — die
         # Übernahme erfolgt erst NACH einem evtl. Phasen-Gate (QA-Bug B: ein abgelehnter
@@ -880,6 +920,7 @@ class SessionManager:
             "abc_phase_reached": s.abc_phase_reached,
             "abc_feature": s.abc_feature,
             "recovery_dismissed": 1 if s.recovery_dismissed else 0,
+            "drained_at": s.drained_at,  # PROJ-33
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -934,15 +975,76 @@ class SessionManager:
             )
             runtime._last_persisted_status = state.status
             if row.get("status") in ACTIVE_STATES:
-                alive = self._pid_alive(row.get("pid"))
-                note = "Prozess läuft evtl. noch, ist aber nicht steuerbar" if alive else "Prozess beendet"
                 state.status = ERROR
-                state.error = f"Verwaist nach Backend-Neustart ({note})."
+                if state.drained_at:
+                    # PROJ-33: geordnet gedraint → Kandidat für Auto-Resume (drained_at bleibt
+                    # gesetzt; auto_resume_drained() setzt anschließend fort).
+                    state.error = "Nach geordnetem Neustart pausiert — wird automatisch fortgesetzt."
+                else:
+                    alive = self._pid_alive(row.get("pid"))
+                    note = "Prozess läuft evtl. noch, ist aber nicht steuerbar" if alive else "Prozess beendet"
+                    state.error = f"Verwaist nach Backend-Neustart ({note})."
             self._sessions[sid] = runtime
             if state.status != row.get("status"):  # verwaist → korrigierten Status spiegeln.
                 self._persist(runtime)
         if rows:
             logger.info("Live-Index rehydriert: %d Session(s).", len(rows))
+
+    async def drain(self) -> None:
+        """PROJ-33: Geordneter Shutdown — laufende Sessions als BEWUSST beendet markieren,
+        bevor systemd die Kindprozesse killt.
+
+        Setzt ``drained_at`` (das Drain≠Crash-Signal) und spiegelt es **synchron** in den
+        Live-Index (kein ``create_task``, der beim Shutdown verfiele), damit
+        ``auto_resume_drained()`` die Sessions nach dem Neustart fortsetzt. Schnell: nur
+        pausieren + markieren, NICHT auf das Turn-Ende warten (passt ins Stop-Fenster).
+        """
+        now = _now().isoformat()
+        drained = 0
+        for runtime in list(self._sessions.values()):
+            if runtime.state.status not in ACTIVE_STATES:
+                continue
+            try:
+                await runtime.driver.pause()
+            except Exception:  # noqa: BLE001 — best-effort; der Shutdown darf nie hängen.
+                pass
+            runtime.state.drained_at = now
+            await self._safe_upsert(self._row(runtime))  # synchron, vor repo.close()
+            drained += 1
+        if drained:
+            logger.info("Drain: %d aktive Session(s) für Auto-Resume markiert.", drained)
+
+    async def auto_resume_drained(self) -> None:
+        """PROJ-33: Startup nach geordnetem Drain — gedrainte Sessions automatisch fortsetzen.
+
+        Nur Sessions mit gesetztem ``drained_at`` (geordneter Drain, NICHT Crash) werden
+        **einmal** via ``_resume()`` fortgesetzt — so entsteht **kein** Resume-Sturm bei
+        einem Crash-Loop (Crash setzt kein ``drained_at``). Respektiert das Session-Limit
+        (PROJ-14). Erfolg → ``drained_at`` löschen, läuft wieder; Fehlschlag → ``drained_at``
+        löschen (nur ein Auto-Versuch) und verwaist lassen (manueller Knopf bleibt). Global
+        abschaltbar über ``settings.auto_resume_on_restart``.
+        """
+        if not getattr(settings, "auto_resume_on_restart", True):
+            return
+        resumed = 0
+        for runtime in [r for r in self._sessions.values() if r.state.drained_at]:
+            if self.active_count() >= self.max_parallel_sessions:
+                logger.info("Auto-Resume gestoppt: Session-Limit (%d) erreicht.", self.max_parallel_sessions)
+                break
+            try:
+                await self._resume(runtime)  # setzt Status→running, baut frischen Treiber
+                runtime.state.drained_at = None
+                resumed += 1
+            except Exception as exc:  # noqa: BLE001 — nur DIESE Session scheitert; kein Retry-Sturm.
+                runtime.state.drained_at = None  # genau ein Auto-Versuch
+                runtime.state.status = ERROR
+                runtime.state.error = f"Auto-Resume nach Neustart fehlgeschlagen: {exc}"
+                logger.warning(
+                    "Auto-Resume fehlgeschlagen (Session %s): %s", runtime.state.session_id, exc
+                )
+            self._persist(runtime)
+        if resumed:
+            logger.info("Auto-Resume: %d Session(s) nach Neustart fortgesetzt.", resumed)
 
     @staticmethod
     def _pid_alive(pid) -> bool:
@@ -988,6 +1090,7 @@ class SessionManager:
             abc_phase_reached=row.get("abc_phase_reached"),
             abc_feature=row.get("abc_feature"),
             recovery_dismissed=bool(row.get("recovery_dismissed")),
+            drained_at=row.get("drained_at"),  # PROJ-33
         )
 
     async def create(

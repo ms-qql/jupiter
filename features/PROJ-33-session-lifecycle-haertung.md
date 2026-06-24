@@ -1,6 +1,6 @@
 # PROJ-33: Session-Lifecycle-Härtung (Restart-Resilienz + prozess-verifiziertes Liveness)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -150,6 +150,31 @@ Backend-lastig. **`/abc-backend 33`** (Drain/Auto-Resume, `drained_at`-Migration
 
 ### Branch-Hinweis (geklärt)
 PROJ-33 wird bewusst auf **`main`** weitergebaut (Nutzer-Entscheidung 2026-06-24) — Teil-1 + Spec liegen bereits dort. Caveat: `main` ist bis zum Feature-Ende potenziell nicht clean-deploybar. Fremde uncommittete PROJ-17-Änderungen (`recovery.py`/`vault.py`) bleiben unangetastet (gehören einer anderen Session).
+
+## Implementierungsnotizen — Backend (2026-06-24, `/abc-backend`, Branch `main`)
+
+**Status:** Teil 1 (is_alive) + Teil 2 (Drain/Auto-Resume/Self-Restart-Gate) backend-seitig implementiert + getestet. **Volle Suite 544 grün**, App importiert sauber. Offen: Frontend (self_restart-Card-Render) + QA.
+
+**Geänderte/neue Dateien (Teil 2):**
+- `backend/app/db/session_index.py` — neue Spalte **`drained_at`** (COLUMNS + CREATE TABLE + idempotente `_MIGRATIONS`-Zeile, wie zuletzt `recovery_dismissed`).
+- `backend/app/engine/manager.py`:
+  - `SessionState.drained_at` (+ in `_row`/`_state_from_row`).
+  - Modul-Helfer **`_is_self_restart()`** + `SELF_RESTART_TOOLS` — erkennt `systemctl restart jupiter-backend`, `deploy.sh`, `reboot`/`shutdown` (konservativ; Frontend-only-Restart wird **nicht** gegated).
+  - `request_decision`: **harte, bypass-feste Self-Restart-Reißleine** (vor Policy/Bypass) → blockierende `self_restart`-Card.
+  - **`drain()`** — beim Shutdown aktive Sessions `pause()` + `drained_at` setzen + **synchron** persistieren.
+  - **`auto_resume_drained()`** — beim Startup nur Sessions mit `drained_at` **einmal** via `_resume()` fortsetzen (kein Crash-Sturm), Session-Limit (PROJ-14) gewahrt; Erfolg→Flag löschen, Fehlschlag→Flag löschen+ERROR.
+  - `rehydrate()`: unterscheidet **gedraint** (→ „wird automatisch fortgesetzt", Flag bleibt) von **Crash-Orphan** („Verwaist").
+- `backend/app/main.py` — `lifespan`: `auto_resume_drained()` nach `rehydrate` (Startup); `drain()` im `finally` vor `repo.close()` (Shutdown).
+- `backend/app/config.py` — `auto_resume_on_restart: bool = True` (global abschaltbar).
+- Tests: `test_proj33_drain_resume.py` (8) + `test_proj33_is_alive.py` (7) → 15 PROJ-33-Tests.
+
+**„Kein Turn-Verlust":** über Claudes eigene Konversations-Persistenz (`claude --resume`) — kein eigenes Transkript-Checkpoint.
+
+**API-Vertrag fürs Frontend:** neuer **`card_type:"self_restart"`** (blockierende Freigabe-Card mit Future → Freigeben/Ablehnen über die bestehenden Decision-Endpunkte). `decision-card.tsx` braucht einen Render-Zweig (amber-Warnung „Host-/Backend-Neustart beendet laufende Sessions"). Sonst keine neuen Felder/Endpunkte.
+
+**Deployment-Hinweis (human-gated, kein Code):** `KillMode=mixed` in `jupiter-backend.service` gibt dem Drain ein Zeitfenster, bevor systemd die Kindprozesse killt.
+
+**Nächster Schritt:** `/abc-frontend 33` (self_restart-Card), dann `/abc-qa 33`.
 
 ## QA Test Results
 _To be added by /abc-qa_

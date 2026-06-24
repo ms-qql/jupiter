@@ -77,6 +77,8 @@ def create_app(
         try:
             await repo.init()
             await app.state.manager.rehydrate()
+            # PROJ-33: nach geordnetem Drain pausierte Sessions automatisch fortsetzen.
+            await app.state.manager.auto_resume_drained()
         except Exception:  # noqa: BLE001 — Persistenz ist best-effort, App startet trotzdem.
             pass
         # PROJ-27: Hintergrund-Auswerter starten (erkennt Hänger ohne Tool-Gate).
@@ -87,6 +89,12 @@ def create_app(
             liveness_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await liveness_task
+            # PROJ-33: laufende Sessions geordnet drainen (drained_at + persist), BEVOR
+            # systemd die Kindprozesse killt → Auto-Resume nach dem Neustart.
+            try:
+                await app.state.manager.drain()
+            except Exception:  # noqa: BLE001 — best-effort; Shutdown darf nie hängen.
+                pass
             await repo.close()
 
     app = FastAPI(title="Jupiter", version="0.1.0", lifespan=lifespan)
