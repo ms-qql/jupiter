@@ -1,8 +1,8 @@
 # PROJ-19: Effizienz-Ausbau — Pointer/RAG, Späher-Agenten, Prompt-Caching, Token-Dashboard
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-23
-**Last Updated:** 2026-06-23
+**Last Updated:** 2026-06-24
 **Bausteine:** #23, #26, #27, #28
 
 > **Hinweis Granularität:** Dieser Eintrag bündelt vier verwandte Effizienz-Mechanismen (PRD-Roadmap-Eintrag). Falls die Architektur-Phase einen davon als zu groß einstuft, kann er in eine eigene Spec ausgegliedert werden (z. B. Token-Dashboard als separate UI-Spec).
@@ -50,7 +50,124 @@ Vier Querschnitts-Mechanismen, die den Token-Verbrauch senken, ohne Informations
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-24 · **Stack:** Next.js (Cockpit) + FastAPI (raw SQL) + SQLite-Live-Index (heute) / Vault-Files · **Branch:** dev
+
+### Granularität (entschieden)
+Ein gemeinsames Design für alle vier Mechanismen (Option A), gebaut in vier Bau-Sub-Phasen in dieser Reihenfolge — vom reifsten zum aufwändigsten, jede einzeln deploybar und einzeln abschaltbar:
+
+**Sub-Phase 1 — Token-Dashboard (#28)** · **2 — Pointer/RAG (#23)** · **3 — Prompt-Caching (#27)** · **4 — Späher-Agenten (#26)**
+
+Querschnitts-Prinzip aus den Acceptance Criteria: **jeder Mechanismus hat einen Feature-Schalter (Settings) und fällt bei Fehler still auf das heutige Verhalten zurück (kein Hard-Fail).**
+
+---
+
+### Sub-Phase 1 — Token-/Kosten-Dashboard (#28)
+
+#### A) Component Structure (Cockpit)
+```
+UsageDashboardPage  (neuer Tab "Verbrauch" im Cockpit)
+├── ZeitraumFilter        (shadcn Select: Heute · 7 Tage · 30 Tage)
+├── KennzahlenLeiste       (3 Cards: Tokens · geschätzte Kosten · Sessions)
+├── VerbrauchProModell     (Recharts BarChart — Tokens je Modell)
+├── VerbrauchProProjekt    (Recharts BarChart — Tokens/Kosten je project_path)
+├── DrilldownTabelle       (Sessions → Rolle/abc_phase, sortierbar)
+├── LeerZustand            ("Noch keine Verbrauchsdaten")
+└── SchätzungHinweis-Badge (wenn Kosten nur geschätzt, s. Edge Case Subscription)
+```
+
+#### B) Daten (keine neue Erhebung)
+Nutzt die **bereits erfassten** Felder im Live-Index: `tokens_used`, `total_cost_usd`, `model`, `project_path`, `abc_phase`, `abc_feature`, `created_at`, `owner`. Keine neue Spalte, keine Extra-Erhebungslast (erfüllt AC „nutzt vorhandene Usage-Daten").
+
+#### C) API Shape (neue Route `usage.py`)
+```
+- GET /usage/summary?range=today|7d|30d   → Aggregat: Tokens + Kosten gesamt, je Modell, je Projekt
+- GET /usage/drilldown?range&group_by      → Sessions-Liste (Rolle/abc_phase/Modell) für Tabelle
+```
+Aggregation per `run_query_m` mit `GROUP BY model / project_path / abc_phase` über den Index.
+
+#### D) Tech-Entscheidungen
+- **Recharts** statt Plotly fürs Cockpit-Frontend — leichtgewichtig, React-nativ, passt zum bestehenden DOM-Rendering (gantt-chart.tsx); kein Plotly.js-Bundle nötig (Plotly bleibt für Python-Reports, nicht für dieses interaktive UI).
+- **Kosten als Schätzung kennzeichnen:** Subscription-Engines (Claude-Max) liefern keine echten Kosten → `total_cost_usd` kann 0/None sein. Dashboard zeigt dann „geschätzt" (Token×Tarif) bzw. „n/v" statt falscher Nullen (Edge Case erfüllt).
+- **Engine ohne Usage** (manche PROJ-18-Engines): Zeile zeigt „n/v".
+
+---
+
+### Sub-Phase 2 — Pointer/RAG über den Vault (#23)
+
+#### A) Ablauf (plain)
+```
+Agent fragt Kontext an
+ → RAG-Layer sucht im Vault (vorhandene Suche, _MAX_SEARCH_HITS/_EXCERPT_CHARS)
+ → liefert Top-N { pfad, snippet } statt Volltext
+ → bei zu wenig/keinem Treffer: Fallback größerer Ausschnitt → Volltext (mit sichtbarem Hinweis)
+```
+
+#### B) Was gebaut wird
+- Dünne **Prompt-Konstruktions-Schicht** auf der vorhandenen `vault.search`-Funktion (Suche + Excerpts sind schon da, ~50% fertig): wählt Top-N Snippets, fügt Pfad-Pointer bei.
+- **Messung:** geladene Kontext-Zeichen RAG vs. Volltext werden geloggt → erfüllt AC „messbar geringerer Kontextverbrauch".
+
+#### C) API/Service
+```
+- (intern) vault.relevant_snippets(query, top_n) → [{path, snippet, score}]
+- GET /vault/rag/preview?query=…   → Debug/Sichtbarkeit der gewählten Ausschnitte (optional UI)
+```
+
+#### D) Entscheidung
+- **Kein Embedding-Store im MVP** — lexikalische Snippet-Suche reicht für den Vault-Umfang und vermeidet eine neue Vektor-DB-Abhängigkeit. Schnittstelle (`relevant_snippets`) ist so geschnitten, dass später ein Embedding-Index dahinter austauschbar ist.
+- **Fallback** ist Pflicht: RAG verfehlt → größerer Ausschnitt/Volltext + Hinweis (Edge Case).
+
+---
+
+### Sub-Phase 3 — Prompt-Caching (#27)
+
+#### A) Was gebaut wird
+- Neuer **`cache_manager`**: bildet stabile, wiederkehrende Prompt-Bestandteile (Rollen-/Skill-Prompts, stabiler Projektkontext) auf Cache-Marker ab.
+- **Claude-CLI / API:** Cache-Control-Marker werden in den Treiber-Aufbau injiziert (`claude_driver.build_argv` / API-Header), wo die Engine Prompt-Caching unterstützt.
+- **Sichtbarkeit:** `cache_read_input_tokens` / `cache_creation_input_tokens` aus `UsageSnapshot` sind bereits erfasst → Cache-Treffer werden im Dashboard (Sub-Phase 1) als eigene Kennzahl sichtbar (erfüllt AC „Cache-Treffer messbar/sichtbar").
+
+#### B) Entscheidungen
+- **Engine-bedingt:** nur dort aktiv, wo die Engine Caching kann; sonst No-op (kein Fehler). Erfüllt „einzeln abschaltbar / kein Hard-Fail".
+- **Invalidierung:** Cache-Key enthält einen Hash des Rollen-/Skill-Prompts → Änderung der Rolle/Skill invalidiert automatisch; keine veralteten Prompts (Edge Case).
+
+---
+
+### Sub-Phase 4 — Billige Späher-Agenten (#26)
+
+#### A) Ablauf
+```
+Hauptsession delegiert "Fazit-Aufgabe" (viel lesen/suchen, wenig zurück)
+ → POST /agents/scout (Modell = Haiku via engines.yaml-Routing)
+ → Späher liest/sucht, gibt NUR das verdichtete Fazit zurück
+ → Hauptsession erhält Fazit (nicht die Rohdaten)
+ → Späher-Ergebnis unbrauchbar → Eskalation auf teureres Modell, nachvollziehbar
+```
+
+#### B) Was gebaut wird
+- Neue Route **`agents.py`**: `POST /agents/scout { task, paths|query }` → kurzlebiger Sub-Agent über den vorhandenen Treiber-/Routing-Pfad (`SessionManager`/`registry`), fest auf das günstige Modell geroutet.
+- Späher nutzt **Sub-Phase 2 (RAG)** zum Einlesen → doppelte Token-Ersparnis.
+- Späher-Sessions erscheinen mit eigener `abc_phase`/Rolle im Dashboard (Drilldown zeigt Späher vs. Hauptsession).
+
+#### C) Entscheidung
+- Späher ist ein **kurzlebiger, nicht-steuerbarer** Lauf (kein interaktives Steering nötig) — leichter als eine volle PROJ-22-Dispatch-Schicht; PROJ-22 kann ihn später als Spezialfall aufnehmen.
+- **Eskalation** (teureres Modell) ist explizit und wird geloggt (Edge Case + AC).
+
+---
+
+### E) Dependencies (Pakete)
+- **Backend (Python):** keine neuen Pflicht-Pakete — Aggregation via vorhandenes `run_query_m`; Caching nutzt Engine-Fähigkeiten; Späher nutzt vorhandenen Treiber. (Optional später: ein Embedding-Paket, falls RAG aufgerüstet wird — bewusst aus dem MVP herausgehalten.)
+- **Frontend (Next.js):** `recharts` (neu, Charts im Cockpit), sonst bestehendes shadcn/ui + Tabs.
+
+### F) Einfügepunkte (aus Code-Scan)
+- Usage-Aggregation → neue Route `backend/app/routes/usage.py` (GROUP BY über `session_index`).
+- RAG → `backend/app/engine/vault.py` (`relevant_snippets` auf vorhandener Suche).
+- Caching → neues `backend/app/engine/cache_manager.py` + Marker in `claude_driver.build_argv`.
+- Späher → neue Route `backend/app/routes/agents.py` über `SessionManager`/`registry`.
+- Frontend → neuer Tab `nextjs_app/app/(cockpit)/usage-dashboard/page.tsx` + Recharts-Komponenten; speist sich aus dem bestehenden `Session`-Typ/Provider.
+
+### Risiken / offene Punkte
+- **Kosten-Genauigkeit** bei Subscription-Auth: nur Schätzung möglich — klar im UI kennzeichnen.
+- **Caching-Reichweite** hängt an der jeweiligen Engine — bei Fremd-Engines ggf. No-op.
+- **Späher-Qualität:** Haiku-Fazit kann zu dünn sein → Eskalationspfad ist Pflicht, nicht optional.
 
 ## QA Test Results
 _To be added by /abc-qa_
