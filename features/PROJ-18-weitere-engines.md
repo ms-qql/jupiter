@@ -10,7 +10,7 @@
 - Verwandt: PROJ-22 (Modell-Routing) und P2 Cross-Agent-Review (#30), das Multi-Engine voraussetzt.
 
 ## Beschreibung
-Das Integrations-Spektrum aus drei Tiefen — **Treiber → iFrame → Startknopf** — macht Integration zu keinem Alles-oder-nichts: ein generischer **CLI-Adapter** für weitere Engines (Codex/Gemini/GLM/Ollama), das **Einbetten** fremder Web-Apps als iFrame, und ein simpler **Launch-Button** für alles andere. Nach oben sehen alle Engines gleich aus (gleiche Session-Sicht).
+Das Integrations-Spektrum aus drei Tiefen — **Treiber → iFrame → Startknopf** — macht Integration zu keinem Alles-oder-nichts: ein **HTTP-API-Treiber** für OpenAI-kompatible Engines (**OpenAI** als erste Test-Engine, **OpenRouter** als zweite) und ein generischer **CLI-Adapter** für CLI-Engines (Codex/Gemini/GLM/Ollama), das **Einbetten** fremder Web-Apps als iFrame, und ein simpler **Launch-Button** für alles andere. Nach oben sehen alle Engines gleich aus (gleiche Session-Sicht).
 
 ## User Stories
 - Als Nutzer möchte ich beim Session-Start neben Claude Max weitere Engines wählen können (sofern konfiguriert).
@@ -21,7 +21,7 @@ Das Integrations-Spektrum aus drei Tiefen — **Treiber → iFrame → Startknop
 
 ## Acceptance Criteria
 - [ ] Ein **generischer CLI-Treiber** implementiert dasselbe Treiber-Interface wie der Claude-Treiber (start/lesen/steuern/stop) und kann per Konfiguration auf andere CLI-Engines gemappt werden.
-- [ ] Mindestens eine zweite Engine ist exemplarisch lauffähig integriert (Treiber-Tiefe), als Nachweis der Abstraktion.
+- [ ] **OpenAI (API)** ist als **erste Test-Engine** lauffähig integriert (HTTP-Treiber-Tiefe) und **OpenRouter** als **zweite Test-Engine** (OpenAI-API-kompatibel → derselbe Treiber, nur anderer `api_base`/`auth_env`) — als Nachweis der Abstraktion über zwei Anbieter mit nur einem Treiber.
 - [ ] **iFrame-Einbettung**: eine konfigurierte URL wird als eingebettete App angezeigt (mit DSGVO-/CSP-konformer Konfiguration).
 - [ ] **Launch-Button**: konfigurierbarer Eintrag, der ein externes Tool öffnet/startet.
 - [ ] Session-Sicht (Status/Ampel/Kanban) ist **engine-agnostisch**; engine-spezifische Felder degradieren sauber (z. B. kein Token-Füllstand bei Engines ohne Usage).
@@ -52,7 +52,7 @@ Integration ist **kein Alles-oder-nichts**. Drei abgestufte Tiefen, je nach dem,
 
 | Tiefe | Was | Wann | Erscheint im Cockpit als |
 |---|---|---|---|
-| **1 · Treiber** | Generischer CLI-Adapter — fremde Engine läuft als gesteuerter Subprozess wie Claude | Engine hat eine steuerbare CLI (Codex, Gemini, GLM, Ollama) | **Vollwertige Session** (Status/Ampel/Kanban), Live-Sicht ggf. eingeschränkt |
+| **1 · Treiber** | HTTP-API-Treiber (OpenAI, OpenRouter) **oder** generischer CLI-Adapter — fremde Engine läuft als HTTP-Stream bzw. gesteuerter Subprozess wie Claude | Engine hat eine HTTP-API (OpenAI/OpenRouter) **oder** eine steuerbare CLI (Codex, Gemini, GLM, Ollama) | **Vollwertige Session** (Status/Ampel/Kanban), Live-Sicht ggf. eingeschränkt |
 | **2 · iFrame** | Fremde Web-App wird eingebettet angezeigt | Tool ist eine Web-App, erlaubt Einbettung | **Eingebettete Kachel/Tab** — kein Session-Lifecycle |
 | **3 · Startknopf** | Konfigurierbarer Button öffnet/startet ein externes Tool | Alles andere (kein CLI, keine Einbettung) | **Launch-Eintrag** — reiner Absprung |
 
@@ -80,12 +80,14 @@ Die Architektur wurde bewusst engine-offen gebaut. Diese Teile sind **bereits en
 engine/
 ├── base.py            EngineDriver-ABC + LaunchSpec        (UNVERÄNDERT — die eine Kopplung)
 ├── claude_driver.py   ClaudeCodeDriver                     (bleibt Default)
-├── generic_cli_driver.py   ★ NEU — GenericCliDriver        (Tiefe 1)
+├── openai_driver.py   ★ NEU — OpenAIDriver (HTTP-API)      (Tiefe 1 — 1. Test-Engine OpenAI;
+│     └── deckt auch OpenRouter ab: OpenAI-API-kompatibel → derselbe Treiber, nur anderer api_base/auth_env)
+├── generic_cli_driver.py   ★ NEU — GenericCliDriver        (Tiefe 1 — fremde CLIs: Codex/Gemini/GLM/Ollama)
 │     └── nutzt ein Engine-Profil (argv-Vorlage + Adapter) aus der Registry
-├── adapters/          ★ NEU — Strom→StreamEvent-Normalisierung je Protokoll
-│     ├── claude_adapter   (bestehende events.py-Logik, herausgezogen)
-│     ├── jsonl_adapter    generisch: 1 JSON/Zeile → Text/Result
-│     └── plaintext_adapter  Engine ohne JSON → reine Textzeilen (Live-Sicht eingeschränkt)
+├── adapters.py        ★ NEU — Strom→StreamEvent-Normalisierung je Protokoll
+│     ├── claude     (bestehende events.py-Logik, herausgezogen)
+│     ├── jsonl      generisch: 1 JSON/Zeile → Text/Result
+│     └── plaintext  Engine ohne JSON → reine Textzeilen (Live-Sicht eingeschränkt)
 ├── registry.py        ★ NEU — EngineRegistry (lädt engines.yaml, mtime-watch)
 │     └── Muster identisch zu PolicyStore/WatchdogStore (live-reload)
 └── manager.py         driver_factory wählt Treiber je Engine-Profil  (kleine Erweiterung)
@@ -104,8 +106,10 @@ ToolsPanel / Launcher    listet konfigurierte iFrames + Launch-Einträge aus /en
 ### B) Datenmodell (Klartext)
 
 **Engine-Profil** (zentral in `engines.yaml`, kein Code je Engine):
-- `key` (z. B. `ollama`, `gemini`) · `label` (Anzeige, deutsch) · `kind` (`cli` | `iframe` | `launch`)
-- Für `cli`: `bin`/`argv_template` (Platzhalter für model/session_id/prompt/cwd), `adapter` (`claude`|`jsonl`|`plaintext`), `models` (erlaubte Modell-Namen), `auth_env` (Name der erwarteten Key-Variable, **nie der Key selbst**), `capabilities` (z. B. `usage`, `resume`, `multi_turn`)
+- `key` (z. B. `openai`, `openrouter`) · `label` (Anzeige, deutsch) · `kind` (`engine` | `iframe` | `launch`)
+- Für `kind: engine` zusätzlich `driver` (`claude` | `openai` | `generic_cli`):
+  - `driver: openai` (HTTP-API — **1. Test-Engine OpenAI**; **OpenRouter** ist OpenAI-API-kompatibel → **derselbe Treiber**, nur anderer `api_base`/`auth_env`): `api_base`, `api_path`, `auth_env` (Name der Key-Variable, **nie der Key selbst**), `models`, `default_model`, `context_window`, `capabilities` (z. B. `usage`, `multi_turn`)
+  - `driver: generic_cli` (fremde CLI): `bin`/`argv_template` (Platzhalter für model/session_id/prompt/cwd), `adapter` (`claude`|`jsonl`|`plaintext`), `models`, `auth_env`, `capabilities`
 - Für `iframe`: `url`, `sandbox`/CSP-Hinweise
 - Für `launch`: `target` (URL oder lokaler Befehl/Absprung)
 
@@ -126,6 +130,7 @@ GET/POST /sessions/{id}/...    → unverändert (start/input/pause/stop/transcri
 - `GET /engines` meldet je Engine `available: true|false` + Grund (fehlender Key/`bin`) → Frontend graut aus statt zu crashen.
 
 ### D) Tech-Entscheidungen (warum)
+- **OpenAI (API) als erste Test-Engine, OpenRouter als zweite — beide über *einen* HTTP-Treiber.** Eine echte API-Engine ist der aussagekräftigste Abstraktions-Nachweis: sie liefert echte Usage (`prompt/completion_tokens`) → Token-/Kontext-Anzeige funktioniert ohne Sonderfall. **OpenRouter ist OpenAI-API-kompatibel** (gleiches `/chat/completions`, SSE-Stream) → es genügt ein zweites Profil mit anderem `api_base`/`auth_env`, **kein neuer Code**. Damit beweist *ein* `OpenAIDriver` die Treiber-Abstraktion über **zwei Anbieter** — stärker als ein lokaler Einzelfall (Ollama). Ollama/Codex bleiben als `generic_cli`-Beispiele erhalten, sind aber nicht mehr die Referenz-Test-Engine.
 - **Generischer CLI-Treiber + Adapter-Schicht statt je-Engine-Treiber-Klasse.** Ein `GenericCliDriver` liest sein Verhalten aus dem Engine-Profil; die **Strom-Normalisierung** kapselt ein austauschbarer Adapter. So kommt eine neue Engine i. d. R. **ohne Code** dazu (nur `engines.yaml`) — und erfüllt AC „Konfiguration ohne Codeänderung pro Variante".
 - **Drei Adapter decken das Spektrum:** `claude` (bestehend, nur herausgezogen), `jsonl` (viele CLIs streamen 1 JSON/Zeile), `plaintext` (Fallback — Live-Sicht degradiert sichtbar statt zu crashen). Erfüllt Edge-Case „kein Stream-JSON".
 - **Registry nach bewährtem Muster (PolicyStore/WatchdogStore).** YAML + mtime-Watch, live nachladbar — konsistent mit PROJ-10/16, kein neues Infra-Konzept.
@@ -135,16 +140,16 @@ GET/POST /sessions/{id}/...    → unverändert (start/input/pause/stop/transcri
 - **Claude bleibt Default & unverändert.** Der `ClaudeCodeDriver` ist ein Spezialfall des generischen Wegs (eigenes Profil), kein Bruch — Rückwärtskompatibilität by design.
 
 ### E) Abhängigkeiten
-- **Backend:** keine neuen Pflicht-Pakete — `pyyaml` (bereits für Policy/Watchdog vorhanden), `asyncio.subprocess` (stdlib). Optionale API-Engines (Gemini/GLM) brauchen **kein** SDK, wenn per CLI integriert; sonst pro Engine separat (außerhalb des Kerns).
+- **Backend:** keine neuen Pflicht-Pakete — `pyyaml` (bereits für Policy/Watchdog vorhanden), `asyncio.subprocess` (stdlib), `httpx` (bereits vorhanden) für den OpenAI/OpenRouter-HTTP-Treiber. **Kein Anbieter-SDK** nötig: OpenAI *und* OpenRouter laufen über die rohe OpenAI-kompatible HTTP-API.
 - **Frontend:** keine neuen — iFrame ist nativ; Launch-Button native Navigation/Window-Open.
-- **Extern (optional, je nach aktivierter Engine):** die jeweilige CLI (`codex`, `gemini`, `ollama`, …) muss auf dem VPS installiert/eingeloggt sein; sonst meldet `/engines` die Engine als nicht verfügbar.
+- **Extern (optional, je nach aktivierter Engine):** für die HTTP-Test-Engines genügt **ein API-Key** (`OPENAI_API_KEY` bzw. `OPENROUTER_API_KEY`) in der Server-Umgebung — keine CLI-Installation. Für `generic_cli`-Engines muss die jeweilige CLI (`codex`, `gemini`, `ollama`, …) auf dem VPS installiert/eingeloggt sein; sonst meldet `/engines` die Engine als nicht verfügbar.
 
 ### Abgrenzung / Scope
-- **Im Scope:** generischer CLI-Treiber + ≥1 zweite Engine exemplarisch (Nachweis der Abstraktion, z. B. **Ollama** — lokal, kein Key, schnellster Nachweis), iFrame-Einbettung, Launch-Button, Engine-Selector im Launcher, engine-agnostische Session-Sicht mit Degradation, deutsche Texte.
+- **Im Scope:** HTTP-API-Treiber + generischer CLI-Treiber + **zwei exemplarische Test-Engines** als Nachweis der Abstraktion — **OpenAI (API)** als erste und **OpenRouter** als zweite (OpenAI-kompatibel → derselbe Treiber, nur anderer `api_base`) —, iFrame-Einbettung, Launch-Button, Engine-Selector im Launcher, engine-agnostische Session-Sicht mit Degradation, deutsche Texte.
 - **Nicht im Scope (Folge-Features):** Modell-Routing-Strategie über Engines hinweg (PROJ-22), engine-übergreifender Cross-Review (PROJ-23), Vault als geteilter Dienst für eingebettete Apps (PROJ-24). PROJ-18 liefert nur die **Voraussetzung** (Multi-Engine-Fähigkeit).
 
 ### Zuständigkeiten (Handoff)
-- **Backend:** `registry.py`, `generic_cli_driver.py`, `adapters/*`, `events.py`-Refaktor (Claude-Logik in `claude_adapter` ziehen), `manager.py`-driver_factory-Erweiterung, `engine`-Feld + `GET /engines`, `engines.yaml`.
+- **Backend:** `registry.py`, `openai_driver.py` (HTTP-Treiber für OpenAI **und** OpenRouter), `generic_cli_driver.py`, `adapters.py`, `events.py`-Refaktor (Claude-Logik in den `claude`-Adapter ziehen), `manager.py`-driver_factory-Erweiterung, `engine`-Feld + `GET /engines`, `engines.yaml` (OpenAI- + OpenRouter-Profil).
 - **Frontend:** Engine-Selector im `new-session-dialog`, `EmbedTab`, `LaunchButton`, „n/v"-Degradation in `session-tile`, Ausgrau-/Fehlermeldungslogik aus `/engines`.
 
 ## QA Test Results

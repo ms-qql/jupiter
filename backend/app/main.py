@@ -22,6 +22,7 @@ from .engine.recovery import RecoveryService
 from .engine.vault import VaultService
 from .routes import (
     constitution,
+    engines,
     files,
     md,
     permission,
@@ -84,6 +85,7 @@ def create_app(
     app.include_router(files.router)
     app.include_router(projects.router)
     app.include_router(recovery.router)
+    app.include_router(engines.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

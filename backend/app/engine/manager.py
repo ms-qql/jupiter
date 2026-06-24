@@ -26,6 +26,9 @@ from ..db import NullSessionIndexRepository, SessionIndexRepository
 from . import abc_phases, curation, policy, watchdog
 from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
+from .generic_cli_driver import GenericCliDriver
+from .openai_driver import OpenAIDriver
+from .registry import DRIVER_OPENAI, EngineProfile, engine_registry
 from .constitution import combine_with_extra, resolve_constitution
 from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
 from .handover import build_handover_md, build_title
@@ -67,6 +70,12 @@ class SessionActiveError(RuntimeError):
 
     Die Route übersetzt das in HTTP 409 mit deutscher Meldung.
     """
+
+
+class EngineUnavailableError(RuntimeError):
+    """PROJ-18: Start abgelehnt, weil die gewählte Engine nicht verfügbar ist
+    (fehlende CLI / fehlender API-Key). Die Route übersetzt das in HTTP 503 mit
+    deutscher Meldung; Claude bleibt unabhängig nutzbar."""
 
 # Default-Auftakt der Reset-Kind-Session, wenn der Nutzer keinen eigenen Prompt gibt.
 # Der verdichtete Handover liegt als System-Kontext (Seed) bereits an.
@@ -122,6 +131,9 @@ class SessionState:
     project_path: str
     model: str
     permission_mode: str
+    # PROJ-18: welche Engine diese Session fährt (Default „claude"). Bestimmt den
+    # Treiber bei Resume/Rehydrierung; engine-spezifische Anzeigen degradieren sauber.
+    engine: str = "claude"
     role: str | None = None
     constitution_source: str | None = None
     effective_constitution: str = ""
@@ -171,6 +183,7 @@ class SessionState:
             "project_path": self.project_path,
             "model": self.model,
             "permission_mode": self.permission_mode,
+            "engine": self.engine,
             "role": self.role,
             "constitution_source": self.constitution_source,
             "status": self.status,
@@ -758,8 +771,12 @@ class SessionManager:
         driver_factory: DriverFactory | None = None,
         vault=None,
         repo: SessionIndexRepository | None = None,
+        engine_factory: Callable[[EngineProfile], EngineDriver] | None = None,
     ) -> None:
         self._driver_factory: DriverFactory = driver_factory or (lambda: ClaudeCodeDriver())
+        # PROJ-18: Treiber-Quelle für NICHT-Claude-Engines (generic_cli / openai). Tests
+        # injizieren hier einen Fake, sonst werden die echten Treiber aus dem Profil gebaut.
+        self._engine_factory = engine_factory
         self._sessions: dict[str, SessionRuntime] = {}
         # Optionaler VaultService (PROJ-2): rohe Session-Logs am Ende persistieren.
         self._vault = vault
@@ -770,6 +787,20 @@ class SessionManager:
         self._create_lock = asyncio.Lock()
         # Referenzen auf laufende best-effort-Persist-Tasks (gegen vorzeitiges GC).
         self._persist_tasks: set[asyncio.Task] = set()
+
+    # --- PROJ-18: Engine → Treiber ----------------------------------------
+
+    def _make_driver(self, profile: EngineProfile | None) -> EngineDriver:
+        """Wählt den Treiber zur Engine. Claude → injizierbare ``driver_factory``
+        (Tests/FakeDriver); sonst der Profil-Treiber (oder eine injizierte
+        ``engine_factory`` für Tests)."""
+        if profile is None or profile.is_claude:
+            return self._driver_factory()
+        if self._engine_factory is not None:
+            return self._engine_factory(profile)
+        if profile.driver == DRIVER_OPENAI:
+            return OpenAIDriver(profile)
+        return GenericCliDriver(profile)
 
     # --- PROJ-14: Limit + Persistenz --------------------------------------
 
@@ -791,6 +822,7 @@ class SessionManager:
             "project_name": s.project_name,
             "model": s.model,
             "permission_mode": s.permission_mode,
+            "engine": s.engine,
             "role": s.role,
             "status": s.status,
             "pid": runtime.driver.pid,
@@ -898,6 +930,7 @@ class SessionManager:
             project_path=row.get("project_path") or "",
             model=row.get("model") or settings.default_model,
             permission_mode=row.get("permission_mode") or settings.default_permission_mode,
+            engine=row.get("engine") or "claude",
             role=row.get("role"),
             status=row.get("status") or DONE,
             created_at=_dt(row.get("created_at")),
@@ -926,15 +959,38 @@ class SessionManager:
         owner: str | None = None,
         parent_session_id: str | None = None,
         project_name: str | None = None,
+        engine: str | None = None,
     ) -> SessionRuntime:
-        model = model or settings.default_model
-        permission_mode = permission_mode or settings.default_permission_mode
-        if model not in VALID_MODELS:
-            raise ValueError(f"Unbekanntes Modell '{model}'. Erlaubt: {sorted(VALID_MODELS)}.")
-        if permission_mode not in MVP_ALLOWED_PERMISSION_MODES:
+        # PROJ-18: Engine-Profil auflösen (Default = eingebaute Claude-Engine). iFrame/
+        # Launch-Einträge sind KEINE steuerbaren Sessions → klar ablehnen.
+        profile = engine_registry.get(engine)
+        if profile is None:
+            raise ValueError(f"Unbekannte Engine '{engine}'.")
+        if not profile.is_session_engine:
             raise ValueError(
-                f"permission_mode '{permission_mode}' ist im MVP nicht erlaubt. "
-                f"Erlaubt: {sorted(MVP_ALLOWED_PERMISSION_MODES)} (Safety-Net bis PROJ-4/#19)."
+                f"Engine '{profile.key}' ist {profile.kind} (Einbettung/Startknopf), "
+                "keine steuerbare Session."
+            )
+        # Verfügbarkeit vorab prüfen (fehlende CLI / fehlender API-Key) → klare 503-Meldung,
+        # statt mitten im Start zu crashen. Claude bleibt unabhängig nutzbar.
+        available, reason = profile.availability()
+        if not available:
+            raise EngineUnavailableError(reason or f"Engine '{profile.key}' nicht verfügbar.")
+
+        model = model or profile.default_model or settings.default_model
+        permission_mode = permission_mode or settings.default_permission_mode
+        if profile.is_claude:
+            if model not in VALID_MODELS:
+                raise ValueError(f"Unbekanntes Modell '{model}'. Erlaubt: {sorted(VALID_MODELS)}.")
+            if permission_mode not in MVP_ALLOWED_PERMISSION_MODES:
+                raise ValueError(
+                    f"permission_mode '{permission_mode}' ist im MVP nicht erlaubt. "
+                    f"Erlaubt: {sorted(MVP_ALLOWED_PERMISSION_MODES)} (Safety-Net bis PROJ-4/#19)."
+                )
+        elif not profile.valid_model(model):
+            raise ValueError(
+                f"Modell '{model}' ist für Engine '{profile.key}' nicht konfiguriert. "
+                f"Erlaubt: {profile.models}."
             )
         real_path = validate_project_path(project_path)
 
@@ -950,6 +1006,7 @@ class SessionManager:
             project_path=real_path,
             model=model,
             permission_mode=permission_mode,
+            engine=profile.key,
             role=resolved.role,
             constitution_source=resolved.source,
             effective_constitution=effective,
@@ -957,7 +1014,7 @@ class SessionManager:
             # PROJ-8: sprechendes Gantt-Label; ohne Angabe der Verzeichnis-Basename.
             project_name=(project_name or "").strip() or os.path.basename(real_path) or real_path,
         )
-        driver = self._driver_factory()
+        driver = self._make_driver(profile)
         runtime = SessionRuntime(
             state, driver, on_done=self._write_session_log, on_persist=self._persist
         )
@@ -980,7 +1037,9 @@ class SessionManager:
             permission_mode=permission_mode,
             initial_prompt=initial_prompt,
             system_prompt_append=effective,
-            settings_json=self._hook_settings(),
+            # PROJ-18: der Freigabe-Hook (PROJ-4) ist Claude-Code-spezifisch; andere
+            # Engines kennen keinen PreToolUse-Hook → keine Settings-JSON.
+            settings_json=self._hook_settings() if profile.is_claude else None,
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -1048,18 +1107,24 @@ class SessionManager:
         und denselben Konstitutions-Kontext. Eingaben folgen via ``send_input``.
         """
         state = runtime.state
-        driver = self._driver_factory()
+        # PROJ-18: passenden Treiber zur Engine bauen. Nur Claude unterstützt echtes
+        # `--resume` (lädt die Konversation); generic_cli/openai starten frisch (die
+        # bisherige Konversation ist beim Nicht-Claude-Treiber nicht persistent → sauber
+        # degradiert: ein neuer Prozess/Chat mit derselben Session-ID + Konstitution).
+        profile = engine_registry.get(state.engine)
+        is_claude = profile is not None and profile.is_claude
+        driver = self._make_driver(profile)
         runtime.driver = driver
         runtime._done_fired = False  # erlaubt erneutes Vault-Log beim nächsten DONE
         spec = LaunchSpec(
             session_id=state.session_id,
             project_path=state.project_path,
-            model=_model_alias(state.model),
+            model=_model_alias(state.model) if is_claude else state.model,
             permission_mode=state.permission_mode,
             initial_prompt="",  # Eingabe kommt direkt danach via send_input
             system_prompt_append=state.effective_constitution,
-            resume=True,
-            settings_json=self._hook_settings(),
+            resume=is_claude,
+            settings_json=self._hook_settings() if is_claude else None,
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -1246,6 +1311,7 @@ class SessionManager:
             owner=old_state.owner,
             parent_session_id=old_state.session_id,
             project_name=old_state.project_name,  # PROJ-8: Kind erbt das Projekt-Label.
+            engine=old_state.engine,  # PROJ-18: Staffelstab bleibt auf derselben Engine.
         )
         old_state.child_session_id = child.state.session_id
         return child
@@ -1275,6 +1341,7 @@ class SessionManager:
         """
         if any(r.state.parent_session_id == session_id for r in self._sessions.values()):
             raise RuntimeError("Dieser Strang wurde bereits wiederhergestellt.")
+        engine = "claude"  # PROJ-18: reine Vault-Kandidaten → Default-Engine.
         old = self._sessions.get(session_id)
         if old is not None:
             s = old.state
@@ -1284,6 +1351,7 @@ class SessionManager:
             role = s.role
             owner = s.owner
             project_name = s.project_name
+            engine = s.engine
         if not project_path:
             raise ValueError(
                 "Projektpfad nicht rekonstruierbar — Wiederherstellung nicht möglich."
@@ -1298,6 +1366,7 @@ class SessionManager:
             owner=owner,
             parent_session_id=session_id,
             project_name=project_name,
+            engine=engine,
         )
         if old is not None:
             old.state.child_session_id = child.state.session_id

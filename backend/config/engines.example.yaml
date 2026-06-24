@@ -1,0 +1,91 @@
+# Engine-Registry (PROJ-18) — weitere Engines, iFrames und Launch-Einträge.
+#
+# Kopiere diese Datei nach `engines.yaml` (gleiches Verzeichnis) und passe sie an.
+# Sie wird live (mtime-geprüft) nachgeladen — kein Backend-Neustart nötig. Fehlt sie
+# oder ist sie kaputt, läuft Jupiter mit NUR der eingebauten Claude-Engine weiter.
+#
+# WICHTIG: Hier stehen NIE Secrets. API-Keys werden ausschließlich über den NAMEN einer
+# Server-Umgebungsvariable referenziert (`auth_env`); den Wert liest der Treiber aus der
+# Umgebung (.env / systemd). Der Schlüssel `claude` ist reserviert (eingebaute Engine).
+
+engines:
+  # --- Tiefe 1: Treiber ----------------------------------------------------
+
+  # OpenAI über die HTTP-API — die ERSTE Test-Engine (Treiber-Tiefe, driver: openai).
+  # Reine Chat-Engine ohne Claude-Code-Tools → keine Decision Cards/Phasen-Gate
+  # (degradiert sauber); Token-/Kontext-Anzeige funktioniert (Usage aus der API).
+  - key: openai
+    label: "OpenAI (GPT)"
+    kind: engine
+    driver: openai
+    auth_env: OPENAI_API_KEY          # nur der Variablenname — NIE der Key selbst
+    api_base: https://api.openai.com
+    api_path: /v1/chat/completions
+    models: [gpt-4o, gpt-4o-mini, o3-mini]
+    default_model: gpt-4o-mini
+    context_window: 128000
+    capabilities: [usage, multi_turn]
+
+  # OpenRouter — die ZWEITE Test-Engine. OpenRouter ist OpenAI-API-kompatibel, daher
+  # läuft es über DENSELBEN `openai`-Treiber wie oben — nur anderer api_base/auth_env,
+  # KEIN neuer Code. Ein Treiber, zwei Anbieter → der eigentliche Abstraktions-Nachweis.
+  # Modellnamen sind anbieter-präfigiert (z. B. `anthropic/claude-3.5-sonnet`).
+  - key: openrouter
+    label: "OpenRouter"
+    kind: engine
+    driver: openai
+    auth_env: OPENROUTER_API_KEY      # nur der Variablenname — NIE der Key selbst
+    api_base: https://openrouter.ai/api
+    api_path: /v1/chat/completions
+    models: [openai/gpt-4o-mini, anthropic/claude-3.5-sonnet, google/gemini-flash-1.5]
+    default_model: openai/gpt-4o-mini
+    context_window: 128000
+    capabilities: [usage, multi_turn]
+
+  # Beispiel: eine fremde CLI über den generischen Treiber (kein Code pro Engine).
+  # Platzhalter in argv_template: {model} {session_id} {project_path} {prompt}.
+  # adapter: claude | jsonl | plaintext  (normalisiert den Ausgabestrom).
+  - key: codex
+    label: "OpenAI Codex CLI"
+    kind: engine
+    driver: generic_cli
+    bin: codex
+    argv_template: ["exec", "--model", "{model}", "--json"]
+    adapter: jsonl
+    prompt_via: stdin                 # stdin | arg
+    input_format: text                # text | stream_json
+    oneshot: true                     # stdin nach Eingabe schließen (Single-Turn-CLI)
+    models: [gpt-5-codex]
+    default_model: gpt-5-codex
+    capabilities: [multi_turn]
+
+  # Beispiel: lokales Ollama (kein Key nötig). Streamt Klartext → plaintext-Adapter
+  # (eingeschränkte Live-Sicht, keine Token-Anzeige → „n/v").
+  - key: ollama
+    label: "Ollama (lokal)"
+    kind: engine
+    driver: generic_cli
+    bin: ollama
+    argv_template: ["run", "{model}"]
+    adapter: plaintext
+    prompt_via: stdin
+    input_format: text
+    oneshot: true
+    models: [llama3, qwen2.5-coder]
+    default_model: llama3
+
+  # --- Tiefe 2: iFrame -----------------------------------------------------
+  # Eine fremde Web-App eingebettet. Verweigert sie die Einbettung (X-Frame-Options),
+  # zeigt das Frontend einen Hinweis + Fallback auf einen Launch-Button.
+  - key: excalidraw
+    label: "Excalidraw (Whiteboard)"
+    kind: iframe
+    url: https://excalidraw.com
+    sandbox: "allow-scripts allow-same-origin allow-forms"
+
+  # --- Tiefe 3: Launch-Button ---------------------------------------------
+  # Für nicht integrierbare Tools: öffnet/startet extern.
+  - key: gpt-web
+    label: "ChatGPT (Web)"
+    kind: launch
+    target: https://chat.openai.com

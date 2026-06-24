@@ -7,7 +7,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from ..config import clamp_threshold
-from ..engine.manager import SessionActiveError, SessionLimitError, SessionManager
+from ..engine.manager import (
+    EngineUnavailableError,
+    SessionActiveError,
+    SessionLimitError,
+    SessionManager,
+)
 from ..schemas.sessions import (
     ConstitutionRead,
     DecisionResolve,
@@ -40,10 +45,13 @@ async def create_session(payload: SessionCreate, request: Request) -> dict:
             role=payload.role,
             extra_system_prompt=payload.extra_system_prompt,
             project_name=payload.project_name,
+            engine=payload.engine,
         )
     except SessionLimitError as exc:  # PROJ-14: Limit aktiver Sessions erreicht.
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    except ValueError as exc:  # ungültiger Pfad / Modell
+    except EngineUnavailableError as exc:  # PROJ-18: Engine fehlt CLI/API-Key.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:  # ungültiger Pfad / Modell / unbekannte Engine
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:  # claude-Binary nicht gefunden
         raise HTTPException(
