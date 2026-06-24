@@ -1,6 +1,6 @@
 # PROJ-18: Weitere Engines (Codex/Gemini/GLM/Ollama) + iFrame/Launch
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-24
 **Baustein:** #13

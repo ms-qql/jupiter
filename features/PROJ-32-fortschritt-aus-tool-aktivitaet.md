@@ -1,6 +1,6 @@
 # PROJ-32: Fortschritts-Signal aus Tool-Aktivität (kein False-„hängt" bei langen Tools)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 

@@ -1,6 +1,6 @@
 # PROJ-17: Recovery über den Vault
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-23
 **Baustein:** #20 (kritischstes Failure-Szenario)
