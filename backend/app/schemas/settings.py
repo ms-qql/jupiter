@@ -107,3 +107,29 @@ class WatchdogSettingRead(WatchdogLimitsPut):
 
     source: str
     warning: str | None = None
+
+
+# --- PROJ-27: Verifizierter Liveness-Indikator + Auto-Reanimierung ----------
+
+
+class LivenessLimitsPut(BaseModel):
+    """Die konfigurierbaren Liveness-Schwellen (PUT /settings/liveness).
+
+    Zeit-/Zähler-Felder müssen positiv sein (``gt=0`` → 422); ``backoff_seconds``
+    darf 0 sein (kein Backoff).
+    """
+
+    enabled_auto_reanimation: bool = Field(
+        default=True, description="Globaler Schalter: Auto-Reanimierung an/aus (Indikator + Knopf bleiben)."
+    )
+    progress_timeout_seconds: int = Field(..., gt=0, description="Kein Fortschritt seit > X s gilt als haengt.")
+    poll_interval_seconds: int = Field(..., gt=0, description="Frequenz des Hintergrund-Auswerters (s).")
+    max_auto_attempts: int = Field(..., gt=0, description="Max. automatische Reanimations-Versuche.")
+    backoff_seconds: int = Field(..., ge=0, description="Wartezeit zwischen Auto-Versuchen (s).")
+
+
+class LivenessSettingRead(LivenessLimitsPut):
+    """Aktuelle Liveness-Schwellen + Herkunft/Warnung (GET /settings/liveness)."""
+
+    source: str
+    warning: str | None = None

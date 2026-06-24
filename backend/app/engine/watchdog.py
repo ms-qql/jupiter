@@ -206,6 +206,14 @@ class WatchdogMonitor:
         """Echte Aktivität (Assistenten-Output/Result) → Fortschritts-Uhr zurücksetzen."""
         self._last_progress = self._clock()
 
+    def seconds_since_progress(self) -> float:
+        """Sekunden seit dem letzten echten Fortschritt (für PROJ-27-Liveness).
+
+        Dieselbe Uhr, die der Watchdog am Tool-Gate prüft — der hintergrund-getriebene
+        Liveness-Auswerter liest sie nur kontinuierlich statt erst am nächsten Gate
+        (keine zweite Buchhaltung)."""
+        return self._clock() - self._last_progress
+
     # --- Prüfen + Aufzeichnen am Tool-Gate (request_decision) -------------
 
     def evaluate(self, tool_name: str, tool_input: dict | None) -> WatchdogAlarm | None:

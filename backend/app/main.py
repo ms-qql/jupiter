@@ -5,6 +5,9 @@
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -13,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import SessionIndexRepository, build_session_index_repo
+from .engine import liveness
 from .engine.base import EngineDriver
 from .engine.files import FileService
 from .engine.launcher import LauncherService
@@ -34,6 +38,28 @@ from .routes import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
+async def _liveness_loop(app: FastAPI) -> None:
+    """PROJ-27: niedrigfrequenter Hintergrund-Poll für den verifizierten Liveness-Zustand.
+
+    Schließt die Lücke des Watchdogs, der nur am Tool-Gate auswertet: eine komplett
+    stillstehende Session erreicht nie ein Gate, wird aber hier als „hängt" erkannt und
+    (sofern aktiviert) automatisch reanimiert. Defensiv — ein Fehler je Tick wird
+    geloggt, der Loop lebt weiter; die Frequenz kommt live aus der Liveness-Config.
+    """
+    while True:
+        interval = liveness.liveness_store.config()["poll_interval_seconds"]
+        try:
+            await asyncio.sleep(interval)
+            await app.state.manager.evaluate_liveness_once()
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001 — Poll-Tick nie fatal (Loop überlebt).
+            logger.warning("Liveness-Poll-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
+
+
 def create_app(
     driver_factory: Callable[[], EngineDriver] | None = None,
     vault_service: VaultService | None = None,
@@ -53,8 +79,15 @@ def create_app(
             await app.state.manager.rehydrate()
         except Exception:  # noqa: BLE001 — Persistenz ist best-effort, App startet trotzdem.
             pass
-        yield
-        await repo.close()
+        # PROJ-27: Hintergrund-Auswerter starten (erkennt Hänger ohne Tool-Gate).
+        liveness_task = asyncio.create_task(_liveness_loop(app))
+        try:
+            yield
+        finally:
+            liveness_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await liveness_task
+            await repo.close()
 
     app = FastAPI(title="Jupiter", version="0.1.0", lifespan=lifespan)
     # CORS für das Browser-Frontend (PROJ-3 Cockpit). Origins via JUPITER_CORS_ORIGINS

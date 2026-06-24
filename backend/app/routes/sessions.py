@@ -10,6 +10,7 @@ from ..config import clamp_threshold
 from ..engine.manager import (
     EngineUnavailableError,
     SessionActiveError,
+    SessionAliveError,
     SessionLimitError,
     SessionManager,
 )
@@ -137,6 +138,31 @@ async def resolve_decision(
             status_code=503, detail=f"Wissensnotiz nicht geschrieben (Vault): {exc}"
         ) from exc
     return {"ok": True, "decision": card.to_read()}
+
+
+@router.post("/{session_id}/reanimate", response_model=SessionRead)
+async def reanimate_session(session_id: str, request: Request) -> dict:
+    """PROJ-27: eine hängende/tote Session manuell reaktivieren (``claude --resume``-Pfad).
+
+    404 unbekannt; 409 wenn die Session bereits läuft; 429 wenn das Session-Limit eine
+    Reanimierung verbietet (kein Bypass); 503 wenn der Resume/das CLI fehlschlägt.
+    """
+    manager = _manager(request)
+    if manager.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    try:
+        runtime = await manager.reanimate(session_id)
+    except SessionAliveError as exc:  # läuft bereits — nichts zu reanimieren
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SessionLimitError as exc:  # PROJ-14: Limit greift auch beim Reanimieren
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except FileNotFoundError as exc:  # claude-Binary weg
+        raise HTTPException(
+            status_code=503, detail="Claude-CLI nicht gefunden — ist `claude` installiert/eingeloggt?"
+        ) from exc
+    except (RuntimeError, OSError) as exc:  # Resume fehlgeschlagen
+        raise HTTPException(status_code=503, detail=f"Reanimierung fehlgeschlagen: {exc}") from exc
+    return runtime.to_read()
 
 
 @router.post("/{session_id}/pause")

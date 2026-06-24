@@ -23,7 +23,7 @@ from ..config import (
     settings,
 )
 from ..db import NullSessionIndexRepository, SessionIndexRepository
-from . import abc_phases, curation, policy, watchdog
+from . import abc_phases, curation, liveness, policy, watchdog
 from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .generic_cli_driver import GenericCliDriver
@@ -69,6 +69,14 @@ class SessionActiveError(RuntimeError):
     """PROJ-21: Löschen abgelehnt, weil die Session noch aktiv ist (nicht terminal).
 
     Die Route übersetzt das in HTTP 409 mit deutscher Meldung.
+    """
+
+
+class SessionAliveError(RuntimeError):
+    """PROJ-27: Reanimierung abgelehnt, weil die Session bereits lebt (aktiv).
+
+    Die Route übersetzt das in HTTP 409 — eine laufende Session braucht keine
+    Reanimierung (nur „hängt"/„tot" sind Kandidaten).
     """
 
 
@@ -242,11 +250,40 @@ class SessionRuntime:
         # PROJ-16: Amok-Watchdog — Sliding-Window-Monitor (Tokens/Zeit, Stillstand,
         # Schleife, Schreibrate). Liest die Limits live aus dem Modul-Singleton.
         self.watchdog = watchdog.WatchdogMonitor(watchdog.watchdog_store)
+        # PROJ-27: Auto-Reanimierungs-Buchhaltung (Versuche/Backoff/Ergebnis). Den
+        # Fortschritt misst weiterhin der Watchdog-Monitor — hier nur „wann reanimieren".
+        self.liveness = liveness.LivenessMonitor()
+
+    def derive_liveness(self, timeout: float | None = None) -> str:
+        """PROJ-27: verifizierter Liveness-Zustand — frisch aus vorhandenen Signalen.
+
+        Keine eigene Zustandsmaschine: Prozess-Leben (PID/Treiber) + Status +
+        Fortschritts-Uhr (PROJ-16) ergeben den Zustand bei jedem Aufruf neu — so
+        kann er nicht gegen die echte Prozess-Realität driften.
+        """
+        s = self.state
+        # Terminal oder nicht mehr steuerbar (auch verwaist nach Restart) → tot/beendet.
+        if s.status in (DONE, ERROR) or not self.driver.is_alive:
+            return liveness.LIVENESS_DEAD
+        # Legitime Wartestellung (Eingabe / Decision Card / Watchdog-Pause) ≠ Hänger.
+        if s.status in (WAITING, AWAITING_APPROVAL):
+            return liveness.LIVENESS_ACTIVE
+        # STARTING/RUNNING bei lebendem Prozess: die Fortschritts-Uhr entscheidet.
+        if timeout is None:
+            timeout = liveness.liveness_store.config()["progress_timeout_seconds"]
+        if self.watchdog.seconds_since_progress() > timeout:
+            return liveness.LIVENESS_HANGING
+        return liveness.LIVENESS_ACTIVE
 
     def to_read(self) -> dict:
         """Lese-Snapshot inkl. offener Decision Cards (für REST-Liste + WS-Broadcast)."""
         data = self.state.to_read()
         data["pending_decisions"] = [c.to_read() for c in self.pending.values()]
+        # PROJ-27: verifizierter Heartbeat reist im vorhandenen Snapshot mit (kein Extra-
+        # Endpoint nötig). Frisch abgeleitet, damit auch ohne Event aktuell.
+        data["liveness"] = self.derive_liveness()
+        data["liveness_auto_attempts"] = self.liveness.auto_attempts
+        data["liveness_last_result"] = self.liveness.last_result
         return data
 
     def _maybe_persist(self) -> None:
@@ -1135,7 +1172,105 @@ class SessionManager:
         state.status = RUNNING
         state.error = None
         state.last_activity = _now()
+        # PROJ-27: Resume IST Fortschritt — Fortschritts-Uhr zurücksetzen, sonst gilt die
+        # frisch fortgesetzte Session sofort wieder als „hängt" (alte Stillstands-Zeit).
+        runtime.watchdog.note_progress()
         self._persist(runtime)  # PROJ-14: rehydrierte/fortgesetzte Session läuft wieder.
+
+    # --- Liveness + Reanimierung (PROJ-27) ---------------------------------
+
+    async def reanimate(self, session_id: str) -> SessionRuntime:
+        """Manuelles „Reaktivieren" einer hängenden/toten Session.
+
+        Nutzt denselben ``claude --resume``-Pfad wie die Automatik (ein Mechanismus).
+        - Lebt die Session bereits (aktiv/wartend) → ``SessionAliveError`` (409): nichts
+          zu reanimieren.
+        - Hält die Session aktuell KEINEN aktiven Slot (terminal/verwaist), prüft die
+          Reanimierung das Session-Limit (PROJ-14) — kein Bypass über Resume.
+        Der manuelle Eingriff setzt das Auto-Versuchs-Budget zurück (frischer Anlauf).
+        """
+        runtime = self._require(session_id)
+        if runtime.derive_liveness() == liveness.LIVENESS_ACTIVE:
+            raise SessionAliveError("Session läuft bereits — eine Reanimierung ist nicht nötig.")
+        # Terminal → Reanimierung belegt einen NEUEN Slot: Limit prüfen (PROJ-14).
+        if runtime.state.status not in ACTIVE_STATES:
+            limit = self.max_parallel_sessions
+            if self.active_count() >= limit:
+                raise SessionLimitError(
+                    f"Limit erreicht: maximal {limit} gleichzeitige Sessions. "
+                    "Bitte eine laufende Session beenden, bevor reanimiert wird."
+                )
+        try:
+            await self._reanimate_once(runtime)
+        except Exception:  # Resume fehlgeschlagen → Ergebnis sichtbar, Fehler weiterreichen.
+            runtime.liveness.mark_result(success=False)
+            runtime._broadcast({"kind": "state", **runtime.to_read()})
+            raise
+        runtime.liveness.reset()  # manueller Eingriff → frisches Auto-Budget
+        runtime.liveness.mark_result(success=True)
+        runtime._broadcast({"kind": "state", **runtime.to_read()})
+        return runtime
+
+    async def _reanimate_once(self, runtime: SessionRuntime) -> None:
+        """Einen lebenden, aber hängenden Prozess sauber beenden und neu fortsetzen.
+
+        Lebt der alte Prozess noch (Hänger), wird er zuerst best-effort gestoppt, damit
+        kein verwaister Geister-Prozess weiter Tokens verbrennt; danach übernimmt ein
+        frischer ``--resume``-Treiber. Bei toten/verwaisten Sessions ist der Stop ein No-op.
+        """
+        if runtime.driver.is_alive:
+            try:
+                await runtime.driver.stop()
+            except Exception as exc:  # noqa: BLE001 — best-effort, blockiert die Reanimierung nicht.
+                logger.warning(
+                    "Stoppen des hängenden Prozesses fehlgeschlagen (Session %s): %s",
+                    runtime.state.session_id, exc,
+                )
+        await self._resume(runtime)
+
+    async def evaluate_liveness_once(self) -> None:
+        """Ein Tick des hintergrund-getriebenen Liveness-Auswerters (PROJ-27).
+
+        Leitet je Session den verifizierten Zustand ab, reanimiert hängende Sessions
+        automatisch (innerhalb Limit/Backoff, sofern global aktiviert) und streamt nur
+        echte Zustandswechsel — auch für komplett stillstehende Sessions, die nie ein
+        Tool-Gate erreichen (genau die Lücke, die der Watchdog allein nicht schließt).
+        """
+        cfg = liveness.liveness_store.config()
+        timeout = cfg["progress_timeout_seconds"]
+        auto_on = cfg["enabled_auto_reanimation"]
+        max_attempts = cfg["max_auto_attempts"]
+        backoff = cfg["backoff_seconds"]
+        for runtime in list(self._sessions.values()):
+            live = runtime.derive_liveness(timeout)
+            if live == liveness.LIVENESS_ACTIVE and runtime.liveness.auto_attempts:
+                # Echter Fortschritt nach einem Hänger → Auto-Budget zurücksetzen.
+                runtime.liveness.reset()
+            elif (
+                live == liveness.LIVENESS_HANGING
+                and auto_on
+                and runtime.liveness.may_auto_attempt(max_attempts)
+            ):
+                # Hänger = aktive Session (Slot belegt) → Resume belegt KEINEN neuen Slot;
+                # das Session-Limit (PROJ-14) bleibt strukturell gewahrt.
+                await self._auto_reanimate(runtime)
+                live = runtime.derive_liveness(timeout)
+            if live != runtime.liveness.last_broadcast_state:
+                runtime.liveness.last_broadcast_state = live
+                runtime._broadcast({"kind": "state", **runtime.to_read()})
+
+    async def _auto_reanimate(self, runtime: SessionRuntime) -> None:
+        """Ein automatischer Reanimations-Versuch (gezählt, mit Backoff, nie fatal)."""
+        backoff = liveness.liveness_store.config()["backoff_seconds"]
+        sid = runtime.state.session_id
+        try:
+            await self._reanimate_once(runtime)
+            success = True
+            logger.info("Auto-Reanimierung erfolgreich (Session %s).", sid)
+        except Exception as exc:  # noqa: BLE001 — Fehlversuch wird gezählt, Loop bleibt am Leben.
+            success = False
+            logger.warning("Auto-Reanimierung fehlgeschlagen (Session %s): %s", sid, exc)
+        runtime.liveness.record_attempt(backoff, success=success)
 
     async def pause(self, session_id: str) -> None:
         await self._require(session_id).driver.pause()

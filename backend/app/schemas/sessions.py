@@ -133,6 +133,13 @@ class SessionRead(BaseModel):
     abc_phase_reached: str | None = None
     abc_feature: str | None = None
     pending_decisions: list[PendingDecisionRead] = []
+    # PROJ-27 — verifizierter Liveness-Indikator + Auto-Reanimierung.
+    # liveness: "aktiv" (lebt + Fortschritt/legitime Wartestellung) | "hängt" (lebt, kein
+    # Fortschritt) | "tot" (beendet/verwaist). liveness_last_result: "läuft_wieder" |
+    # "fehlgeschlagen" | None — Rückmeldung des letzten Reanimations-Versuchs.
+    liveness: str = "aktiv"
+    liveness_auto_attempts: int = 0
+    liveness_last_result: str | None = None
 
 
 class PermissionHookRequest(BaseModel):

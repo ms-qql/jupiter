@@ -1,6 +1,6 @@
 # PROJ-27: Verifizierter Liveness-Indikator + Reanimieren hängender Sessions
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -171,3 +171,30 @@ backoff_seconds:           30       # Wartezeit zwischen Auto-Versuchen
 
 ### Handoff-Reihenfolge
 Backend-lastiges Feature. Empfehlung: **`/abc-backend`** zuerst (Liveness-Ableitung, Poll-Task, `LivenessMonitor`, `reanimate`-Endpunkt, `liveness.yaml`, `liveness`-Feld in `SessionRead`) → dann **`/abc-frontend`** (`HeartbeatDot`, Reaktivieren-Knopf, Reanimations-Rückmeldung) → **`/abc-qa`** (Edge Cases: legitimer Langläufer, Reanimations-Sturm, Stream-tot, Decision-Card-Warten, Restart-Orphans, Limit am Reanimieren).
+
+---
+
+## Implementierungsnotizen — Backend (2026-06-24, `/abc-backend`, Branch `dev`)
+
+**Status:** Backend implementiert + getestet (22 PROJ-27-Tests, volle Suite 497 grün). Frontend offen.
+
+**Neue/geänderte Dateien:**
+- `backend/app/engine/liveness.py` (neu) — `LivenessStore` (YAML, mtime-live, Default-Fallback nach Watchdog-Muster), `LivenessMonitor` (Auto-Versuche/Backoff/letztes-Ergebnis), Konstanten `aktiv`/`hängt`/`tot`.
+- `backend/config/liveness.example.yaml` (neu) — dokumentierte Vorlage (nicht geladen; nach `liveness.yaml` kopieren).
+- `backend/app/config.py` — `liveness_config_path`.
+- `backend/app/engine/watchdog.py` — `WatchdogMonitor.seconds_since_progress()` (legt die vorhandene Fortschritts-Uhr offen; keine zweite Buchhaltung).
+- `backend/app/engine/manager.py` — `SessionAliveError`; pro-Runtime `liveness`-Monitor; `SessionRuntime.derive_liveness()` (PID + Status + Fortschritts-Uhr); `to_read()` um `liveness`/`liveness_auto_attempts`/`liveness_last_result`; `_resume()` setzt die Fortschritts-Uhr zurück; Manager-Methoden `reanimate()`, `_reanimate_once()` (stoppt lebenden Hänger-Prozess vor Resume → kein Geister-Prozess), `evaluate_liveness_once()` (Poll-Tick), `_auto_reanimate()`.
+- `backend/app/main.py` — Hintergrund-`_liveness_loop` im `lifespan` (Frequenz live aus Config; nie fatal; sauberer Cancel beim Shutdown).
+- `backend/app/schemas/sessions.py` — Liveness-Felder in `SessionRead`.
+- `backend/app/schemas/settings.py` + `backend/app/routes/settings.py` — `GET/PUT /settings/liveness`.
+- `backend/app/routes/sessions.py` — `POST /sessions/{id}/reanimate` (404/409/429/503).
+- `backend/tests/test_proj27_liveness.py` (neu) — Monitor, Store, `derive_liveness`, Auto-Reanimierung (an/aus/Orphan-Schutz), API.
+
+**API-Vertrag fürs Frontend:**
+- Jede Session führt im bestehenden `SessionRead`/WS-Snapshot neu: `liveness` (`"aktiv"|"hängt"|"tot"`), `liveness_auto_attempts` (int), `liveness_last_result` (`"läuft_wieder"|"fehlgeschlagen"|null`). Kein Extra-Endpoint für die Anzeige.
+- `POST /sessions/{id}/reanimate` → `200` mit aktualisiertem `SessionRead`; `404` unbekannt; `409` Session läuft bereits; `429` Session-Limit (PROJ-14) greift; `503` Resume/CLI-Fehler. Knopf nur bei `liveness ∈ {hängt, tot}` zeigen.
+- `GET/PUT /settings/liveness` → `{enabled_auto_reanimation, progress_timeout_seconds, poll_interval_seconds, max_auto_attempts, backoff_seconds, source, warning}` (Watchdog-Tab-Muster).
+
+**Abweichungen/Entscheidungen:** Liveness ist ein **abgeleitetes** Feld (frisch je Snapshot), keine gespeicherte Zustandsmaschine. Auto-Reanimierung feuert strukturell nur auf „hängt" (= aktive Session mit belegtem Slot), daher kein Limit-Bypass; die manuelle Reanimierung einer terminalen Session prüft das Limit explizit. Restart-Orphans (DeadDriver/ERROR) sind „tot" → keine Auto-Reanimierung.
+
+**Nächster Schritt:** `/abc-frontend` (HeartbeatDot + Reaktivieren-Knopf + Reanimations-Rückmeldung), dann `/abc-qa`.
