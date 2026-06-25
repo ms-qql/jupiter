@@ -184,7 +184,7 @@ class Settings(BaseSettings):
     # Schwelle (%) für Kontext-Warnung + Handover-Vorschlag. Global; pro Session
     # überschreibbar. Beim Lesen/Setzen auf [THRESHOLD_MIN_PCT, THRESHOLD_MAX_PCT]
     # geklemmt.
-    context_fill_threshold_pct: int = 85
+    context_fill_threshold_pct: int = 50
     # Optionale LLM-Anreicherung der Handover-Prosa (Hybrid-Generator). Default
     # AUS: das mechanische Gerüst ist der garantierte, deterministische Pfad;
     # die Anreicherung ist ein optionaler Aufsatz (Tech-Design PROJ-5).

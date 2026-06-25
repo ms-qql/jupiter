@@ -122,7 +122,7 @@ class SessionRead(BaseModel):
     cache_creation_tokens: int = 0
     context_fill_pct: float
     context_known: bool = False
-    context_fill_threshold_pct: int = 85
+    context_fill_threshold_pct: int = 50
     threshold_warning: bool = False
     total_cost_usd: float
     num_turns: int
