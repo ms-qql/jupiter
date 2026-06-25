@@ -221,6 +221,45 @@ zieht mit `/abc-backend` nach. Keine neuen npm-Pakete.
 Fleet-Felder an `SessionState`, `Abhängigkeiten`-Spalte in `launcher.parse_index_features` + Topo-Sort,
 Vertrags-Konvention im Vault. **Vertrag = Abschnitt C/D dieses Designs.**
 
+## Backend-Implementierung (2026-06-25, Branch `dev`)
+In-memory + Vault, **kein Postgres/RLS/JWT** (MVP-Linie, Tech-Design Abschnitt 0). Keine neuen Pakete.
+
+**Neu:**
+- `backend/app/engine/coordinator.py` — `build_plan(project_path)` (Topo-Sort über die
+  `Abhängigkeiten`-Spalte via Kahn; blocked = wartet-auf-offene-Deps oder Zyklus; Warnungen
+  bei zirkulärer/fehlender Abhängigkeit; nur der auflösbare Teilgraph wird verteilbar markiert)
+  + `CoordinatorService` (dispatch → Koordinator-Session `role="coordinator"` + je Ticket eine
+  Spezialisten-Session mit `parent_coordinator_id`+`ticket_id`; fleet; set_paused; reassign =
+  altes Kind stoppen+lösen, neues starten; set_contract → Vault-`curated`-Notiz, Pointer am
+  Koordinator + allen Kindern). `PHASE_TO_ROLE`-Mapping. Slot-Limit (PROJ-14) → Rest nicht
+  fallen lassen, Dispatch bricht sauber ab.
+- `backend/app/routes/coordinator.py` — `POST /coordinator/plan` · `POST /coordinator/dispatch`
+  (201) · `GET /coordinator/{id}/fleet` · `POST …/pause` · `POST …/reassign` · `POST …/contract`.
+  Status: 400 (Pfad) · 404 (kein Koordinator / Ticket) · 429 (Slot-Limit) · 503 (Engine/Vault).
+- `backend/app/schemas/coordinator.py` — Plan/Item/Fleet/Dispatch/Pause/Reassign/Contract.
+- `backend/tests/test_proj22_coordinator.py` — 15 Tests (Plan-Topo/blocked/Zyklus/missing,
+  Dispatch-Flotte, Fleet-404, Pause, Reassign, Contract-Pointer).
+
+**Geändert:**
+- `engine/manager.py` — `SessionState`: `parent_coordinator_id`, `ticket_id`,
+  `child_session_ids`, `contract_pointer`, `coordinator_paused` (+ in `to_read`); `create()`
+  um die drei Fleet-Kwargs erweitert.
+- `engine/launcher.py` — `parse_index_features` liest jetzt die `Abhängigkeiten`-Spalte
+  (Header-erkannt, robust; Feature-Spalten-ID wird nicht als Dep fehlinterpretiert).
+- `schemas/sessions.py` — `SessionRead` um die 4 Fleet-Felder (Frontend-Vertrag erfüllt).
+- `main.py` — `app.state.coordinator` + Router registriert.
+
+**Bug gefunden & gefixt:** Reassign reuste `old.state.model`, das der Treiber beim Start auf
+die volle Modell-ID (`claude-haiku-4-5-…`) überschreibt → 400 an der Claude-Whitelist. Fix:
+`model=None` → Engine-Default.
+
+**Bewusst beim Agenten (nicht deterministisch im Backend):** die *automatische Vermittlung*
+eines Vertrags-Konflikts ist Laufzeit-Verhalten der Koordinator-Session (Prompt/Konstitution).
+Das Backend stellt das Gerüst + den `contract_conflict`-Card-Typ über den bestehenden
+Decision-Card-Flow bereit.
+
+**Verifiziert:** `pytest backend/tests/` → **697 passed** (15 neu, 0 Regression).
+
 ## QA Test Results
 _To be added by /abc-qa_
 

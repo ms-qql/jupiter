@@ -70,6 +70,10 @@ def parse_index_features(text: str) -> list[dict]:
             status_idx = _find_col(header, ("status",))
             feat_idx = _find_col(header, ("feature", "name"))
             prio_idx = _find_col(header, ("prio", "priorität", "priority"))
+            # PROJ-22: Abhängigkeits-Spalte (Topo-Sort des Koordinators). Nur die
+            # ID-Zelle wird gelesen; die Feature-Spalte enthält selbst eine PROJ-ID
+            # (Spec-Link) und darf nicht als Abhängigkeit fehlinterpretiert werden.
+            dep_idx = _find_col(header, ("abhäng", "depend", "requires", "voraussetz"))
             j = i + 2
             while j < n and lines[j].strip().startswith("|"):
                 cells = _split_row(lines[j])
@@ -79,12 +83,14 @@ def parse_index_features(text: str) -> list[dict]:
                         return cells[idx] if idx is not None and idx < len(cells) else ""
 
                     pm = _PRIO_RE.search(_cell(prio_idx))
+                    deps = [f"PROJ-{d}" for d in _PROJ_RE.findall(_cell(dep_idx))] if dep_idx is not None else []
                     out.append({
                         "id": f"PROJ-{m.group(1)}",
                         "number": m.group(1),
                         "title": _strip_links(_cell(feat_idx)),
                         "status": _cell(status_idx),
                         "prio": f"P{pm.group(1)}" if pm else "",
+                        "dependencies": deps,
                         "order": len(out),
                     })
                 j += 1

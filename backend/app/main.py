@@ -23,6 +23,7 @@ from .db import (
 )
 from .engine import liveness
 from .engine.base import EngineDriver
+from .engine.coordinator import CoordinatorService
 from .engine.files import FileService
 from .engine.git_service import GitService
 from .engine.launcher import LauncherService
@@ -38,6 +39,7 @@ from .engine.video_summary import VideoSummaryWorker
 from .routes import (
     agents,
     constitution,
+    coordinator,
     engines,
     files,
     git,
@@ -201,6 +203,8 @@ def create_app(
     # PROJ-41: Video-Summary-Worker (Warteschlange + Drossel/Cooldown/Zeitplan).
     app.state.video_summary_repo = vs_repo
     app.state.video_summary = VideoSummaryWorker(app.state.manager, vs_repo)
+    # PROJ-22: Multi-Agent-Dispatch — Koordinator über dem Session-Treiber + Vault-Vertrag.
+    app.state.coordinator = CoordinatorService(app.state.manager, vault_service)
     app.include_router(sessions.router)
     app.include_router(constitution.router)
     app.include_router(vault.router)
@@ -217,6 +221,7 @@ def create_app(
     app.include_router(agents.router)
     app.include_router(transcription.router)
     app.include_router(video_summary.router)
+    app.include_router(coordinator.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

@@ -130,6 +130,12 @@ class SessionRead(BaseModel):
     rate_limit: dict | None = None
     parent_session_id: str | None = None
     child_session_id: str | None = None
+    # PROJ-22 — Multi-Agent-Dispatch (Flotte): Kind → Koordinator + Ticket; der
+    # Koordinator führt die Kind-Liste; Vertrag-Pointer wird geteilt.
+    parent_coordinator_id: str | None = None
+    ticket_id: str | None = None
+    child_session_ids: list[str] = []
+    contract_pointer: str | None = None
     # PROJ-8 — ABC-Workflow-Gantt.
     project_name: str | None = None
     abc_phase: str | None = None
