@@ -872,6 +872,28 @@ export interface CoordinatorFleet {
   queued: string[];
 }
 
+// --- PROJ-25: Auth (JWT) + owner-Scope -------------------------------------
+
+/** Angemeldete Identität. `user_id` ist zugleich der `owner`-Wert, gegen den
+ *  serverseitig bescoped wird (Sessions/Handovers/Wissensnotizen/Vault). */
+export interface AuthUser {
+  user_id: string;
+  username: string;
+}
+
+/** Antwort von POST /auth/login bzw. /auth/bootstrap. Der Refresh-Token wird
+ *  NICHT im Body geführt, sondern vom Backend als httpOnly-Cookie gesetzt. */
+export interface LoginResult {
+  access_token: string;
+  user: AuthUser;
+}
+
+/** Öffentlicher Status von GET /auth/status — steuert, ob die Login-Seite den
+ *  Bootstrap-Modus (erster Account) statt des normalen Logins zeigt. */
+export interface AuthStatus {
+  has_users: boolean;
+}
+
 // --- PROJ-43: VPS-Admin Terminal (ttyd-iFrame) -----------------------------
 
 /** Antwort von GET /terminal/info — Erreichbarkeit + einzubettende ttyd-URL.

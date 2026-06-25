@@ -1,7 +1,15 @@
 // Dünner Client für das Jupiter-FastAPI-Backend (PROJ-1/PROJ-2).
 // Basis-URL via NEXT_PUBLIC_API_BASE; Default = lokaler uvicorn auf :8000.
 
+import {
+  clearAccessToken,
+  getAccessToken,
+  setAccessToken,
+} from "./auth-store";
 import type {
+  AuthStatus,
+  AuthUser,
+  LoginResult,
   ClipboardDir,
   DeleteResult,
   DirListing,
@@ -69,18 +77,90 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/** Roh-Fetch mit Standard-Headern: hängt den Access-Token (PROJ-25) als
+ *  Bearer-Header an und schickt Cookies mit (httpOnly-Refresh-Cookie). */
+async function rawFetch(
+  path: string,
+  init?: RequestInit,
+  withAuth = true,
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const token = getAccessToken();
+  if (withAuth && token) headers.set("Authorization", `Bearer ${token}`);
+  return fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+    ...init,
+    headers,
+  });
+}
+
+/** Nur der Bearer-Header (oder leer) — für Multipart-Fetches, die KEINEN
+ *  Content-Type setzen dürfen (Browser setzt die FormData-Boundary). */
+function authHeaders(): Record<string, string> {
+  const token = getAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// Parallel-401 teilen sich EINEN Refresh-Versuch (kein Token-Sturm).
+let refreshInFlight: Promise<boolean> | null = null;
+
+/** Erneuert den Access-Token genau einmal über den Refresh-Cookie. true =
+ *  erfolgreich (Token gesetzt), false = Refresh ungültig/abgelaufen. */
+export function refreshAccessToken(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const resp = await rawFetch("/auth/refresh", { method: "POST" }, false);
+        if (!resp.ok) {
+          clearAccessToken();
+          return false;
+        }
+        const body = (await resp.json()) as { access_token: string };
+        setAccessToken(body.access_token);
+        return true;
+      } catch {
+        clearAccessToken();
+        return false;
+      }
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+interface RequestOpts {
+  /** Bei 401 erst Refresh+Retry (Default true). */
+  retry?: boolean;
+  /** Was tun, wenn auch nach Refresh kein Zugriff besteht:
+   *  "redirect" → harter Wechsel auf /login (Default), "throw" → nur werfen
+   *  (für die Auth-Probes des AuthProviders, die den Redirect selbst steuern). */
+  onAuthFail?: "redirect" | "throw";
+}
+
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  opts: RequestOpts = {},
+): Promise<T> {
+  const { retry = true, onAuthFail = "redirect" } = opts;
   let resp: Response;
   try {
-    resp = await fetch(`${API_BASE}${path}`, {
-      headers: { "Content-Type": "application/json" },
-      ...init,
-    });
+    resp = await rawFetch(path, init);
   } catch {
     throw new ApiError("Backend nicht erreichbar", 0);
   }
+
+  if (resp.status === 401) {
+    if (retry && (await refreshAccessToken())) {
+      return request<T>(path, init, { ...opts, retry: false });
+    }
+    if (onAuthFail === "redirect") handleAuthFailure();
+    throw new ApiError("Nicht angemeldet", 401);
+  }
+
   if (!resp.ok) {
-    redirectToLoginOn401(resp.status);
     let detail = `Fehler ${resp.status}`;
     try {
       const body = await resp.json();
@@ -94,13 +174,88 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await resp.json()) as T;
 }
 
-/** Bei 401 (Session fehlt/abgelaufen) den Browser auf die Forward-Auth-Login-Seite
- *  leiten. Loop-Schutz: nicht, wenn wir schon auf /__auth/* sind. SSR-safe. */
-function redirectToLoginOn401(status: number): void {
-  if (status !== 401 || typeof window === "undefined") return;
-  if (window.location.pathname.startsWith("/__auth")) return;
+/** Session endgültig abgelaufen: Token verwerfen und auf die In-App-Login-Seite
+ *  leiten. Loop-Schutz: nicht, wenn wir schon auf /login sind. SSR-safe. */
+function handleAuthFailure(): void {
+  clearAccessToken();
+  if (typeof window === "undefined") return;
+  if (window.location.pathname.startsWith("/login")) return;
   const next = window.location.pathname + window.location.search;
-  window.location.assign(`/__auth/login?next=${encodeURIComponent(next)}`);
+  window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+}
+
+// --- PROJ-25: Auth-Endpunkte (öffentlich + geschützt) ----------------------
+
+/** Fehlertext aus einer fehlgeschlagenen Auth-Antwort ziehen (deutsch). */
+async function authErrorDetail(resp: Response, fallback: string): Promise<string> {
+  try {
+    const body = await resp.json();
+    if (body?.detail) return String(body.detail);
+  } catch {
+    /* ignore */
+  }
+  return fallback;
+}
+
+/** Öffentlich: Username + Passwort → Access-Token (Body) + Refresh-Cookie. */
+export async function login(username: string, password: string): Promise<AuthUser> {
+  const resp = await rawFetch(
+    "/auth/login",
+    { method: "POST", body: JSON.stringify({ username, password }) },
+    false,
+  );
+  if (!resp.ok) {
+    throw new ApiError(
+      await authErrorDetail(resp, "Anmeldung fehlgeschlagen"),
+      resp.status,
+    );
+  }
+  const body = (await resp.json()) as LoginResult;
+  setAccessToken(body.access_token);
+  return body.user;
+}
+
+/** Öffentlich, nur bei leerer Nutzerbasis: ersten Account anlegen + einloggen. */
+export async function bootstrap(
+  username: string,
+  password: string,
+): Promise<AuthUser> {
+  const resp = await rawFetch(
+    "/auth/bootstrap",
+    { method: "POST", body: JSON.stringify({ username, password }) },
+    false,
+  );
+  if (!resp.ok) {
+    throw new ApiError(
+      await authErrorDetail(resp, "Konto konnte nicht angelegt werden"),
+      resp.status,
+    );
+  }
+  const body = (await resp.json()) as LoginResult;
+  setAccessToken(body.access_token);
+  return body.user;
+}
+
+/** Öffentlich: existiert schon ein Account? Steuert Bootstrap- vs. Login-Modus. */
+export async function getAuthStatus(signal?: AbortSignal): Promise<AuthStatus> {
+  const resp = await rawFetch("/auth/status", { method: "GET", signal }, false);
+  if (!resp.ok) throw new ApiError("Auth-Status nicht abrufbar", resp.status);
+  return (await resp.json()) as AuthStatus;
+}
+
+/** Geschützt: aktuelle Identität (für AuthProvider-Rehydrierung). */
+export function getMe(signal?: AbortSignal): Promise<AuthUser> {
+  return request<AuthUser>("/auth/me", { signal }, { onAuthFail: "throw" });
+}
+
+/** Refresh-Cookie serverseitig widerrufen, lokalen Access-Token verwerfen. */
+export async function logout(): Promise<void> {
+  try {
+    await rawFetch("/auth/logout", { method: "POST" });
+  } catch {
+    /* Best-effort: Cookie-Widerruf darf den lokalen Logout nicht blockieren. */
+  }
+  clearAccessToken();
 }
 
 export function listSessions(signal?: AbortSignal): Promise<Session[]> {
@@ -505,12 +660,17 @@ export async function uploadFiles(
   if (targetDir) fd.append("target_dir", targetDir);
   let resp: Response;
   try {
-    resp = await fetch(`${API_BASE}/files/upload`, { method: "POST", body: fd });
+    resp = await fetch(`${API_BASE}/files/upload`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: authHeaders(),
+    });
   } catch {
     throw new ApiError("Backend nicht erreichbar", 0);
   }
   if (!resp.ok) {
-    redirectToLoginOn401(resp.status);
+    if (resp.status === 401) handleAuthFailure();
     let detail = `Fehler ${resp.status}`;
     try {
       const body = await resp.json();
@@ -688,12 +848,17 @@ export async function transcribeAudio(
   if (language) fd.append("language", language);
   let resp: Response;
   try {
-    resp = await fetch(`${API_BASE}/transcription`, { method: "POST", body: fd });
+    resp = await fetch(`${API_BASE}/transcription`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: authHeaders(),
+    });
   } catch {
     throw new ApiError("Backend nicht erreichbar", 0);
   }
   if (!resp.ok) {
-    redirectToLoginOn401(resp.status);
+    if (resp.status === 401) handleAuthFailure();
     let detail = `Fehler ${resp.status}`;
     try {
       const body = await resp.json();

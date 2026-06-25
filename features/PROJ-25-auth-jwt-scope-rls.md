@@ -1,6 +1,6 @@
 # PROJ-25: Echtes Auth (JWT) + Scope/RLS auf `owner`
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-25
 **Baustein:** #21 (Ausbau)
@@ -146,6 +146,29 @@ Koordinator-/Spezialisten- und Auto-Queue-Sessions (challenge.py, video_summary.
 - Refresh-Diebstahl → Rotation/Widerruf macht alten Refresh ungültig.
 - Bootstrap nur bei leerer Nutzerbasis; danach gesperrt.
 - Alle Texte/Fehlermeldungen **deutsch**.
+
+## Frontend-Umsetzung (Developer)
+**Datum:** 2026-06-25 · **Branch:** dev · **Stack:** Next.js 16 (App Router)
+
+Implementiert ist die **Auth-UI + Client-Schicht** (Backend `/auth/*` folgt mit `/abc-backend`):
+
+- **Token-Modell:** Access-Token nur im Speicher (`lib/auth-store.ts`, kein localStorage → XSS-Persistenz-Schutz); Refresh per **httpOnly-Cookie** (Backend setzt ihn). Alle Requests laufen mit `credentials: "include"` und hängen `Authorization: Bearer <access>` an (`lib/api.ts`).
+- **401-Handling:** zentral in `request()` — bei 401 **ein** geteilter Refresh-Versuch (`refreshAccessToken`, kein Token-Sturm) → Retry; scheitert er, harter Wechsel auf `/login?next=…`. Multipart-Fetches (Upload/Transkription) tragen denselben Bearer-Header + `credentials`. Der alte Forward-Auth-Stub (`/__auth/login`) ist auf den In-App-Login gezogen.
+- **AuthProvider** (`components/auth/auth-provider.tsx`): rehydriert beim Laden via Refresh-Cookie → `/auth/me`; sonst anonym + Bootstrap-Check.
+- **AuthGate** (`components/auth/auth-gate.tsx`): schützt die `(cockpit)`-Gruppe (Loader → Redirect → Inhalt).
+- **Login-Seite** (`app/login/page.tsx`, öffentlich, außerhalb der Gate): Login **und** Bootstrap-Modus (erster Account, mit Passwort-Bestätigung); Open-Redirect-Schutz auf `next` (nur app-interne Pfade).
+- **UserMenu** im Rail-Footer (`components/auth/user-menu.tsx`): Benutzername + „Abmelden".
+- Alle Texte deutsch; `tsc`/ESLint/`next build` grün.
+
+### Backend-Vertrag (Eingabe für `/abc-backend`)
+Erwartete Endpunkte (alle Antworten deutsch, `owner` immer aus dem Token):
+- `POST /auth/login {username,password}` → `{access_token, user:{user_id,username}}` **+ Set-Cookie httpOnly Refresh**.
+- `POST /auth/refresh` (liest Refresh-Cookie) → `{access_token}` (+ rotierter Refresh-Cookie).
+- `POST /auth/bootstrap {username,password}` → wie login; **nur bei leerer Nutzerbasis**, sonst 403/409.
+- `GET /auth/status` (öffentlich) → `{has_users: bool}`.
+- `GET /auth/me` (geschützt) → `{user_id,username}`.
+- `POST /auth/logout` (geschützt) → Refresh-Cookie widerrufen; 204.
+- CORS muss `allow_credentials=true` + konkrete Origin (nicht `*`) führen — Cookie-Flow.
 
 ## QA Test Results
 _To be added by /abc-qa_
