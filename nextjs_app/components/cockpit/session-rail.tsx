@@ -120,9 +120,77 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
         </div>
       )}
 
-      {/* Sessions-Sektion: als Ganzes über das Panel ausblendbar. */}
+      {/* PROJ-39: Orchestration-Sektion. Nach oben gezogen (direkt unter Workspace),
+          damit alle kompakten Link-Sektionen oben gebündelt sind; die lange
+          Sessions-Liste füllt darunter den Rest. Etwas Abstand (mt-2) + Trennlinie
+          (border-t) trennen die Bereiche sauber. */}
+      {orchestrationItems.length > 0 && (
+        <div className="mt-3 border-t border-border pt-3">
+          <div className="px-4 pb-1 pt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {sectionLabel("orchestration")}
+          </div>
+          <div className="px-2 pb-1">
+            {orchestrationItems.map((item) => {
+              const Icon = item.icon;
+              const href = item.href ?? "/";
+              return (
+                <Link
+                  key={item.key}
+                  href={href}
+                  onClick={onItemClick}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+                    pathname.startsWith(href)
+                      ? "bg-accent text-accent-foreground"
+                      : "text-foreground/90 hover:bg-accent/50",
+                  )}
+                >
+                  <Icon className="size-4 shrink-0 text-muted-foreground" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* PROJ-40: Micro-Apps-Sektion (UNTER „Orchestration"). Ebenfalls oben
+          gebündelt; Klick öffnet die Vollbild-Route /apps/[key]. */}
+      {microAppItems.length > 0 && (
+        <div className="mt-3 border-t border-border pt-3">
+          <div className="px-4 pb-1 pt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {sectionLabel("micro")}
+          </div>
+          <div className="px-2 pb-1">
+            {microAppItems.map((item) => {
+              const Icon = item.icon;
+              const href = item.href ?? "/";
+              return (
+                <Link
+                  key={item.key}
+                  href={href}
+                  onClick={onItemClick}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+                    pathname.startsWith(href)
+                      ? "bg-accent text-accent-foreground"
+                      : "text-foreground/90 hover:bg-accent/50",
+                  )}
+                >
+                  <Icon className="size-4 shrink-0 text-muted-foreground" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Sessions-Sektion: als Ganzes über das Panel ausblendbar. Abstand (mt-2)
+          + Trennlinie (border-t) grenzen die Liste von den Minipunkten oben ab;
+          flex-1 + min-h-0 lassen sie den restlichen Platz füllen und scrollen. */}
       {sessionsVisible ? (
-        <>
+        <div className="mt-3 flex min-h-0 flex-1 flex-col border-t border-border pt-3">
           <div className="px-4 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
             {sectionLabel("sessions")}
           </div>
@@ -179,77 +247,10 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
               )}
             </div>
           </ScrollArea>
-        </>
+        </div>
       ) : (
         // Sessions ausgeblendet → Platzhalter, damit der Footer unten bleibt.
         <div className="flex-1" />
-      )}
-
-      {/* PROJ-39: Orchestration-Sektion (unter „Aktive Sessions"). Einträge aus der
-          Registry; Klick öffnet die Vollbild-iFrame-Route. Header nur, wenn
-          mindestens ein Eintrag sichtbar ist — Zugang zum Wieder-Einblenden bleibt
-          über das Konfig-Panel der Workspace-Überschrift. */}
-      {orchestrationItems.length > 0 && (
-        <div className="border-t border-border pt-1">
-          <div className="px-4 pb-1 pt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            {sectionLabel("orchestration")}
-          </div>
-          <div className="px-2 pb-1">
-            {orchestrationItems.map((item) => {
-              const Icon = item.icon;
-              const href = item.href ?? "/";
-              return (
-                <Link
-                  key={item.key}
-                  href={href}
-                  onClick={onItemClick}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
-                    pathname.startsWith(href)
-                      ? "bg-accent text-accent-foreground"
-                      : "text-foreground/90 hover:bg-accent/50",
-                  )}
-                >
-                  <Icon className="size-4 shrink-0 text-muted-foreground" />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* PROJ-40: Micro-Apps-Sektion (UNTER „Orchestration"). Einträge aus der
-          Registry (group=micro); Klick öffnet die Vollbild-Route /apps/[key], die
-          selbst nach kind verzweigt (iframe ⇒ EmbedTab, native ⇒ Komponente). */}
-      {microAppItems.length > 0 && (
-        <div className="border-t border-border pt-1">
-          <div className="px-4 pb-1 pt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            {sectionLabel("micro")}
-          </div>
-          <div className="px-2 pb-1">
-            {microAppItems.map((item) => {
-              const Icon = item.icon;
-              const href = item.href ?? "/";
-              return (
-                <Link
-                  key={item.key}
-                  href={href}
-                  onClick={onItemClick}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
-                    pathname.startsWith(href)
-                      ? "bg-accent text-accent-foreground"
-                      : "text-foreground/90 hover:bg-accent/50",
-                  )}
-                >
-                  <Icon className="size-4 shrink-0 text-muted-foreground" />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
-        </div>
       )}
 
       <div className="border-t border-border px-4 py-2">
