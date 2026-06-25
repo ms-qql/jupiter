@@ -206,6 +206,17 @@ class SessionState:
     # PROJ-33: Zeitpunkt eines GEORDNETEN Drains (Backend-Shutdown). Gesetzt = bewusst
     # beendet → nach dem Neustart automatisch fortsetzen; None = Crash → kein Auto-Resume.
     drained_at: str | None = None
+    # PROJ-22 — Multi-Agent-Dispatch (Flotte). Neben dem 1:1-Staffelstab (parent/child_
+    # session_id) trägt eine dispatchte Spezialisten-Session hier die Rück-Referenz auf
+    # ihren Koordinator + das bearbeitete Ticket; der Koordinator führt die Kind-Liste.
+    parent_coordinator_id: str | None = None  # Kind → Koordinator-Session (1:N-Flotte).
+    ticket_id: str | None = None  # „PROJ-X", das diese Spezialisten-Session bearbeitet.
+    child_session_ids: list[str] = field(default_factory=list)  # nur am Koordinator gesetzt.
+    contract_pointer: str | None = None  # Vault-Pointer auf das API-Vertrag-Artefakt.
+    coordinator_paused: bool = False  # nur am Koordinator: Dispatch pausiert (keine neuen Tickets).
+    # PROJ-22 (M3): bei vollem Engine-Slot eingereihte Tickets (Plan-Posten als dict);
+    # ein Hintergrund-Tick rückt sie automatisch nach, sobald ein Slot frei wird.
+    queued_tickets: list[dict] = field(default_factory=list)
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -250,6 +261,13 @@ class SessionState:
             "abc_phase": self.abc_phase,
             "abc_phase_reached": self.abc_phase_reached,
             "abc_feature": self.abc_feature,
+            # PROJ-22 — Flotte (Eltern-Kind 1:N + Vertrag-Pointer).
+            "parent_coordinator_id": self.parent_coordinator_id,
+            "ticket_id": self.ticket_id,
+            "child_session_ids": list(self.child_session_ids),
+            "contract_pointer": self.contract_pointer,
+            # M3: eingereihte (noch nicht gestartete) Tickets — nur IDs fürs Cockpit.
+            "queued_ticket_ids": [t.get("ticket_id") for t in self.queued_tickets],
         }
 
 
@@ -1124,6 +1142,9 @@ class SessionManager:
         parent_session_id: str | None = None,
         project_name: str | None = None,
         engine: str | None = None,
+        parent_coordinator_id: str | None = None,
+        ticket_id: str | None = None,
+        contract_pointer: str | None = None,
     ) -> SessionRuntime:
         # PROJ-18: Engine-Profil auflösen (Default = eingebaute Claude-Engine). iFrame/
         # Launch-Einträge sind KEINE steuerbaren Sessions → klar ablehnen.
@@ -1182,6 +1203,10 @@ class SessionManager:
             parent_session_id=parent_session_id,
             # PROJ-8: sprechendes Gantt-Label; ohne Angabe der Verzeichnis-Basename.
             project_name=(project_name or "").strip() or os.path.basename(real_path) or real_path,
+            # PROJ-22: Flotten-Zuordnung (Kind kennt Koordinator + Ticket + Vertrag).
+            parent_coordinator_id=parent_coordinator_id,
+            ticket_id=ticket_id,
+            contract_pointer=contract_pointer,
         )
         driver = self._make_driver(profile)
         runtime = SessionRuntime(

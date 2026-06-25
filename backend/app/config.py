@@ -269,6 +269,9 @@ class Settings(BaseSettings):
     # Länge des rollierenden Verlaufs je Kennzahl (Sparklines). 60 Punkte ≈ 5 min
     # bei 5 s Takt.
     metrics_history_points: int = 60
+    # PROJ-22 (M3): Takt, in dem eingereihte Flotten-Tickets nachrücken, sobald ein
+    # Engine-Slot frei wird (Hintergrund-Drain).
+    coordinator_drain_interval_seconds: float = 5.0
     # Anzahl der Top-Prozesse (nach CPU, dann RAM) im Snapshot.
     metrics_top_processes: int = 5
     # Erwartete systemd-Dienste der Service-Health-Liste (Anzeigereihenfolge).
@@ -282,6 +285,22 @@ class Settings(BaseSettings):
     # Hartes Zeitlimit je `systemctl is-active`-Aufruf (Sek.) — Status muss schnell
     # bleiben (pollbar), nie unbegrenzt hängen.
     metrics_systemctl_timeout_seconds: float = 5.0
+
+    # --- VPS-Admin Terminal (PROJ-43) ------------------------------------
+    # ttyd-Shell als iFrame im Terminal-Tab der VPS-Admin-Micro-App. Die URL wird
+    # AUSSCHLIESSLICH hier (Backend-Config) gesetzt, nie vom Client — sie ist die
+    # gleich-origin Caddy-Route auf den lokal gebundenen ttyd-Dienst.
+    # Leer = Feature AUS (enabled=false) → das Frontend zeigt sauber „nicht
+    # konfiguriert" statt einer kaputten Fläche; aktiviert wird per /abc-deploy
+    # (JUPITER_TERMINAL_URL setzen, ttyd+Caddy einrichten).
+    terminal_url: str = ""
+    # Erreichbarkeits-Probe: kurzer TCP-Connect auf den LOKAL gebundenen ttyd-Port
+    # (Default 127.0.0.1:7681). Trennt „Dienst aus" (reachable=false → Hinweis+Retry)
+    # von „Einbettung verweigert" (greift dann der iFrame-Fallback im Frontend).
+    # Host/Port kommen NUR aus der Config (keine Client-Eingabe, keine Shell).
+    terminal_probe_host: str = "127.0.0.1"
+    terminal_probe_port: int = 7681
+    terminal_probe_timeout_seconds: float = 1.5
 
 
 settings = Settings()

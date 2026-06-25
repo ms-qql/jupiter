@@ -30,7 +30,8 @@ class PendingDecision:
     tool_input: dict = field(default_factory=dict)
     # PROJ-10: auslösende Policy-Regel (Klartext, Nachvollziehbarkeit) + Card-Typ.
     triggering_rule: str | None = None
-    # "normal" | "phase_transition" | "deny" | "knowledge_proposal" (PROJ-15, nicht-blockierend).
+    # "normal" | "phase_transition" | "deny" | "knowledge_proposal" (PROJ-15) |
+    # "review_finding" (PROJ-23: Cross-Agent-Review-Befund, nicht-blockierend).
     card_type: str = "normal"
     # PROJ-15: editierbarer Inhalt eines Wissens-Vorschlags (nur card_type=knowledge_proposal).
     proposal_title: str | None = None

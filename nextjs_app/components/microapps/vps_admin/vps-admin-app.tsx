@@ -9,22 +9,82 @@
 // Wahrheit, damit Sidebar-Ampel und Banner nie driften). Die App POLLT
 // GET /metrics/current; im Hintergrund-Tab wird das Polling gedrosselt und beim
 // Zurückkehren sofort ein frischer Wert geholt.
+//
+// PROJ-43: Dieselbe App trägt eine Tab-Leiste „Dashboard · Terminal". Der
+// Terminal-Tab (TerminalTab) bettet die ttyd-Shell per iFrame ein. Der Wechsel
+// ist reiner React-State (kein Seiten-Reload); der einmal geöffnete Terminal-Tab
+// bleibt montiert (CSS-aus-/eingeblendet), damit die ttyd-WebSocket beim kurzen
+// Wegklicken nicht abreißt.
 
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIcon,
   ClockIcon,
+  GaugeIcon,
   HardDriveIcon,
   NetworkIcon,
   ServerIcon,
+  TerminalIcon,
 } from "lucide-react";
 import { getMetricsCurrent, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   MetricServiceStatus,
   MetricStatus,
   MetricsSnapshot,
 } from "@/lib/types";
+import { TerminalTab } from "./terminal-tab";
+
+type VpsTab = "dashboard" | "terminal";
+
+export default function VpsAdminApp() {
+  const [tab, setTab] = useState<VpsTab>("dashboard");
+  // Terminal-Tab erst beim ersten Öffnen mounten — danach montiert lassen, damit
+  // die ttyd-WebSocket beim Tab-Wechsel nicht neu aufgebaut wird (User-Story
+  // „nicht abbrechen, wenn ich kurz wegklicke und zurückkomme").
+  const [terminalOpened, setTerminalOpened] = useState(false);
+
+  const onTabChange = (value: VpsTab) => {
+    if (value === "terminal") setTerminalOpened(true);
+    setTab(value);
+  };
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b border-border px-4 py-2">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => onTabChange(v as VpsTab)}
+        >
+          <TabsList variant="line">
+            <TabsTrigger value="dashboard">
+              <GaugeIcon className="size-4" />
+              Dashboard
+            </TabsTrigger>
+            <TabsTrigger value="terminal">
+              <TerminalIcon className="size-4" />
+              Terminal
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      <div className="min-h-0 flex-1">
+        <div className={tab === "dashboard" ? "h-full overflow-auto" : "hidden"}>
+          <DashboardView />
+        </div>
+        {/* Erst nach erstem Öffnen gemountet, dann nur per CSS versteckt → iFrame
+            bleibt am Leben (laufende Befehle reißen beim Wechsel nicht ab). */}
+        {terminalOpened && (
+          <div className={tab === "terminal" ? "h-full" : "hidden"}>
+            <TerminalTab />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -99,7 +159,9 @@ const LOAD_WORD: Record<MetricStatus, string> = {
   red: "Hoch",
 };
 
-export default function VpsAdminApp() {
+/** PROJ-42: Der reine Dashboard-Inhalt (Banner, Gauges, Kacheln, Prozesse,
+ *  Dienste). Tab-Hülle + Terminal liegen in der Default-Export-Komponente. */
+function DashboardView() {
   const [snap, setSnap] = useState<MetricsSnapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);

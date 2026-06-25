@@ -55,14 +55,14 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-40 | Sidebar-Sektion „Micro-Apps" + Excalidraw-Migration aus „Werkzeuge" | P1 | Deployed | PROJ-38, PROJ-3, PROJ-18 | [Spec](PROJ-40-sidebar-micro-apps-excalidraw-migration.md) |
 | PROJ-41 | Video Summary (native Micro-App: URL-Queue → `hal-video-summary` → Hal) | P1 | Deployed | PROJ-40, PROJ-1, PROJ-2 | [Spec](PROJ-41-video-summatizer-microapp.md) |
 | PROJ-42 | VPS-Admin — Dashboard (native Micro-App: Metriken + Sidebar-Ampel) | P1 | Deployed | PROJ-40, PROJ-3, PROJ-38 | [Spec](PROJ-42-vps-admin-dashboard.md) |
-| PROJ-43 | VPS-Admin — Terminal (ttyd-iFrame Shell-Zugriff) | P1 | Architected | PROJ-42, PROJ-40, PROJ-3 | [Spec](PROJ-43-vps-admin-terminal.md) |
+| PROJ-43 | VPS-Admin — Terminal (ttyd-iFrame Shell-Zugriff) | P1 | Deployed | PROJ-42, PROJ-40, PROJ-3 | [Spec](PROJ-43-vps-admin-terminal.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
 | ID | Feature | Prio | Status | Abhängigkeiten | Spec |
 |----|---------|------|--------|----------------|------|
-| PROJ-22 | Multi-Agent-Dispatch-Schicht + Vertrag-zuerst/Koordinator | P2 | Planned | PROJ-1, PROJ-3, PROJ-4, PROJ-2, PROJ-9 | [Spec](PROJ-22-multi-agent-dispatch.md) |
-| PROJ-23 | Cross-Agent-Review / Challenge (engine-übergreifend) | P2 | Planned | PROJ-18, PROJ-22, PROJ-4, PROJ-2 | [Spec](PROJ-23-cross-agent-review.md) |
+| PROJ-22 | Multi-Agent-Dispatch-Schicht + Vertrag-zuerst/Koordinator | P2 | Deployed | PROJ-1, PROJ-3, PROJ-4, PROJ-2, PROJ-9 | [Spec](PROJ-22-multi-agent-dispatch.md) |
+| PROJ-23 | Cross-Agent-Review / Challenge (engine-übergreifend) | P2 | Deployed | PROJ-18, PROJ-22, PROJ-4, PROJ-2 | [Spec](PROJ-23-cross-agent-review.md) |
 | PROJ-24 | Vault als geteilter Dienst (auch für eingebettete Apps) | P2 | Planned | PROJ-2, PROJ-15, PROJ-18 | [Spec](PROJ-24-vault-geteilter-dienst.md) |
 | PROJ-25 | Echtes Auth (JWT) + Scope/RLS auf `owner` | P2 | Planned | PROJ-2, PROJ-24 | [Spec](PROJ-25-auth-jwt-scope-rls.md) |
 | PROJ-26 | Marktplatz/Registry für Rollen/Skills/Agenten | P2 | Planned | PROJ-6, PROJ-1, PROJ-10, PROJ-25 | [Spec](PROJ-26-marktplatz-registry.md) |
