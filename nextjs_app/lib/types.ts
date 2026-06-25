@@ -553,6 +553,22 @@ export interface ClipboardDir {
   path: string;
 }
 
+// --- PROJ-13: Git-Branch-Handling ------------------------------------------
+
+/** Live aus dem Repo gelesener Branch-Status (GET /git/status). Spiegelt
+ *  backend/app/schemas/git.py BranchStatus. Git ist die Quelle der Wahrheit —
+ *  kein DB-State. ahead/behind sind rein lokal (kein fetch); null = kein Upstream. */
+export interface BranchStatus {
+  path: string;
+  is_repo: boolean;
+  branch: string | null; // bei detached HEAD: Kurz-Hash
+  detached: boolean;
+  dirty: boolean;
+  ahead: number | null;
+  behind: number | null;
+  branches: string[];
+}
+
 // --- PROJ-17: Recovery über den Vault --------------------------------------
 
 /** Quelle, aus der der „Hier ging's weiter"-Vorschlag eines Kandidaten stammt

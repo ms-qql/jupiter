@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-34
+**Next Available ID:** PROJ-38
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -25,7 +25,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-10 | Trust-Policy (abgestuft, konfigurierbar) + Phasen-Gate | P1 | Deployed | PROJ-4, PROJ-6, PROJ-8 | [Spec](PROJ-10-trust-policy.md) |
 | PROJ-11 | Fileexplorer + Drag-and-Drop | P1 | Deployed | PROJ-1, PROJ-3 | [Spec](PROJ-11-fileexplorer.md) |
 | PROJ-12 | MD-Editor (voll, Obsidian-DNA) | P1 | Deployed | PROJ-7 | [Spec](PROJ-12-md-editor.md) |
-| PROJ-13 | Git-Branch-Handling (in-App, abc-konform) | P1 | Planned | PROJ-3 | [Spec](PROJ-13-git-branch-handling.md) |
+| PROJ-13 | Git-Branch-Handling (in-App, abc-konform) | P1 | Deployed | PROJ-3 | [Spec](PROJ-13-git-branch-handling.md) |
 | PROJ-14 | PROJ-1-Härtung: Limit + Persistenz | P1 | Deployed | PROJ-1 | [Spec](PROJ-14-engine-haertung-limit-persistenz.md) |
 | PROJ-15 | Vault Stufe 3 (lebendes Gehirn + Kuratierung) | P1 | Deployed | PROJ-2, PROJ-4, PROJ-5 | [Spec](PROJ-15-vault-stufe-3.md) |
 | PROJ-16 | Amok-Watchdog + Limits | P1 | Deployed | PROJ-1, PROJ-4, PROJ-10 | [Spec](PROJ-16-amok-watchdog.md) |
@@ -43,9 +43,13 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-28 | Fileexplorer Drei-Spalten-Layout (Sidebar · Panel · Ansicht) | P1 | Deployed | PROJ-11, PROJ-7 | [Spec](PROJ-28-fileexplorer-drei-spalten.md) |
 | PROJ-29 | Eingabefeld-Höhe symmetrisch zu den 3 Buttons | P2 | Deployed | PROJ-3, PROJ-11 | [Spec](PROJ-29-eingabefeld-hoehe-symmetrie.md) |
 | PROJ-30 | Kanban-Phasenerkennung im Bypass-Mode (QA/Deploy) | P1 | Deployed | PROJ-8, PROJ-1 | [Spec](PROJ-30-kanban-phasen-bypass.md) |
-| PROJ-31 | Spec-Links im MD-Reader auflösen (Doku führt ins Leere) | P1 | Planned | PROJ-7, PROJ-12 | [Spec](PROJ-31-md-reader-spec-links.md) |
+| PROJ-31 | Spec-Links im MD-Reader auflösen (Doku führt ins Leere) | P1 | Deployed | PROJ-7, PROJ-12 | [Spec](PROJ-31-md-reader-spec-links.md) |
 | PROJ-32 | Fortschritts-Signal aus Tool-Aktivität (kein False-„hängt" bei langen Tools) | P1 | Deployed | PROJ-16, PROJ-27, PROJ-4 | [Spec](PROJ-32-fortschritt-aus-tool-aktivitaet.md) |
 | PROJ-33 | Session-Lifecycle-Härtung (Restart-Resilienz + prozess-verifiziertes Liveness) | P1 | Deployed | PROJ-1, PROJ-14, PROJ-27, PROJ-17 | [Spec](PROJ-33-session-lifecycle-haertung.md) |
+| PROJ-34 | Chat-Modus im Neue-Session-Dialog (freies Chatfenster ohne ABC-Bezug) | P1 | Planned | PROJ-3, PROJ-9, PROJ-1 | [Spec](PROJ-34-chat-modus-neue-session.md) |
+| PROJ-35 | Session-Titel = eingegebener Projektname (Sidebar + Header) statt „jupiter" | P1 | Planned | PROJ-3, PROJ-9 | [Spec](PROJ-35-session-titel-projektname-anzeigen.md) |
+| PROJ-36 | Eingabe-Buttons auf drei Reihen (Senden · Mikro+Büroklammer · Stop) | P2 | Planned | PROJ-3, PROJ-20, PROJ-11, PROJ-29 | [Spec](PROJ-36-eingabe-buttons-drei-reihen.md) |
+| PROJ-37 | Fileexplorer: kein leeres Vorschau-Fenster — aktives Fenster (Session) bleibt | P1 | Planned | PROJ-28, PROJ-11, PROJ-3 | [Spec](PROJ-37-fileexplorer-aktives-fenster-bleibt.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

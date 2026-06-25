@@ -308,6 +308,7 @@ export function MdEditorPanel({
           <MarkdownView
             body={previewBody}
             index={wikiIndex}
+            currentPath={file.path}
             onNavigate={(f: Pick<TreeFile, "path">) => onNavigate(f.path)}
           />
         </div>

@@ -144,7 +144,12 @@ export function FilePreview({ entry }: { entry: FileEntry | null }) {
         <PreviewHint text={error} />
       ) : text !== null ? (
         kind === "markdown" ? (
-          <MarkdownView body={text} index={emptyIndex} onNavigate={() => {}} />
+          <MarkdownView
+            body={text}
+            index={emptyIndex}
+            currentPath={entry.path}
+            onNavigate={() => {}}
+          />
         ) : (
           <TextPreview text={text} />
         )

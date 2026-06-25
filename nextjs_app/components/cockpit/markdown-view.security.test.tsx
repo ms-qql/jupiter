@@ -7,10 +7,19 @@ import { MarkdownView } from "./markdown-view";
 import { buildWikilinkIndex } from "@/lib/md-tree";
 import type { MdIndexEntry } from "@/lib/types";
 
-function render(body: string, entries: MdIndexEntry[] = []) {
+function render(
+  body: string,
+  entries: MdIndexEntry[] = [],
+  currentPath = "/root/features/INDEX.md",
+) {
   const index = buildWikilinkIndex(entries);
   return renderToStaticMarkup(
-    <MarkdownView body={body} index={index} onNavigate={vi.fn()} />,
+    <MarkdownView
+      body={body}
+      index={index}
+      currentPath={currentPath}
+      onNavigate={vi.fn()}
+    />,
   );
 }
 
@@ -71,5 +80,67 @@ describe("MarkdownView — Wikilinks & GFM", () => {
     const big = "x".repeat(450_000);
     const html = render(big);
     expect(html).toContain("gekürzt");
+  });
+});
+
+// PROJ-31: Standard-Markdown-Links (relativ + Anker) im Reader auflösen.
+describe("MarkdownView — Spec-Links (PROJ-31)", () => {
+  it("rendert relativen MD-Link auf eine bekannte Datei als Button (kein <a href>)", () => {
+    const html = render("siehe [Spec](PROJ-7.md)", [FILE]);
+    expect(html).toContain("<button");
+    expect(html).not.toMatch(/<a [^>]*href="PROJ-7\.md"/);
+  });
+
+  it("markiert relativen MD-Link auf eine unbekannte Datei als fehlend (line-through)", () => {
+    const html = render("siehe [Spec](PROJ-99.md)", [FILE]);
+    expect(html).toContain("line-through");
+    expect(html).not.toContain("<button");
+  });
+
+  it("löst ../-Pfade relativ zur aktuellen Datei auf", () => {
+    const prd: MdIndexEntry = { rel: "docs/PRD.md", name: "PRD.md", path: "/root/docs/PRD.md" };
+    const html = render("siehe [PRD](../docs/PRD.md)", [prd]);
+    expect(html).toContain("<button");
+  });
+
+  it("vergibt Überschriften-IDs und rendert In-Page-Anker als <a href=\"#…\">", () => {
+    const html = render("[zu Status](#status)\n\n## Status\n");
+    expect(html).toContain('id="status"');
+    expect(html).toContain('href="#status"');
+    expect(html).not.toContain("<button");
+  });
+
+  it("lässt externe http(s)-Links unverändert (target=_blank)", () => {
+    const html = render("[extern](https://example.com)");
+    expect(html).toMatch(/<a [^>]*href="https:\/\/example\.com"/);
+    expect(html).toContain('target="_blank"');
+  });
+
+  it("behandelt interne Nicht-MD-Links als nicht-navigierbar (kein toter Link/Button)", () => {
+    const html = render("siehe [Bild](bild.png)", [FILE]);
+    expect(html).not.toContain("<button");
+    expect(html).not.toMatch(/<a [^>]*href="bild\.png"/);
+    expect(html).toContain("Nur Markdown-Dateien");
+  });
+
+  it("dekodiert %20/Leerzeichen im Linkziel und löst korrekt auf", () => {
+    const spaced: MdIndexEntry = {
+      rel: "features/My Spec.md",
+      name: "My Spec.md",
+      path: "/root/features/My Spec.md",
+    };
+    const html = render("siehe [Spec](My%20Spec.md)", [spaced]);
+    expect(html).toContain("<button");
+  });
+
+  it("weist Pfad-Traversal ab (außerhalb des Index → fehlend, keine Navigation)", () => {
+    const html = render("siehe [boom](../../../../etc/secret.md)", [FILE]);
+    expect(html).toContain("line-through");
+    expect(html).not.toContain("<button");
+  });
+
+  it("rendert Cross-File-Anker (X.md#abschnitt) als navigierbaren Button", () => {
+    const html = render("siehe [Status](PROJ-7.md#status)", [FILE]);
+    expect(html).toContain("<button");
   });
 });
