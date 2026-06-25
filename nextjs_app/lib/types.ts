@@ -55,7 +55,10 @@ export interface PendingDecision {
     | "deny"
     | "watchdog_pause"
     | "knowledge_proposal"
-    | "self_restart";
+    | "self_restart"
+    /** PROJ-22: Der Koordinator konnte einen Vertrags-Konflikt zwischen zwei
+     *  Spezialisten-Sessions nicht automatisch vermitteln → Eskalation an den Menschen. */
+    | "contract_conflict";
   /** PROJ-15: editierbarer Inhalt eines Wissens-Vorschlags (nur knowledge_proposal). */
   proposal_title?: string | null;
   proposal_body?: string | null;
@@ -104,6 +107,15 @@ export interface Session {
   parent_session_id: string | null;
   /** PROJ-5: Vorgänger → Reset-Nachfolger (1 Strang = 1 Nachfolger). */
   child_session_id: string | null;
+  /** PROJ-22: Bei einer dispatchten Spezialisten-Session → die Koordinator-Session,
+   *  die sie gestartet hat (1:N-Flotte, neben dem 1:1-Staffelstab). null = keine Flotte. */
+  parent_coordinator_id: string | null;
+  /** PROJ-22: Das Ticket („PROJ-X"), das diese Spezialisten-Session bearbeitet. */
+  ticket_id: string | null;
+  /** PROJ-22: Nur an der Koordinator-Session gesetzt — IDs seiner Kind-Sessions. */
+  child_session_ids: string[];
+  /** PROJ-22: Vault-Pointer auf das API-Vertrag-Artefakt (kein Volltext-Duplikat). */
+  contract_pointer: string | null;
   /** PROJ-8: sprechendes Projekt-Label (Fallback Basename) — Gantt-Zeilen-Titel. */
   project_name: string | null;
   /** PROJ-8: AKTUELLE ABC-Phase (hervorgehoben). null = keine Phase. */
@@ -749,4 +761,60 @@ export interface MetricsSnapshot {
 /** Antwort von GET /metrics/status — leichtgewichtige Gesamt-Ampel (Sidebar). */
 export interface MetricsStatus {
   status: MetricStatus;
+}
+
+// --- PROJ-22: Multi-Agent-Dispatch (Koordinator) ---------------------------
+
+/** Ein Posten des Verteilungsplans: ein Ticket aus features/INDEX.md + die vom
+ *  Koordinator (Smart-Launcher-Logik, PROJ-9) abgeleitete Zuweisung. Spiegelt das
+ *  geplante backend/app/schemas/coordinator.py DispatchPlanItem. */
+export interface CoordinatorPlanItem {
+  ticket_id: string; // „PROJ-22"
+  title: string;
+  status: string; // INDEX-Status (Planned, Architected, …)
+  /** Abgeleitete Rolle/Skill/Engine/Modell für die Spezialisten-Session. */
+  role: string | null;
+  skill: string | null;
+  engine: string;
+  model: ModelName | null;
+  /** Position in der topologisch sortierten Dispatch-Reihenfolge (1-basiert). */
+  order: number;
+  /** Tickets, von denen dieses laut `Abhängigkeiten`-Spalte abhängt. */
+  dependencies: string[];
+  /** true → wird (noch) nicht dispatcht, weil ein `Requires`-Ticket nicht im
+   *  erforderlichen Zustand ist; `blocked_reason` trägt den Klartext. */
+  blocked: boolean;
+  blocked_reason: string | null;
+}
+
+/** Antwort von POST /coordinator/plan — der Verteilungsplan VOR dem Dispatch
+ *  (Human-in-the-Loop). `warnings` deckt zirkuläre/fehlende Abhängigkeiten ab;
+ *  dispatchbar ist nur der auflösbare Teilgraph (`items` ohne `blocked`). */
+export interface CoordinatorPlan {
+  project_path: string;
+  items: CoordinatorPlanItem[];
+  warnings: string[];
+}
+
+/** Live-Sicht einer Koordinator-Flotte (GET /coordinator/{id}/fleet):
+ *  die Koordinator-Session + ihre Kind-Sessions als zusammengehörige Gruppe. */
+export interface CoordinatorFleet {
+  coordinator: Session;
+  children: Session[];
+  /** true → Dispatch pausiert (keine neuen Tickets werden gestartet). */
+  paused: boolean;
+  /** Vault-Pointer auf den API-Vertrag (von allen Kindern geteilt). */
+  contract_pointer: string | null;
+}
+
+// --- PROJ-43: VPS-Admin Terminal (ttyd-iFrame) -----------------------------
+
+/** Antwort von GET /terminal/info — Erreichbarkeit + einzubettende ttyd-URL.
+ *  `enabled=false` ⇒ kein Terminal-Dienst konfiguriert (Hinweis statt iFrame).
+ *  `reachable` kommt aus einem kurzen TCP-Probe im Backend (Dienst aus vs. an).
+ *  `url` wird ausschließlich vom Backend gesetzt, nie vom Client. */
+export interface TerminalInfo {
+  enabled: boolean;
+  url: string | null;
+  reachable: boolean;
 }

@@ -1,6 +1,6 @@
 # PROJ-22: Multi-Agent-Dispatch-Schicht + Vertrag-zuerst/Koordinator
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-25
 **Baustein:** #17, #18
@@ -185,6 +185,41 @@ Single-User-MVP: kein JWT/RLS (kommt mit PROJ-25); `owner` wird mitgeführt.
 ### F) Dependencies (Pakete)
 - Backend: **keine neuen** — alles (Treiber, Vault, Policy, Watchdog, INDEX-Parsing) existiert.
 - Frontend: **keine neuen** — Fleet-Gruppierung ist eine Komposition bestehender Cockpit-Komponenten.
+
+## Frontend-Implementierung (2026-06-25, Branch `dev`)
+Frontend-first gegen den dokumentierten Vertrag (Abschnitt C/D) gebaut; das Backend
+zieht mit `/abc-backend` nach. Keine neuen npm-Pakete.
+
+**Neu:**
+- `nextjs_app/components/cockpit/coordinator/coordinator-panel.tsx` — neuer **Koordinator**-Tab
+  im Cockpit: Einstieg (Projektpfad → „Verteilungsplan erstellen") + Live-Sicht aller Flotten.
+  Flotten werden aus dem **bestehenden** `/sessions`-Poll (sessions-provider) abgeleitet
+  (`role==="coordinator"` + Kinder via `parent_coordinator_id`) → **kein zweiter Poll**.
+  Letzter Projektpfad in localStorage (Lazy-Initializer, SSR-sicher).
+- `…/coordinator/dispatch-plan-dialog.tsx` — Verteilungsplan-Dialog (Human-in-the-Loop):
+  lädt `POST /coordinator/plan`, zeigt Ticket → Rolle/Skill/Engine + topologische Reihenfolge
+  + Abhängigkeits-Warnungen, dispatcht nur den nicht-blockierten Teil per `POST /coordinator/dispatch`.
+- `…/coordinator/fleet-view.tsx` — Eltern-Kind-Gruppe: Koordinator-Kachel (Ampel, Aggregat,
+  Pausieren/Fortsetzen, Vertrag-Link → `/doku`) über eingerückten Kind-`SessionTile`s
+  (Klick = „Kind übernehmen"); Inline-`ReassignForm` (Rolle/Engine) je Ticket.
+
+**Geändert:**
+- `lib/types.ts` — `Session` um Fleet-Felder erweitert (`parent_coordinator_id`, `ticket_id`,
+  `child_session_ids`, `contract_pointer`); `card_type` um `"contract_conflict"`;
+  neue Interfaces `CoordinatorPlan(Item)`, `CoordinatorFleet`.
+- `lib/api.ts` — `getCoordinatorPlan`, `dispatchCoordinator`, `getCoordinatorFleet`,
+  `setCoordinatorPaused`, `reassignTicket`, `setCoordinatorContract`.
+- `components/cockpit/decision-card.tsx` — `contract_conflict` gerendert (indigo, „Vertrags-Konflikt", Scale-Icon).
+- `app/(cockpit)/page.tsx` — neuer Tab „Koordinator".
+- 6 Test-Fixtures um die neuen `Session`-Pflichtfelder ergänzt.
+
+**Verifiziert:** `tsc --noEmit` (nur 1 vorbestehender, unabhängiger Fehler in `md-tree.test.ts`),
+`eslint` der neuen Dateien sauber, `vitest run` der berührten Fixtures **71/71 grün**.
+
+**Offen fürs Backend (`/abc-backend`):** `routes/coordinator.py` (plan/dispatch/fleet/pause/reassign/contract),
+`engine/coordinator.py` (Dispatch + Vertrags-Schiedsrichter + `contract_conflict`-Card),
+Fleet-Felder an `SessionState`, `Abhängigkeiten`-Spalte in `launcher.parse_index_features` + Topo-Sort,
+Vertrags-Konvention im Vault. **Vertrag = Abschnitt C/D dieses Designs.**
 
 ## QA Test Results
 _To be added by /abc-qa_

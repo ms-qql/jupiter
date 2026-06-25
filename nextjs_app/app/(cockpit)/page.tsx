@@ -6,6 +6,7 @@ import { RecoveryBanner } from "@/components/cockpit/recovery-banner";
 import { CleanupButton } from "@/components/cockpit/cleanup-button";
 import { SessionGrid } from "@/components/cockpit/session-grid";
 import { KanbanBoard } from "@/components/cockpit/kanban-board";
+import { CoordinatorPanel } from "@/components/cockpit/coordinator/coordinator-panel";
 import { GanttChart } from "@/components/cockpit/gantt-chart";
 import { ArchivedSection } from "@/components/cockpit/archived-section";
 import { ToolsPanel } from "@/components/cockpit/tools-panel";
@@ -75,6 +76,8 @@ export default function CockpitPage() {
           <TabsList>
             <TabsTrigger value="kacheln">Kacheln</TabsTrigger>
             <TabsTrigger value="kanban">Kanban</TabsTrigger>
+            {/* PROJ-22: Multi-Agent-Dispatch — Verteilungsplan + Flotten-Sicht. */}
+            <TabsTrigger value="koordinator">Koordinator</TabsTrigger>
             {/* PROJ-18: eingebettete Apps (iFrame) + externe Startknöpfe. */}
             <TabsTrigger value="werkzeuge">Werkzeuge</TabsTrigger>
             {/* PROJ-19 (#28): Token-/Kosten-Verbrauch je Modell/Projekt. */}
@@ -114,6 +117,9 @@ export default function CockpitPage() {
                 </section>
               </>
             )}
+          </TabsContent>
+          <TabsContent value="koordinator" className="mt-4">
+            <CoordinatorPanel />
           </TabsContent>
           <TabsContent value="werkzeuge" className="mt-4">
             <ToolsPanel />

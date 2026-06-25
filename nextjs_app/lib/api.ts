@@ -46,6 +46,10 @@ import type {
   VideoSummarySettings,
   MetricsSnapshot,
   MetricsStatus,
+  TerminalInfo,
+  CoordinatorPlan,
+  CoordinatorPlanItem,
+  CoordinatorFleet,
 } from "./types";
 
 export const API_BASE =
@@ -741,4 +745,89 @@ export function getMetricsStatus(
   signal?: AbortSignal,
 ): Promise<MetricsStatus> {
   return request<MetricsStatus>("/metrics/status", { signal });
+}
+
+// --- PROJ-43: VPS-Admin Terminal (ttyd-iFrame) ------------------------------
+
+/** Erreichbarkeit + einzubettende URL des ttyd-Terminal-Dienstes. Das Backend
+ *  liest die URL aus seiner Config (nie vom Client) und macht einen kurzen
+ *  TCP-Probe auf den lokalen ttyd-Port, damit „Dienst aus" sauber von
+ *  „Einbettung verweigert" getrennt werden kann. */
+export function getTerminalInfo(
+  signal?: AbortSignal,
+): Promise<TerminalInfo> {
+  return request<TerminalInfo>("/terminal/info", { signal });
+}
+
+// --- PROJ-22: Multi-Agent-Dispatch (Koordinator) ---------------------------
+
+/** Verteilungsplan aus features/INDEX.md des Projekts erzeugen — startet NICHTS
+ *  (Human-in-the-Loop). Liefert Ticket→Rolle/Skill/Engine + topologische
+ *  Reihenfolge + Warnungen (zirkuläre/fehlende Abhängigkeiten). */
+export function getCoordinatorPlan(
+  projectPath: string,
+  signal?: AbortSignal,
+): Promise<CoordinatorPlan> {
+  return request<CoordinatorPlan>("/coordinator/plan", {
+    method: "POST",
+    body: JSON.stringify({ project_path: projectPath }),
+    signal,
+  });
+}
+
+/** Freigegebenen Plan dispatchen: startet die Koordinator-Session + je nicht
+ *  blockiertem Ticket eine Spezialisten-Session (policy-gegatet, PROJ-10).
+ *  Liefert die frisch gestartete Flotte. 429 = Engine-Slot-Limit (PROJ-14). */
+export function dispatchCoordinator(
+  projectPath: string,
+  items: CoordinatorPlanItem[],
+): Promise<CoordinatorFleet> {
+  return request<CoordinatorFleet>("/coordinator/dispatch", {
+    method: "POST",
+    body: JSON.stringify({ project_path: projectPath, items }),
+  });
+}
+
+/** Live-Sicht einer Flotte (Koordinator + Kinder) — pollbar fürs Cockpit. */
+export function getCoordinatorFleet(
+  coordinatorId: string,
+  signal?: AbortSignal,
+): Promise<CoordinatorFleet> {
+  return request<CoordinatorFleet>(`/coordinator/${coordinatorId}/fleet`, { signal });
+}
+
+/** Dispatch pausieren/fortsetzen (keine neuen Tickets, laufende Kinder bleiben). */
+export function setCoordinatorPaused(
+  coordinatorId: string,
+  paused: boolean,
+): Promise<CoordinatorFleet> {
+  return request<CoordinatorFleet>(`/coordinator/${coordinatorId}/pause`, {
+    method: "POST",
+    body: JSON.stringify({ paused }),
+  });
+}
+
+/** Ein Ticket manuell umverteilen (andere Rolle/Engine/Modell) → Plan-Neuberechnung. */
+export function reassignTicket(
+  coordinatorId: string,
+  ticketId: string,
+  patch: { role?: string; engine?: string; model?: string },
+): Promise<CoordinatorFleet> {
+  return request<CoordinatorFleet>(`/coordinator/${coordinatorId}/reassign`, {
+    method: "POST",
+    body: JSON.stringify({ ticket_id: ticketId, ...patch }),
+  });
+}
+
+/** API-Vertrag als Vault-Artefakt ablegen/aktualisieren → Update-Signal an die
+ *  Kinder (Pointer bleibt gleich, Inhalt neu). Liefert den Datei-Pointer. */
+export function setCoordinatorContract(
+  coordinatorId: string,
+  body: string,
+  title?: string,
+): Promise<VaultWriteResult> {
+  return request<VaultWriteResult>(`/coordinator/${coordinatorId}/contract`, {
+    method: "POST",
+    body: JSON.stringify({ body, title: title ?? null }),
+  });
 }
