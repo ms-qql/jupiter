@@ -49,7 +49,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-34 | Chat-Modus im Neue-Session-Dialog (freies Chatfenster ohne ABC-Bezug) | P1 | Deployed | PROJ-3, PROJ-9, PROJ-1 | [Spec](PROJ-34-chat-modus-neue-session.md) |
 | PROJ-35 | Session-Titel = eingegebener Projektname (Sidebar + Header) statt „jupiter" | P1 | Deployed | PROJ-3, PROJ-9 | [Spec](PROJ-35-session-titel-projektname-anzeigen.md) |
 | PROJ-36 | Eingabe-Buttons auf drei Reihen (Senden · Mikro+Büroklammer · Stop) | P2 | Deployed | PROJ-3, PROJ-20, PROJ-11, PROJ-29 | [Spec](PROJ-36-eingabe-buttons-drei-reihen.md) |
-| PROJ-37 | Fileexplorer: kein leeres Vorschau-Fenster — aktives Fenster (Session) bleibt | P1 | Planned | PROJ-28, PROJ-11, PROJ-3 | [Spec](PROJ-37-fileexplorer-aktives-fenster-bleibt.md) |
+| PROJ-37 | Fileexplorer: kein leeres Vorschau-Fenster — aktives Fenster (Session) bleibt | P1 | Architected | PROJ-28, PROJ-11, PROJ-3 | [Spec](PROJ-37-fileexplorer-aktives-fenster-bleibt.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
