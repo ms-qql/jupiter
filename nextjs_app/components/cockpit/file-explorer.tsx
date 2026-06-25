@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { FilePreview } from "@/components/cockpit/file-preview";
+import { ActiveSessionPanel } from "@/components/cockpit/active-session-panel";
 import { BranchBadge } from "@/components/cockpit/branch-panel";
 import {
   ApiError,
@@ -392,7 +393,14 @@ export function FileExplorer() {
             >
               <ArrowLeft className="size-4" /> Liste
             </Button>
-            <FilePreview key={selectedEntry?.path ?? "none"} entry={selectedEntry} />
+            {/* PROJ-37: Ohne gewählte Datei bleibt rechts das aktive Fenster
+                (laufende Session) stehen statt eines leeren Platzhalters; erst
+                eine Datei mit Vorschau ersetzt es. */}
+            {selectedEntry ? (
+              <FilePreview key={selectedEntry.path} entry={selectedEntry} />
+            ) : (
+              <ActiveSessionPanel />
+            )}
           </div>
         </main>
       </div>
