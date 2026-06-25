@@ -157,6 +157,19 @@ Branch `dev`. Frontend gemäß Tech-Design (B1, iFrame + EmbedTab-Reuse) umgeset
 
 **Offene Abhängigkeit (Handoff):** Backend-Route `GET /terminal/info` (`/abc-backend`) + ttyd/Caddy/`JUPITER_TERMINAL_URL` (`/abc-deploy`) fehlen noch. Bis dahin zeigt der Tab sauber „nicht konfiguriert/erreichbar" (kein Crash) — das Frontend ist mergebar.
 
+## Implementation Notes (Backend — 2026-06-25)
+Dünne Read-Route gemäß Tech-Design D/E, kein DB-/RLS-Bedarf:
+
+- **Route** `backend/app/routes/terminal.py`: `GET /terminal/info` → `{ enabled, url, reachable }` (Schema `backend/app/schemas/terminal.py`, Pydantic v2). In `main.py` via `include_router` registriert. Kein JWT (MVP single-user, vgl. `metrics.py`).
+- **Erreichbarkeits-Probe** `_probe_reachable()`: kurzer, nicht-blockierender `asyncio.open_connection` mit `asyncio.wait_for(timeout)`. Jeder Fehler (Connection refused / Timeout / OSError) → `reachable=false`, **nie** eine Exception nach außen (Dienst-aus ist Normalzustand, kein 500er). `port<=0` → ohne Socket-Versuch `false`.
+- **`enabled`-Gate:** `terminal_url` leer/whitespace → `enabled=false`, `url=null`, `reachable=false`, **ohne** Probe. URL wird getrimmt und kommt **ausschließlich** aus der Config (nie vom Client; keine Shell-Interpolation).
+- **Config** (`config.py`, Prefix `JUPITER_`): `terminal_url=""` (leer=aus), `terminal_probe_host="127.0.0.1"`, `terminal_probe_port=7681`, `terminal_probe_timeout_seconds=1.5`. Neue Env-Vars in `.env.example` dokumentiert.
+- **Tests** `backend/tests/test_proj43_terminal.py` (9, alle grün): Endpoint-Matrix (aus/erreichbar/nicht erreichbar), URL-Trim + Whitespace-only=aus, Probe real gegen ephemeren Listener (true), geschlossener Port (false), Port 0 (false), Timeout→false. `conda run -n Dashboard python -m pytest` ✓.
+
+**Vertrag (Frontend bereits angebunden):** `GET /terminal/info` ohne Parameter → `200 { enabled: bool, url: string|null, reachable: bool }`. Frontend-Client `getTerminalInfo()` (`lib/api.ts`) + Typ `TerminalInfo` (`lib/types.ts`) liegen vor.
+
+**Offen für `/abc-deploy`:** ttyd+tmux als systemd-Dienst (Bind `127.0.0.1:7681`, `tmux new -A -s jupiter`), Caddy-Route (gleich-origin, WebSocket-Upgrade), `JUPITER_TERMINAL_URL` setzen. **Sicherheit:** ttyd-Port von außen nicht erreichbar (in `/abc-qa` prüfen).
+
 ## QA Test Results
 _To be added by /abc-qa_
 

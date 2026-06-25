@@ -283,5 +283,21 @@ class Settings(BaseSettings):
     # bleiben (pollbar), nie unbegrenzt hängen.
     metrics_systemctl_timeout_seconds: float = 5.0
 
+    # --- VPS-Admin Terminal (PROJ-43) ------------------------------------
+    # ttyd-Shell als iFrame im Terminal-Tab der VPS-Admin-Micro-App. Die URL wird
+    # AUSSCHLIESSLICH hier (Backend-Config) gesetzt, nie vom Client — sie ist die
+    # gleich-origin Caddy-Route auf den lokal gebundenen ttyd-Dienst.
+    # Leer = Feature AUS (enabled=false) → das Frontend zeigt sauber „nicht
+    # konfiguriert" statt einer kaputten Fläche; aktiviert wird per /abc-deploy
+    # (JUPITER_TERMINAL_URL setzen, ttyd+Caddy einrichten).
+    terminal_url: str = ""
+    # Erreichbarkeits-Probe: kurzer TCP-Connect auf den LOKAL gebundenen ttyd-Port
+    # (Default 127.0.0.1:7681). Trennt „Dienst aus" (reachable=false → Hinweis+Retry)
+    # von „Einbettung verweigert" (greift dann der iFrame-Fallback im Frontend).
+    # Host/Port kommen NUR aus der Config (keine Client-Eingabe, keine Shell).
+    terminal_probe_host: str = "127.0.0.1"
+    terminal_probe_port: int = 7681
+    terminal_probe_timeout_seconds: float = 1.5
+
 
 settings = Settings()

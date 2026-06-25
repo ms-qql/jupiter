@@ -50,6 +50,7 @@ from .routes import (
     recovery,
     sessions,
     settings as settings_routes,
+    terminal,
     transcription,
     usage,
     vault,
@@ -222,6 +223,7 @@ def create_app(
     app.include_router(transcription.router)
     app.include_router(video_summary.router)
     app.include_router(coordinator.router)
+    app.include_router(terminal.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:
