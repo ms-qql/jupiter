@@ -235,10 +235,10 @@ Backend implementiert in vier Dateien (kein neues DB-Schema — in-memory + Vaul
 
 ### Bugs / Beobachtungen
 - **Keine Critical/High/Medium.**
-- **Low-1 (Design, dokumentiert):** Befunde werden **lazy** eingesammelt — die `review_finding`-Cards auf der Reviewer-Session erscheinen erst, nachdem `GET /sessions/{autor}/reviews` (bzw. `GET /reviews/{id}`) einmal lief. Im UI-Flow löst der `ChallengeDialog`/das `ReviewsPanel` das aus; navigiert man jedoch direkt zur Reviewer-Session, bevor die Übersicht geladen wurde, sind die Cards noch nicht materialisiert. Empfehlung (nicht blockierend): Cockpit pollt `GET /reviews` für laufende Reviewer-Sessions, oder ein Collect-on-WAITING-Hook.
-- **Low-2:** Emittiert ein (fehlverhaltendes) Reviewer-Modell nach Turn-Ende keinen parsebaren JSON-Block und bleibt `waiting` (lebend), zeigt das Panel „Reviewer prüft noch…", bis die Session terminal ist (dann „unvollständig"). Durch den strikten JSON-Prompt unwahrscheinlich; Mitigation vorhanden.
+- ~~**Low-1**~~ **✅ behoben (2026-06-25):** Befunde werden nicht mehr nur lazy beim Lesen eingesammelt. `ChallengeService.start` sammelt sofort ein (instant fertige Reviewer) und startet zusätzlich einen Watcher (`_watch_and_collect`), der auf das Turn-Ende der Reviewer-Session reagiert → die `review_finding`-Cards erscheinen automatisch, auch wenn man direkt zur Reviewer-Session navigiert. Lese-Collect bleibt als idempotenter Fallback. Test: `test_l1_findings_materialize_without_reviews_call`.
+- ~~**Low-2**~~ **✅ behoben (2026-06-25):** `collect` behandelt `waiting` (Turn beendet, Review erwartet keine Folge-Eingabe) als sammelbar — liefert der Reviewer dann keinen parsebaren Block, wird der Review sofort als `incomplete` markiert statt dauerhaft „prüft noch …" anzuzeigen. Test: `test_l2_incomplete_when_waiting_without_json`.
 
-### Production-Ready: **JA** — keine Critical/High-Bugs. Status → Approved.
+### Production-Ready: **JA** — keine Critical/High-Bugs; die zwei Low-Beobachtungen wurden behoben. Status → Approved.
 
 ## Deployment
 _To be added by /abc-deploy_

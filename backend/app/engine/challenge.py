@@ -17,6 +17,7 @@ Vault. Der Reviewer **ändert das Artefakt nie** (Trennung Finden/Umsetzen, anal
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -224,7 +225,39 @@ class ChallengeService:
         )
         self._reviews[review.review_id] = review
         self._rounds[author_session_id] = this_round
-        return review.to_read(stale=False)
+        # L1-Fix: Befunde nicht erst beim Lesen materialisieren. Sofort versuchen
+        # (instant fertige Reviewer, z. B. Tests) UND einen Watcher starten, der auf das
+        # Turn-Ende der Reviewer-Session reagiert — so erscheinen die review_finding-Cards
+        # automatisch, auch wenn der Nutzer direkt zur Reviewer-Session navigiert.
+        self.collect(review.review_id)
+        self._spawn_watcher(review.review_id)
+        return review.to_read(stale=self._is_stale(review))
+
+    def _spawn_watcher(self, review_id: str) -> None:
+        """Hängt einen Hintergrund-Task an, der die Reviewer-Session bis zum Turn-Ende
+        beobachtet und dann genau einmal einsammelt. Ohne laufenden Event-Loop (z. B.
+        synchrone Aufrufe) entfällt der Watcher — der sofortige ``collect`` + die Lese-
+        Fallbacks greifen weiterhin."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._watch_and_collect(review_id))
+
+    async def _watch_and_collect(self, review_id: str) -> None:
+        runtime = self._manager.get(review_id)
+        review = self._reviews.get(review_id)
+        if runtime is None or review is None:
+            return
+        queue = runtime.subscribe()
+        try:
+            while not (review.collected or review.incomplete):
+                self.collect(review_id)  # idempotent; no-op solange running
+                if review.collected or review.incomplete:
+                    break
+                await queue.get()  # auf den nächsten State-/Event-Tick warten
+        finally:
+            runtime.unsubscribe(queue)
 
     # --- Befunde einsammeln (lazy) -----------------------------------------
 
@@ -245,17 +278,18 @@ class ChallengeService:
             review.incomplete = True
             return review
 
-        status = runtime.state.status
         # Solange der Reviewer noch denkt/läuft: noch nichts einsammeln.
-        if status in ("starting", "running"):
+        if runtime.state.status in ("starting", "running"):
             return review
 
+        # Ab hier ist der Turn beendet (waiting/done/error). Bei einer Review-Session
+        # erwartet niemand eine Folge-Eingabe → „waiting" zählt als fertig (L2-Fix):
+        # liefert der Reviewer dann keinen parsebaren Block, ist der Review unvollständig
+        # (statt dauerhaft „prüft noch …" anzuzeigen).
         text = self._assistant_text(runtime)
         findings = self._parse_findings(text)
         if findings is None:
-            # Kein verwertbarer Output (Tod/Timeout ohne JSON) → unvollständig markieren.
-            if status in ("done", "error"):
-                review.incomplete = True
+            review.incomplete = True
             return review
 
         review.findings = findings

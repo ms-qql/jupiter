@@ -404,3 +404,29 @@ def test_resolve_finding_unknown_review_404(client: TestClient):
     """Red-Team: Befund-Auflösung gegen ein unbekanntes Review → 404 (keine Fremd-Steuerung)."""
     r = client.post("/reviews/nope/findings/finding-1", json={"action": "verwerfen"})
     assert r.status_code == 404
+
+
+def test_l1_findings_materialize_without_reviews_call(client: TestClient):
+    """L1-Fix: Befund-Cards erscheinen auf der Reviewer-Session OHNE vorherigen
+    GET /reviews — start() sammelt sofort ein (+ Watcher für den Async-Fall)."""
+    author = _author(client)
+    review_id = client.post(
+        f"/sessions/{author}/challenge", json={"artifact_pointer": "x.md"}
+    ).json()["review_id"]
+    detail = client.get(f"/sessions/{review_id}").json()  # KEIN GET /reviews davor
+    types = {c["card_type"] for c in detail["pending_decisions"]}
+    assert "review_finding" in types
+
+
+def test_l2_incomplete_when_waiting_without_json(client: TestClient, state):
+    """L2-Fix: ein lebender (waiting) Reviewer ohne parsebaren Block gilt als
+    unvollständig — kein dauerhaftes „prüft noch …" (ohne Stoppen der Session)."""
+    state["reviewer_output"] = "nur Fließtext, kein JSON-Block"
+    author = _author(client)
+    review_id = client.post(
+        f"/sessions/{author}/challenge", json={"artifact_pointer": "x.md"}
+    ).json()["review_id"]
+    # Reviewer lebt (waiting), wurde NICHT gestoppt.
+    assert client.app.state.manager.get(review_id).driver.is_alive is True
+    rv = client.get(f"/reviews/{review_id}").json()
+    assert rv["incomplete"] is True and rv["collected"] is False
