@@ -54,12 +54,16 @@ Abgrenzung (Klärung 2026-06-25): *Micro-Apps* = kleine Einzel-Tools (Excalidraw
 **Erstellt:** 2026-06-25 · **Stack:** Next.js 16 (App Router) Frontend + FastAPI/`engines.yaml`-Registry · **Branch:** dev
 
 ### Überblick / Grundhaltung
-„Micro-Apps" ist **kein neuer Mechanismus**, sondern die **zweite Anwendung desselben Musters** wie PROJ-39 (Orchestration) — nur mit `group: micro` statt `group: orchestration`. Wiederverwendet werden exakt dieselben drei Bausteine:
-1. **iFrame-Einbettung** (`embed-tab.tsx` — iframe + Sandbox + immer sichtbarer „In neuem Tab öffnen"-Fallback),
-2. **zentrale Registry** `engines.yaml`, erweitert um das (mit PROJ-39 gemeinsame) `group`-Feld,
-3. **Sidebar-Sektions-Gerüst** PROJ-38 (`sidebar-config.ts` + Konfig-Panel für Sichtbarkeit/Reihenfolge/RESET).
+„Micro-Apps" ist eine **Sammel-Sektion für kleine Einzel-Tools**. Anders als die Orchestration-Sektion (PROJ-39, ausschließlich iFrames fremder Apps) hat eine Micro-App **zwei mögliche Naturen**:
+1. **Eingebettet (`kind: iframe`)** — eine externe App im iFrame, z. B. Excalidraw (`https://excalidraw.com`). Nutzt exakt die PROJ-39-/PROJ-18-Mechanik (Registry-Eintrag + `embed-tab.tsx` + Fallback).
+2. **Nativ (`kind: native`)** — eine **direkt in Jupiter programmierte** App (Next.js/React-Komponente im Repo), die **ohne iFrame** im Hauptbereich gerendert wird. Beispiel-Kandidaten: Rechner, Notiz-Snippet, kleines internes Werkzeug. **Heute noch keine native App vorhanden** — das Modell wird aber von Anfang an mitgedacht, damit native Micro-Apps später ohne Architektur-Umbau dazukommen.
 
-**Entscheidender Unterschied zu PROJ-39:** Die erste Micro-App, **Excalidraw**, liegt bereits unter `https://excalidraw.com` und **erlaubt das Framing** (kein `X-Frame-Options`/Mixed-Content). → **Keine Caddy-/DNS-/Infra-Arbeit nötig.** Reine **Frontend + Config**-Änderung. Der einzige neue Bau ist die Vollbild-Route + die zweite Sidebar-Sektion; beides erbt PROJ-40 von der PROJ-39-Mechanik.
+Wiederverwendet werden trotzdem dieselben Bausteine wie bei PROJ-39:
+1. **zentrale Registry** `engines.yaml`, erweitert um das (mit PROJ-39 gemeinsame) `group`-Feld — listet alle Micro-Apps als Metadaten,
+2. **Sidebar-Sektions-Gerüst** PROJ-38 (`sidebar-config.ts` + Konfig-Panel für Sichtbarkeit/Reihenfolge/RESET) — identisch für beide Naturen,
+3. für eingebettete Apps zusätzlich die **iFrame-Einbettung** (`embed-tab.tsx` + „In neuem Tab öffnen"-Fallback).
+
+**Entscheidender Unterschied zu PROJ-39:** Die erste Micro-App, **Excalidraw**, ist eingebettet, liegt bereits unter `https` und **erlaubt das Framing** → **keine Caddy-/DNS-/Infra-Arbeit nötig.** Reine **Frontend + Config**-Änderung. Neuer Bau: die Vollbild-Route + die zweite Sidebar-Sektion + die **native Render-Verzweigung** (siehe D).
 
 ### A) Komponenten-Struktur (UI-Baum)
 ```
@@ -73,17 +77,21 @@ SessionRail (session-rail.tsx, PROJ-38-Sektionsgerüst)
              Sichtbarkeit/Reihenfolge über PROJ-38-Konfig-Panel)
 
 Hauptbereich-Route  /apps/[key]   ◄── NEU (Vollbild)
-└── MicroAppView
-    ├── Kopfzeile: App-Label + „In neuem Tab öffnen" (immer sichtbar)
-    ├── iframe (Vollhöhe, Sandbox aus Registry)   ← wiederverwendete embed-Logik
-    └── Fallback-/Hinweis-Fläche
-        ├── Einbettung verweigert → Fallback-Button (bei Excalidraw nicht zu erwarten)
-        └── App nicht erreichbar → Offline-Hinweis + Retry/Neuer Tab
+└── MicroAppView  (verzweigt nach kind)
+    ├── kind == "iframe":
+    │   ├── Kopfzeile: App-Label + „In neuem Tab öffnen" (immer sichtbar)
+    │   ├── iframe (Vollhöhe, Sandbox aus Registry)   ← wiederverwendete embed-Logik
+    │   └── Fallback-/Hinweis-Fläche (verweigert / offline → Retry/Neuer Tab)
+    └── kind == "native":
+        └── <NativeMicroApp/>  ← React-Komponente aus Frontend-Komponenten-Registry
+            (kein iFrame, kein Fallback-Button, lädt Jupiter-intern)
 ```
 > **Routen-Angleichung mit PROJ-39:** PROJ-39 nutzt `/orchestration/[key]`. PROJ-40 nutzt analog `/apps/[key]` (Spec-Vorgabe). Beide rendern dieselbe vollhöhen-`EmbedTab`-Variante — die Route ist nur ein dünner Wrapper, der den Registry-Eintrag per `key` lädt und einbettet. Empfehlung: die in PROJ-39 entstehende Vollbild-View als gemeinsame Komponente (`<EmbeddedAppView engine={…} />`) nutzen, damit `/apps/[key]` und `/orchestration/[key]` sich denselben Renderer teilen (kein Duplikat).
 
 ### B) Datenmodell (Klartext — kein DB-Schema)
-Kein Backend-DB-Schema. Eine Micro-App ist ein **Registry-Eintrag** in `backend/config/engines.yaml` — der **bestehende `whiteboard`-Eintrag** (`kind: iframe`, `url: https://excalidraw.com`, `sandbox: …`) erhält **nur ein neues Feld**:
+Kein Backend-DB-Schema. Jede Micro-App ist ein **Metadaten-Eintrag** in `backend/config/engines.yaml` (Label, Icon, Sichtbarkeit, Platzierung) — egal ob eingebettet oder nativ. Der **Code** einer nativen App liegt im Repo, **nicht** in der YAML (siehe D).
+
+**Eingebettet** — der **bestehende `whiteboard`-Eintrag** erhält **nur ein neues Feld**:
 ```
 whiteboard (bestehend):
 - key      "whiteboard"          → Routen-Parameter /apps/whiteboard
@@ -94,9 +102,20 @@ whiteboard (bestehend):
 - url      "https://excalidraw.com"  (unverändert)
 - sandbox  (unverändert)
 ```
-Registry wird weiterhin live (mtime-geprüft) geladen — weitere Micro-Apps kommen als reine Datenzeile dazu (Akzeptanzkriterium „zentral konfiguriert, kein Wildwuchs").
 
-> **`group`-Wert mit PROJ-39 abstimmen:** Beide Features führen dasselbe Feld ein. Verbindlich: `group: "orchestration" | "micro" | null` (`null`/fehlt = klassisches Werkzeug). Wer zuerst implementiert, legt das Feld an; der zweite nutzt es nur. Genau **eine** Quelle/`group` entscheidet die Platzierung → keine Doppelregistrierung (Edge Case).
+**Nativ** — künftige in Jupiter programmierte App, Beispiel-Form:
+```
+rechner (Beispiel, noch nicht gebaut):
+- key      "rechner"             → Routen-Parameter /apps/rechner
+- label    "Rechner"
+- kind     "native"   ◄── NEU: kein iFrame; Render über Frontend-Komponenten-Registry
+- group    "micro"
+- icon     lucide-Name (optional)
+- (kein url, kein sandbox — der Code lebt im Repo, verknüpft per key)
+```
+Registry wird weiterhin live (mtime-geprüft) geladen — weitere Micro-Apps kommen als reine Metadaten-Zeile dazu (Akzeptanzkriterium „zentral konfiguriert, kein Wildwuchs").
+
+> **`group`-Wert mit PROJ-39 abstimmen:** Beide Features führen dasselbe Feld ein. Verbindlich: `group: "orchestration" | "micro" | null` (`null`/fehlt = klassisches Werkzeug). `kind` wird um `"native"` erweitert (bisher `engine | iframe | launch`). Wer zuerst implementiert, legt `group` an; PROJ-40 ergänzt `kind: native`. Genau **eine** Quelle/`group` entscheidet die Platzierung → keine Doppelregistrierung (Edge Case).
 
 ### C) API-Shape (kein neuer Endpunkt)
 - `GET /engines` (bestehend) liefert künftig `group` + `icon` je Eintrag (dieselbe Schema-Erweiterung wie PROJ-39 — **nur einmal** nötig: `backend/app/schemas/engines.py` `EngineRead`, Frontend-Typ `nextjs_app/lib/types.ts`).
@@ -104,37 +123,52 @@ Registry wird weiterhin live (mtime-geprüft) geladen — weitere Micro-Apps kom
   - **Micro-Apps-Sektion:** `group === "micro"`.
   - **Werkzeuge-Tab (`tools-panel.tsx`):** bisheriger iFrame-Filter **plus** `group !== "micro"` (und `!== "orchestration"`) → Excalidraw verschwindet aus „Werkzeuge". Genau hier liegt die „Migration".
 
-### D) „Werkzeuge"-Tab nach Migration (Edge Case entschieden)
+### D) Native Micro-Apps — Render-Verzweigung & Komponenten-Registry
+Eine native App ist **Code im Repo**, nicht aus YAML ladbar. Darum gibt es zwei Quellen, die das Frontend zu **einer** Micro-App-Liste zusammenführt:
+- **Metadaten** (Label, Icon, `group`, `kind`, Reihenfolge) kommen aus `engines.yaml` über `GET /engines` — einheitlich für `iframe` **und** `native`.
+- **Der Code** einer nativen App liegt unter `nextjs_app/components/microapps/<key>/` und wird in einer **Frontend-Komponenten-Registry** registriert: `nextjs_app/lib/microapps-registry.ts` als Map `key → React.LazyExoticComponent` (Lazy-Import → kein Bundle-Aufblähen, App lädt erst beim Öffnen).
+
+**Render-Verzweigung in `/apps/[key]`:** Die Route holt den Registry-Eintrag per `key` und schaltet auf `kind`:
+- `kind === "iframe"` → vollhöhen-`EmbeddedAppView` (Sandbox + Fallback, wie PROJ-39).
+- `kind === "native"` → schlägt `key` in `microapps-registry.ts` nach und rendert die Lazy-Komponente vollflächig (in `<Suspense>` mit Lade-/Fehlerzustand). Fehlt der `key` in der Registry → sauberer „App nicht verfügbar"-Hinweis, kein Crash.
+
+So bleibt die **Sidebar-Sektion + das Konfig-Panel (PROJ-38) identisch** für beide Naturen — sie sehen nur Metadaten; erst die Route entscheidet iFrame vs. native.
+
+### E) „Werkzeuge"-Tab nach Migration (Edge Case entschieden)
 Der Werkzeuge-Tab zeigt heute Effizienz-Tools, Launches **und** iFrames. Nach Herausfiltern von Excalidraw bleiben die übrigen Engines/Launches/Tools erhalten → **Tab bleibt funktionsfähig, nicht leer**. Entscheidung: **Tab NICHT ausblenden**; falls die iFrame-Untersektion dadurch leer wird, deren Überschrift einfach weglassen (bestehendes Render-Muster: leere Filter-Arrays erzeugen keine Sektion). Kein Sonder-Leerzustand nötig, solange andere Tools existieren.
 
-### E) Tech-Entscheidungen (WARUM)
+### F) Tech-Entscheidungen (WARUM)
+- **Micro-App = `iframe` ODER `native`:** Micro-Apps sind nicht auf Einbettung beschränkt — kleine, direkt in Jupiter programmierte Tools sind ausdrücklich vorgesehen. Eine native App rendert ohne iFrame (kein Sandbox-Overhead, voller App-Kontext, kein Mixed-Content/Framing-Thema).
+- **Metadaten in YAML, Code im Repo, verknüpft per `key`:** YAML kann keinen Code tragen. Die Frontend-Komponenten-Registry (`microapps-registry.ts`, Lazy-Import) hält den Code; `engines.yaml` nur Label/Icon/Reihenfolge. So bleibt die zentrale Konfig + das Konfig-Panel für beide Naturen gleich, ohne Code in Daten zu pressen.
 - **Gemeinsames `group`-Feld statt zweiter Registry:** ein Mechanismus, zwei Sektionen — Sidebar + Filter werten nur das Feld aus. Mit PROJ-39 abgestimmt.
 - **Excalidraw nur „verschieben", nicht neu anlegen:** der Eintrag existiert (`whiteboard`); wir ändern **eine Zeile** (`group: micro`). Verhindert Doppelregistrierung by design.
 - **Eigene Vollbild-Route `/apps/[key]` statt Tab:** teilbare URL, saubere History; Sektion bleibt per Direkt-URL erreichbar, auch wenn im Konfig-Panel ausgeblendet (Edge Case „kein verwaister Zustand").
 - **iFrame-Logik wiederverwenden:** `embed-tab.tsx` kapselt Sandbox + Fallback schon; die Route nutzt die vollhöhen-Variante aus PROJ-39 statt eigener iframe-Logik.
 - **„In neuem Tab öffnen" immer sichtbar:** Garantie gegen die „leere Fläche", falls je eine künftige Micro-App das Framing verweigert (`onError` feuert bei `X-Frame-Options` unzuverlässig). Bei Excalidraw selbst nicht relevant, aber Teil des wiederverwendeten Bausteins.
-- **Keine Infra:** Excalidraw ist https + framing-offen → der Caddy-/DNS-Block aus PROJ-39 entfällt hier vollständig.
+- **Keine Infra:** Excalidraw ist https + framing-offen → der Caddy-/DNS-Block aus PROJ-39 entfällt hier vollständig. (Eine künftige native App ist ohnehin Jupiter-intern und braucht keine Infra.)
 
-### F) Abhängigkeiten (Pakete)
+### G) Abhängigkeiten (Pakete)
 - **Keine neuen Pakete.** Icon aus bestehendem `lucide-react` (z. B. `PenTool`/`Pencil`). Sidebar-Sektion + Konfig-Panel liefert PROJ-38; Vollbild-View + `group`-Feld liefert/teilt PROJ-39.
 
-### G) Bau-Reihenfolge / Hand-offs
+### H) Bau-Reihenfolge / Hand-offs
 1. **Voraussetzung:** PROJ-38 (Sektionsgerüst + Konfig-Panel) steht. **Reihenfolge mit PROJ-39 koordinieren:** das `group`+`icon`-Schemafeld und die gemeinsame Vollbild-View nur **einmal** bauen. Idealerweise PROJ-39 zuerst (legt Feld + `<EmbeddedAppView>` an), PROJ-40 hängt sich dran. Falls PROJ-40 zuerst läuft: dann legt PROJ-40 beides an.
 2. **Backend (winzig):** `group` + `icon` in `EngineRead`-Schema (falls nicht schon durch PROJ-39); `whiteboard`-Eintrag in `engines.yaml` um `group: micro` (+ optional `icon`) ergänzen.
 3. **Frontend:**
    - `EngineRead`-Typ um `group`/`icon` erweitern (falls nicht schon durch PROJ-39).
    - `sidebar-config.ts`: `SIDEBAR_SECTIONS` um `micro` (Label „Micro-Apps", Order **unter** `orchestration`) ergänzen; Sidebar-Eintrag rendert die `getEngines()`-Liste gefiltert auf `group === "micro"` als Links auf `/apps/[key]`.
    - `tools-panel.tsx`: iFrame-Filter um `&& e.group !== "micro"` (+ `!== "orchestration"`) ergänzen.
-   - Route `app/(cockpit)/apps/[key]/page.tsx`: lädt Engine per `key`, rendert die vollhöhen-`EmbeddedAppView`.
-4. **QA:** Micro-Apps-Sektion erscheint unter Orchestration; Excalidraw lädt im Vollbild unter `/apps/whiteboard`; Excalidraw **nicht mehr** im Werkzeuge-Tab, Tab sonst intakt; Toggle/Sort via Konfig-Panel; Direkt-URL bei ausgeblendeter Sektion; „In neuem Tab"-Fallback vorhanden.
+   - Route `app/(cockpit)/apps/[key]/page.tsx`: lädt Engine per `key`, **verzweigt nach `kind`** — `iframe` → vollhöhen-`EmbeddedAppView`; `native` → Lazy-Komponente aus `microapps-registry.ts` in `<Suspense>`.
+   - `nextjs_app/lib/microapps-registry.ts` anlegen (Map `key → lazy component`) — vorerst leer/nur Gerüst, da noch keine native App existiert; Ordner-Konvention `components/microapps/<key>/` dokumentieren.
+4. **QA:** Micro-Apps-Sektion erscheint unter Orchestration; Excalidraw (iframe) lädt im Vollbild unter `/apps/whiteboard`; Excalidraw **nicht mehr** im Werkzeuge-Tab, Tab sonst intakt; Toggle/Sort via Konfig-Panel; Direkt-URL bei ausgeblendeter Sektion; „In neuem Tab"-Fallback vorhanden; **`kind: native`-Pfad** mit einer Dummy-Komponente verifizierbar (rendert ohne iFrame; unbekannter `key` → sauberer Hinweis).
 
 **Zuständigkeit:** Registry/Schema → Backend Developer (klein) · Sektion + Route + Filter → Frontend Developer · Prüfung → QA Engineer. **Keine** Infra/Deploy-Sonderarbeit (anders als PROJ-39).
 
-### H) Referenz-Dateien (Ist-Stand, CodeGraph-verifiziert)
+### I) Referenz-Dateien (Ist-Stand, CodeGraph-verifiziert)
 - Sidebar-Registry: `nextjs_app/lib/sidebar-config.ts` (`SIDEBAR_SECTIONS`, `SIDEBAR_ITEMS`)
 - Konfig-Panel/Prefs: `nextjs_app/components/cockpit/sidebar-config-panel.tsx`, `…/sidebar-prefs-provider.tsx` (localStorage `jupiter.sidebar.v1`), `…/session-rail.tsx`
 - Registry/iFrame: `backend/config/engines.yaml` (Eintrag `whiteboard`), `nextjs_app/components/cockpit/tools-panel.tsx` (Filter `kind === "iframe"`), `…/embed-tab.tsx` (Sandbox + Fallback)
 - Schema/Typ: `backend/app/schemas/engines.py` (`EngineRead`), `nextjs_app/lib/types.ts`
+- **NEU (native):** `nextjs_app/lib/microapps-registry.ts` (key → lazy component), `nextjs_app/components/microapps/<key>/` (App-Code), Route `nextjs_app/app/(cockpit)/apps/[key]/page.tsx` (kind-Verzweigung)
 
 ## QA Test Results
 _To be added by /qa_
