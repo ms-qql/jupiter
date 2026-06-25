@@ -451,8 +451,10 @@ export interface SessionCreate {
 // --- PROJ-18: Weitere Engines + iFrame/Launch ------------------------------
 
 /** Integrations-Tiefe eines Registry-Eintrags: steuerbare Session, eingebettete
- *  Web-App (iFrame) oder reiner externer Startknopf. */
-export type EngineKind = "engine" | "iframe" | "launch";
+ *  Web-App (iFrame), reiner externer Startknopf oder — PROJ-40 — eine nativ in
+ *  Jupiter programmierte Micro-App (Render über die Frontend-Komponenten-Registry
+ *  `lib/microapps-registry.ts`, verknüpft per `key`; kein iFrame). */
+export type EngineKind = "engine" | "iframe" | "launch" | "native";
 
 /** Ein Eintrag aus GET /engines (spiegelt backend/app/schemas/engines.py EngineRead).
  *  Engine-agnostisch + secret-frei: kein API-Key, kein argv. */
@@ -473,6 +475,10 @@ export interface EngineRead {
   sandbox: string | null;
   /** Launch-Ziel (kind=launch). */
   target: string | null;
+  /** PROJ-39: Gruppe — z. B. „orchestration" (Sidebar-Sektion) | „micro". null = ungruppiert. */
+  group: string | null;
+  /** PROJ-39: lucide-Icon-Name für die Sidebar (sonst Default-Icon). */
+  icon: string | null;
 }
 
 /** Antwort von GET /engines — alle Engines/iFrames/Launch-Einträge + Herkunft/Warnung. */

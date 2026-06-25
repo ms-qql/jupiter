@@ -24,6 +24,8 @@ import { DeleteSessionButton } from "./delete-session-button";
 import { NewSessionDialog } from "./new-session-dialog";
 import { SidebarConfigButton } from "./sidebar-config-panel";
 import { useSidebarPrefs } from "./sidebar-prefs-provider";
+import { useOrchestrationApps } from "./use-orchestration-apps";
+import { useMicroApps } from "./use-microapps";
 import { useNow, useSessions } from "./sessions-provider";
 
 const RAIL_LIMIT = 10;
@@ -42,11 +44,21 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
   const now = useNow();
   const [showArchived, setShowArchived] = useState(false);
   const { visibleItems } = useSidebarPrefs();
+  // PROJ-39: lädt die Orchestration-Apps aus der Registry und meldet sie als
+  // dynamische Sidebar-Einträge an (auch wenn die Sektion gerade ausgeblendet ist —
+  // sonst fehlten sie im Konfig-Panel zum Wieder-Einblenden).
+  useOrchestrationApps();
+  // PROJ-40: dito für Micro-Apps (group=micro; eingebettet ODER nativ).
+  useMicroApps();
 
   // PROJ-38: Workspace-Einträge + ob die Session-Sektion sichtbar ist —
   // beides aus der Nutzer-Präferenz (localStorage), Reihenfolge inklusive.
   const workspaceItems = visibleItems("workspace");
   const sessionsVisible = visibleItems("sessions").length > 0;
+  // PROJ-39: sichtbare Orchestration-Einträge (group=orchestration aus der Registry).
+  const orchestrationItems = visibleItems("orchestration");
+  // PROJ-40: sichtbare Micro-App-Einträge (group=micro aus der Registry).
+  const microAppItems = visibleItems("micro");
 
   // Aktive Sessions in der Rail; beendete (done) wandern ins ausklappbare Archiv.
   const activeSorted = sortForRail(sessions.filter((s) => s.status !== "done"));
@@ -171,6 +183,73 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
       ) : (
         // Sessions ausgeblendet → Platzhalter, damit der Footer unten bleibt.
         <div className="flex-1" />
+      )}
+
+      {/* PROJ-39: Orchestration-Sektion (unter „Aktive Sessions"). Einträge aus der
+          Registry; Klick öffnet die Vollbild-iFrame-Route. Header nur, wenn
+          mindestens ein Eintrag sichtbar ist — Zugang zum Wieder-Einblenden bleibt
+          über das Konfig-Panel der Workspace-Überschrift. */}
+      {orchestrationItems.length > 0 && (
+        <div className="border-t border-border pt-1">
+          <div className="px-4 pb-1 pt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {sectionLabel("orchestration")}
+          </div>
+          <div className="px-2 pb-1">
+            {orchestrationItems.map((item) => {
+              const Icon = item.icon;
+              const href = item.href ?? "/";
+              return (
+                <Link
+                  key={item.key}
+                  href={href}
+                  onClick={onItemClick}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+                    pathname.startsWith(href)
+                      ? "bg-accent text-accent-foreground"
+                      : "text-foreground/90 hover:bg-accent/50",
+                  )}
+                >
+                  <Icon className="size-4 shrink-0 text-muted-foreground" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* PROJ-40: Micro-Apps-Sektion (UNTER „Orchestration"). Einträge aus der
+          Registry (group=micro); Klick öffnet die Vollbild-Route /apps/[key], die
+          selbst nach kind verzweigt (iframe ⇒ EmbedTab, native ⇒ Komponente). */}
+      {microAppItems.length > 0 && (
+        <div className="border-t border-border pt-1">
+          <div className="px-4 pb-1 pt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {sectionLabel("micro")}
+          </div>
+          <div className="px-2 pb-1">
+            {microAppItems.map((item) => {
+              const Icon = item.icon;
+              const href = item.href ?? "/";
+              return (
+                <Link
+                  key={item.key}
+                  href={href}
+                  onClick={onItemClick}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+                    pathname.startsWith(href)
+                      ? "bg-accent text-accent-foreground"
+                      : "text-foreground/90 hover:bg-accent/50",
+                  )}
+                >
+                  <Icon className="size-4 shrink-0 text-muted-foreground" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       <div className="border-t border-border px-4 py-2">

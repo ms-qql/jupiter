@@ -31,7 +31,11 @@ from .adapters import VALID_ADAPTERS
 log = logging.getLogger(__name__)
 
 ENGINE, IFRAME, LAUNCH = "engine", "iframe", "launch"
-VALID_KINDS: frozenset[str] = frozenset({ENGINE, IFRAME, LAUNCH})
+# PROJ-40: ``kind: native`` — eine nativ in Jupiter programmierte Micro-App. Kein
+# Session-Lifecycle, keine url/target: der Code lebt im Frontend (microapps-registry.ts),
+# verknüpft per ``key``; die Registry trägt nur die Metadaten (label/icon/group).
+NATIVE = "native"
+VALID_KINDS: frozenset[str] = frozenset({ENGINE, IFRAME, LAUNCH, NATIVE})
 
 # Treiber-Arten für ``kind: engine``.
 DRIVER_CLAUDE, DRIVER_GENERIC_CLI, DRIVER_OPENAI = "claude", "generic_cli", "openai"
@@ -72,6 +76,11 @@ class EngineProfile:
     sandbox: str | None = None
     # kind == launch:
     target: str | None = None
+    # PROJ-39: Gruppierung (z. B. "orchestration" | "micro") + optionales Sidebar-Icon
+    # (lucide-Name). Trennt Orchestration-Apps (PROJ-39) von Micro-Apps (PROJ-40);
+    # das Frontend filtert die Engine-Liste clientseitig auf `group`.
+    group: str | None = None
+    icon: str | None = None
 
     @property
     def is_claude(self) -> bool:
@@ -89,7 +98,7 @@ class EngineProfile:
 
     def availability(self) -> tuple[bool, str | None]:
         """``(verfügbar, grund_wenn_nicht)`` — Frontend graut aus statt zu crashen."""
-        if self.kind in (IFRAME, LAUNCH):
+        if self.kind in (IFRAME, LAUNCH, NATIVE):
             return True, None
         if self.driver == DRIVER_CLAUDE:
             if shutil.which(settings.claude_bin) is None:
@@ -134,6 +143,8 @@ class EngineProfile:
             "url": self.url,
             "sandbox": self.sandbox,
             "target": self.target,
+            "group": self.group,
+            "icon": self.icon,
         }
 
 
@@ -203,6 +214,16 @@ def _coerce_profile(entry: dict) -> EngineProfile:
         prof.target = entry.get("target")
         if not prof.target:
             raise ValueError(f"Launch-Engine „{key}“: `target` fehlt.")
+    elif kind == NATIVE:
+        # PROJ-40: keine Backend-Pflichtfelder — der Code liegt im Frontend
+        # (microapps-registry.ts), verknüpft per `key`. Nur Metadaten (group/icon).
+        pass
+
+    # PROJ-39: optionale Gruppierung + Sidebar-Icon (kind-unabhängig, v. a. für iframe).
+    group = entry.get("group")
+    prof.group = str(group).strip() if group else None
+    icon = entry.get("icon")
+    prof.icon = str(icon).strip() if icon else None
     return prof
 
 

@@ -1,6 +1,6 @@
 # PROJ-40: Sidebar-Sektion „Micro-Apps" + Excalidraw-Migration aus „Werkzeuge"
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -169,6 +169,51 @@ Der Werkzeuge-Tab zeigt heute Effizienz-Tools, Launches **und** iFrames. Nach He
 - Registry/iFrame: `backend/config/engines.yaml` (Eintrag `whiteboard`), `nextjs_app/components/cockpit/tools-panel.tsx` (Filter `kind === "iframe"`), `…/embed-tab.tsx` (Sandbox + Fallback)
 - Schema/Typ: `backend/app/schemas/engines.py` (`EngineRead`), `nextjs_app/lib/types.ts`
 - **NEU (native):** `nextjs_app/lib/microapps-registry.ts` (key → lazy component), `nextjs_app/components/microapps/<key>/` (App-Code), Route `nextjs_app/app/(cockpit)/apps/[key]/page.tsx` (kind-Verzweigung)
+
+## Implementation Notes (Frontend, 2026-06-25)
+Umgesetzt auf Branch `dev` (Next.js, kein Flutter). Spiegelt das bereits gebaute
+PROJ-39-Muster für `group: micro` und ergänzt den `native`-Pfad.
+
+**Stack-Realität:** Die PROJ-39-Foundation existierte schon im Code (group/icon in
+`EngineRead`, dynamische Sidebar-Items, `embed-tab` mit `fullHeight`, Route
+`/orchestration/[key]`). PROJ-40 hängt sich daran an — kein Schema-/EmbedTab-Neubau.
+
+**Geänderte/neue Dateien:**
+- `backend/config/engines.yaml`: `whiteboard` → `group: micro` + `icon: pentool`
+  (= die Migration; verschiebt Excalidraw aus „Werkzeuge" in die Micro-Apps-Sektion).
+- `backend/app/engine/registry.py`: neues `kind: native` (in `VALID_KINDS`, eigener
+  Parse-Zweig ohne url/target-Pflicht, `availability → (True, None)`).
+  `EngineRead`-Schema hatte `group`/`icon` bereits (PROJ-39) — keine Schema-Änderung.
+- `lib/types.ts`: `EngineKind` um `"native"` erweitert.
+- `lib/sidebar-config.ts`: Sektion `micro` („Micro-Apps", unter „Orchestration") +
+  `microAppItemKey`/`microAppItemDef` (href `/apps/[key]`), `pentool`-Icon ergänzt.
+- `lib/microapps-registry.ts` **(neu)**: Frontend-Komponenten-Registry `key → lazy
+  component` für native Apps; vorerst leer (Excalidraw ist iframe). `resolveMicroApp`.
+- `components/cockpit/use-microapps.tsx` **(neu)**: lädt `group=micro` (kind iframe
+  **und** native) aus GET /engines, meldet sie als dynamische Sidebar-Items an.
+- `components/cockpit/sidebar-prefs-provider.tsx`: `registerDynamicItems` ist jetzt
+  **namespaced** (`(namespace, items)`), dynamische Items pro Namespace gespeichert —
+  sonst hätten sich Orchestration und Micro gegenseitig überschrieben.
+  Caller `use-orchestration-apps.tsx` mitangepasst.
+- `components/cockpit/session-rail.tsx`: `useMicroApps()` gemountet + Micro-Apps-
+  Sektion unter Orchestration gerendert.
+- `components/cockpit/tools-panel.tsx`: iFrame-Filter um `&& e.group !== "micro"` →
+  Excalidraw erscheint nicht mehr im Werkzeuge-Tab (Orchestration bleibt dort, wie
+  in PROJ-39 entschieden).
+- `app/(cockpit)/apps/[key]/page.tsx` **(neu)**: Vollbild-Route, verzweigt nach
+  `kind` — iframe ⇒ `EmbedTab fullHeight` (+ Mixed-Content-Guard); native ⇒
+  `NativeMicroAppHost` (Modul-Scope-Komponente, `resolveMicroApp` + `<Suspense>`,
+  unbekannter key → sauberer Hinweis). Lint-konform (abgeleiteter Loading-State,
+  `createElement` statt JSX für die call-abgeleitete native Komponente).
+
+**Verifikation:** `tsc --noEmit` sauber (nur vorbestehender md-tree.test-Fehler),
+ESLint 0 Errors, Vitest 23/23 grün (sidebar-prefs/-config, tools-panel, embed-tab),
+Backend `pytest -k "registr or engine"` 29/29 grün. Smoke: `whiteboard` lädt als
+`iframe/micro/pentool/available`; `kind: native` parst (session=False, available).
+
+**Offen für QA:** Klick-Flow im Browser (Sektion erscheint, /apps/whiteboard lädt
+Excalidraw vollbild, Werkzeuge-Tab ohne Excalidraw intakt), Konfig-Panel-Toggle/Sort,
+Direkt-URL bei ausgeblendeter Sektion, native-Pfad mit Dummy-Komponente.
 
 ## QA Test Results
 _To be added by /qa_
