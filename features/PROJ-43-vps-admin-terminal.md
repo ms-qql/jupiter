@@ -1,6 +1,6 @@
 # PROJ-43: VPS-Admin — Terminal (Shell-Zugriff)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -227,4 +227,5 @@ Keine Critical/High/Medium/Low-Bugs im gelieferten Code gefunden.
 **Freigabe an Deploy mit Auflage:** Der Sicherheits-Check „ttyd-Port nicht öffentlich" (Punkt 1 oben) ist beim Deploy zwingend zu verifizieren, bevor das Feature live geht.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-25 · **Version:** 0.16.0 · **Tag:** v0.16.0 · **URL:** https://jupiter.auxevo.tech
+Host-native Dev-VPS (systemd + Caddy, kein Dokploy), Auto-Deploy via GitHub-Webhook auf `main`. Promotion `dev → main` als Sammel-Release (mit PROJ-22 + PROJ-23).

@@ -1,6 +1,6 @@
 # PROJ-22: Multi-Agent-Dispatch-Schicht + Vertrag-zuerst/Koordinator
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-25
 **Baustein:** #17, #18
@@ -329,4 +329,5 @@ Pfad-Scope, Fremd-Steuerung, Injection in INDEX-Parsing/Vault-Pfade, Input-Limit
 0 Regression. Vor Deploy nur noch ein kurzer Browser-Smoke der Cockpit-Flotten-Gruppierung (AC4) empfohlen.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-25 · **Version:** 0.16.0 · **Tag:** v0.16.0 · **URL:** https://jupiter.auxevo.tech
+Host-native Dev-VPS (systemd + Caddy, kein Dokploy), Auto-Deploy via GitHub-Webhook auf `main`. Promotion `dev → main` als Sammel-Release (mit PROJ-23 + PROJ-43).

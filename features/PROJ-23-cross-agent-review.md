@@ -1,6 +1,6 @@
 # PROJ-23: Cross-Agent-Review / Challenge (adversariell, engine-übergreifend)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-25
 **Baustein:** #30
@@ -241,4 +241,15 @@ Backend implementiert in vier Dateien (kein neues DB-Schema — in-memory + Vaul
 ### Production-Ready: **JA** — keine Critical/High-Bugs; die zwei Low-Beobachtungen wurden behoben. Status → Approved.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-25 · **Version:** 0.16.0 · **Tag:** v0.16.0 · **URL:** https://jupiter.auxevo.tech
+**Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend`/`jupiter-webhook` + Caddy TLS), **kein Dokploy**. Auto-Deploy via GitHub-Webhook auf Push nach `main`.
+**Promotion:** `dev → main` (Sammel-Release mit PROJ-22 + PROJ-43, alle Approved). Bump 0.15.0 → 0.16.0.
+
+**Geliefert:** Cross-Agent-Review/Challenge — `POST /sessions/{id}/challenge`, `GET /sessions/{id}/reviews`, `GET /reviews/{id}`, `POST /reviews/{id}/findings/{finding_id}`; `review_finding`-Decision-Cards; Challenge-Dialog + Reviews-Panel im Cockpit; Vault-Audit-Spur unter `Knowledge/`.
+
+**Smoke-Test (Prod, durch Nutzer zu verifizieren):**
+- [ ] `https://jupiter.auxevo.tech/api/sessions` erreichbar (durch den `/api`-Proxy)
+- [ ] Cockpit lädt, Version zeigt **v0.16.0**
+- [ ] Auf einer Session „Challenge" → Reviewer-Session startet; Befunde erscheinen als `review_finding`-Cards + im Reviews-Panel
+- [ ] Befund „Übernehmen" reicht den Gegenvorschlag an die Autor-Session zurück
+- [ ] Diversitäts-Hinweis bei nur einer Engine; Vault-Notiz unter `Knowledge/`
