@@ -1,8 +1,45 @@
 # PROJ-34: Chat-Modus im Neue-Session-Dialog (freies Chatfenster ohne ABC-Bezug)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## QA Test Results
+**Getestet:** 2026-06-25 · **Branch:** dev · **Tester:** QA Engineer · **Methode:** Code-Review je Kriterium + Regressions-Suite (`vitest`) + Production-Build (inkl. TypeScript). Reines Frontend, kein Backend/Auth/Tenancy → Tenant-Isolation-/JWT-Audit **N/A** (Jupiter-MVP ohne JWT/RLS).
+
+### Automatisierte Gates
+- `vitest run`: **121/121** grün (13 Dateien) — keine Regression.
+- `npm run build`: **erfolgreich**, TypeScript-Schritt sauber (der einzelne `tsc --noEmit`-Fehler liegt in `lib/md-tree.test.ts` und ist baseline-bestätigt; Next-Build schließt Test-Dateien aus → grün).
+- `eslint` auf der geänderten Datei: sauber.
+- Hinweis: Das Feature ist reines State/JSX-Wiring; unter der Repo-Konvention (Vitest testet **reine Funktionen**, kein jsdom/Testing-Library installiert) gibt es keine extrahierbare reine Logik für einen sinnvollen Unit-Test. Empfehlung (optional, nicht blockierend): bei künftigem Refactoring die Payload-Regel `role = chatMode ? undefined : role` in eine exportierte Helper-Funktion ziehen und wie `describeBranch` (PROJ-13) testbar machen.
+
+### Acceptance Criteria (8/8 PASS)
+| # | Kriterium | Ergebnis | Beleg |
+|---|-----------|----------|-------|
+| 1 | Umschalter mit zwei Zuständen „Workflow/ABC" + „Chat" | ✅ | `Tabs`/`TabsList`/zwei `TabsTrigger` |
+| 2 | Default „Workflow/ABC", bisheriges Verhalten unverändert | ✅ | `useState("workflow")` |
+| 3 | „Chat" graut ABC-Block (Vorschlag, „Vorschlag starten", „Weitere offene Features") sichtbar aus + nicht klickbar | ✅ | Wrapper `opacity-50 pointer-events-none aria-disabled` + `disabled`-Prop deaktiviert innere Buttons/Chips |
+| 4 | Im Chat-Modus keine Feature-ID/abc-Rolle; zuvor gewähltes Feature wird beim Wechsel verworfen | ✅ | `onModeChange("chat")` → `setSelectedId(null)` + `setRole("")` |
+| 5 | Projekt, Pfad, Prompt, Engine, Modell, Berechtigung bleiben bedienbar | ✅ | nur `role`-Input ist im Chat-Modus `disabled` |
+| 6 | „Session starten" im Chat-Modus → normale Session ohne abc-Verknüpfung | ✅ | Payload `role: chatMode ? undefined : …`; Feature-ID geht ohnehin nie ans Backend |
+| 7 | Zurück nach „Workflow" reaktiviert Block + lädt Vorschlag (debounced) | ✅ | `chatMode` als `useEffect`-Dependency → Re-Fetch beim Zurückschalten |
+| 8 | Alle Beschriftungen/Tooltips deutsch | ✅ | „Workflow/ABC", „Chat", Hinweis-/Platzhalter-Texte deutsch |
+
+### Edge Cases (5/5 PASS)
+- **Wechsel mit gewähltem Feature:** Auswahl wird verworfen; Zurückschalten lädt frisch den Empfehlungs-Vorschlag (kein „Geister"-Feature der vorherigen Hand-Auswahl). ✅
+- **Projekt ohne abc-Struktur:** Chat-Modus überspringt den Launcher komplett → freier Start funktioniert. ✅
+- **Leerer Initial-Prompt:** `valid` verlangt weiterhin `prompt.trim() > 0` — Pflichtfeld unverändert. ✅
+- **Pfadwechsel im Chat-Modus:** `useEffect` bricht bei `chatMode` früh ab → kein Launcher-Request; Block bleibt ausgegraut. ✅
+- **Schmaler Viewport (375 px):** `TabsList` `w-full` mit zwei `flex-1`-Triggern → kein Layout-Bruch (Code-Verifikation; visuelle Bestätigung empfohlen). ✅
+
+### Bugs
+Keine (Critical 0 · High 0 · Medium 0 · Low 0).
+
+### Regression
+Verwandte Features (PROJ-3 Cockpit, PROJ-9 Smart Launcher, PROJ-18 Engines, PROJ-20 Push-to-Talk) unverändert: Workflow-Modus ist Default und nutzt denselben Code-Pfad wie vorher; Suite grün.
+
+### Production-Ready
+**JA** — keine Critical/High-Bugs. Einzige offene Empfehlung ist die optionale visuelle 375px-Sichtprüfung im Browser (nicht blockierend).
 
 ## Implementation Notes (Frontend)
 **Datum:** 2026-06-25 · **Branch:** dev · **Datei:** `nextjs_app/components/cockpit/new-session-dialog.tsx` (einzige Änderung, kein Backend).
