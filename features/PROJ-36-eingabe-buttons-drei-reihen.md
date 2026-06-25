@@ -1,6 +1,6 @@
 # PROJ-36: Eingabe-Buttons auf drei Reihen (Senden · Mikrofon+Büroklammer · Stop)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -104,3 +104,39 @@ Button-Spalte (flex-col)
 
 ### Dependencies
 Keine neuen Pakete. Genutzt: `lucide-react` (`Paperclip`, `Loader2`, `Mic`, `Square` — bereits im Projekt), shadcn/ui `Button` (`size="icon"`).
+
+## QA Test Results
+**Getestet:** 2026-06-25 · **Branch:** dev · **Methode:** Code-Review gegen ACs + Vitest-Render-Tests (`renderToStaticMarkup`, kein jsdom) + volle Regressionssuite. Reiner Frontend-Layout-Fix → kein Backend-/Security-/Tenant-Red-Team anwendbar.
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | Drei Reihen: Senden (voll) · Mikro+Büroklammer (eine Reihe) · Stop (voll) | ✅ Pass | `page.tsx` Button-Spalte `flex-col`; Reihe 2 `flex gap-2` mit beiden Icon-Buttons |
+| 2 | Anhängen = nur Büroklammer-Icon (kein Text), Upload-Funktion bleibt | ✅ Pass | Test „zeigt keine Textbeschriftung mehr"; `onPick`-Verhalten unverändert |
+| 3 | Mikro + Büroklammer nebeneinander, gleich hoch | ✅ Pass | Beide `size="icon"` (→ identische Höhe), beide `flex-1` (→ gleiche Breite), in `flex gap-2` |
+| 4 | Stop unten; bei beendeter Session konsistent (2 Reihen) | ✅ Pass | `{!ended && …}` → Layout fällt sauber auf Senden + Icon-Reihe zurück |
+| 5 | Tooltips/aria-Labels deutsch (Mikro/Büroklammer) | ✅ Pass | Clipboard `aria-label="Datei anhängen"` (Test); Mic-Label „Diktieren (Push-to-Talk)"/„Aufnahme stoppen" |
+| 6 | Höhen-Symmetrie zur Textarea (PROJ-29) bleibt | ✅ Pass | `items-stretch` unverändert; Höhe aus Buttons abgeleitet, kein Magic-Number |
+| 7 | Keine Funktionsänderung an Senden/Upload/Diktat/Stop | ✅ Pass | Nur Markup/Icon geändert; Handler (`handleSend`/`attachFiles`/`onTranscript`/`handleStop`) unverändert |
+
+### Edge Cases
+| Fall | Ergebnis | Anmerkung |
+|------|----------|-----------|
+| Beendete Session (kein Stop) | ✅ | Zwei Reihen, keine schwebende Lücke |
+| Push-to-Talk aufnehmend | ✅ | `PushToTalkButton` unverändert (destructive + `animate-pulse`) |
+| Upload läuft (`uploading`) | ✅ | `Loader2`-Spinner + `disabled`; `size="icon"` fixe Breite → kein Zeilenversatz (Test bestätigt `disabled`) |
+| Schmaler Viewport 375 px | ⚠️ Pass (nicht browser-verifiziert) | Icon-Reihe: zwei `flex-1`-Icon-Buttons ohne Text → kein Umbruch zu erwarten; visuelle Prüfung im Live-Build empfohlen, Risiko niedrig |
+| Disabled (leerer Input / pending Decision) | ✅ | `disabled`-Logik unverändert |
+
+### Tests
+- **Neu:** `components/cockpit/session-clipboard-button.test.tsx` — 5 Render-Tests (Icon-only, deutsches aria-label, uploading-Zustand, disabled, className-Durchreichung). **5/5 grün.**
+- **Regression:** volle Vitest-Suite **121/121 grün** (13 Dateien). ESLint sauber.
+
+### Beobachtungen (kein Bug)
+- AC5 nennt für das Mikrofon den Begriff „Spracheingabe"; das bestehende Label lautet „Diktieren (Push-to-Talk)" / „Aufnahme stoppen" — beschreibt die Sprach-/Diktat-Aktion auf Deutsch ausreichend. Kein Handlungsbedarf.
+
+### Bugs
+Keine (0 Critical / 0 High / 0 Medium / 0 Low).
+
+### Produktionsreife: **READY** ✅
+Keine Critical/High-Bugs. Einzige Restunsicherheit: rein visuelle 375-px-Prüfung im Live-Build (Risiko niedrig).
