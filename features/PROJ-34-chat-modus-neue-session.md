@@ -1,8 +1,14 @@
 # PROJ-34: Chat-Modus im Neue-Session-Dialog (freies Chatfenster ohne ABC-Bezug)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-25 · **Version:** 0.12.0 · **Host:** Dev-VPS (host-native systemd + Caddy, GitHub-Webhook Auto-Deploy aus `main`)
+- **Geliefert:** Modus-Umschalter „Workflow/ABC ↔ Chat" im Neue-Session-Dialog; Chat-Modus graut den ABC-Block aus und startet eine normale Session ohne abc-/Rollen-Verknüpfung. Reiner Frontend-Change.
+- **Browser-Smoke (auf Prod zu verifizieren):** Dialog öffnen → „Chat" → ABC-Block ausgegraut, Rolle deaktiviert → „Session starten" erzeugt normale Session. Nach Frontend-Rebuild ggf. Hard-Refresh (Strg+Shift+R).
 
 ## QA Test Results
 **Getestet:** 2026-06-25 · **Branch:** dev · **Tester:** QA Engineer · **Methode:** Code-Review je Kriterium + Regressions-Suite (`vitest`) + Production-Build (inkl. TypeScript). Reines Frontend, kein Backend/Auth/Tenancy → Tenant-Isolation-/JWT-Audit **N/A** (Jupiter-MVP ohne JWT/RLS).

@@ -1,8 +1,13 @@
 # PROJ-35: Session-Titel = eingegebener Projektname (Sidebar + Header) statt „jupiter"
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-25 · **Version:** 0.12.0 · **Host:** Dev-VPS (host-native systemd + Caddy, GitHub-Webhook Auto-Deploy aus `main`)
+- **Geliefert:** Session-Titel zeigt den eingegebenen Projektnamen in Sidebar + Header statt „jupiter".
 
 ## Implementation Notes (Frontend)
 - **Branch:** dev. Reiner Next.js-Anzeige-Fix, keine Backend-/DB-Änderung (wie im Tech-Design).

@@ -1,8 +1,13 @@
 # PROJ-36: Eingabe-Buttons auf drei Reihen (Senden · Mikrofon+Büroklammer · Stop)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-25 · **Version:** 0.12.0 · **Host:** Dev-VPS (host-native systemd + Caddy, GitHub-Webhook Auto-Deploy aus `main`)
+- **Geliefert:** Eingabe-Buttons in drei Reihen (Senden · Mikrofon+Büroklammer · Stop).
 
 ## Implementation Notes (Frontend)
 - **`session-clipboard-button.tsx`**: Auf Icon-only umgestellt (`size="icon"`). Textbeschriftung „Anhängen"/„Lädt…" entfällt; `uploading` zeigt jetzt `Loader2`-Spinner statt `Paperclip`. Deutsches `aria-label` (`„Datei anhängen"` / `„Datei wird angehängt…"`) + `title` bleiben. Neue optionale `className`-Prop (via `cn`), damit der Composer `flex-1` zum Füllen der Icon-Reihe durchreichen kann.
