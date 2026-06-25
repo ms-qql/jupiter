@@ -12,7 +12,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import {
@@ -23,11 +22,11 @@ import {
 
 const STORAGE_KEY = "jupiter.sidebar.v1";
 
-interface ItemPref {
+export interface ItemPref {
   visible: boolean;
   order: number;
 }
-type PrefsMap = Record<string, ItemPref>;
+export type PrefsMap = Record<string, ItemPref>;
 
 /** Eintrag-Definition + aufgelöste Präferenz. */
 export interface ResolvedItem extends SidebarItemDef, ItemPref {}
@@ -49,7 +48,9 @@ interface SidebarPrefsContextValue {
 
 const SidebarPrefsContext = createContext<SidebarPrefsContextValue | null>(null);
 
-function buildDefaults(): PrefsMap {
+// --- Pure Logik (ohne React/DOM, daher unit-testbar) ---------------------
+
+export function buildDefaults(): PrefsMap {
   const m: PrefsMap = {};
   for (const it of SIDEBAR_ITEMS) {
     m[it.key] = { visible: it.defaultVisible, order: it.defaultOrder };
@@ -57,8 +58,62 @@ function buildDefaults(): PrefsMap {
   return m;
 }
 
+/** Sektion eines Keys laut Definition (oder null, wenn unbekannt). */
+function sectionOf(key: string): SidebarSectionId | null {
+  return SIDEBAR_ITEMS.find((it) => it.key === key)?.section ?? null;
+}
+
+/** Geschwister-Keys einer Sektion, nach aktueller Reihenfolge sortiert. */
+function siblingKeysSorted(prefs: PrefsMap, section: SidebarSectionId): string[] {
+  return SIDEBAR_ITEMS.filter((it) => it.section === section)
+    .map((it) => it.key)
+    .sort((a, b) => prefs[a].order - prefs[b].order);
+}
+
+/** Reihenfolge-Werte für die übergebene Key-Folge neu vergeben (0..n). */
+function applyOrder(prefs: PrefsMap, orderedKeys: string[]): PrefsMap {
+  const next = { ...prefs };
+  orderedKeys.forEach((k, i) => {
+    next[k] = { ...next[k], order: i };
+  });
+  return next;
+}
+
+export function togglePref(prefs: PrefsMap, key: string): PrefsMap {
+  if (!prefs[key]) return prefs;
+  return { ...prefs, [key]: { ...prefs[key], visible: !prefs[key].visible } };
+}
+
+/** Eine Position nach oben (-1) / unten (+1), Grenzen sind no-ops. */
+export function movePref(prefs: PrefsMap, key: string, dir: -1 | 1): PrefsMap {
+  const section = sectionOf(key);
+  if (!section) return prefs;
+  const keys = siblingKeysSorted(prefs, section);
+  const i = keys.indexOf(key);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= keys.length) return prefs;
+  [keys[i], keys[j]] = [keys[j], keys[i]];
+  return applyOrder(prefs, keys);
+}
+
+/** Drag-and-Drop: `fromKey` direkt vor `beforeKey` einsortieren (gleiche Sektion). */
+export function reorderPref(
+  prefs: PrefsMap,
+  fromKey: string,
+  beforeKey: string,
+): PrefsMap {
+  const section = sectionOf(fromKey);
+  if (!section || fromKey === beforeKey || sectionOf(beforeKey) !== section)
+    return prefs;
+  const keys = siblingKeysSorted(prefs, section).filter((k) => k !== fromKey);
+  const at = keys.indexOf(beforeKey);
+  if (at < 0) return prefs;
+  keys.splice(at, 0, fromKey);
+  return applyOrder(prefs, keys);
+}
+
 /** Gespeicherte Map über die Definition mergen (Defaults für unbekannte Keys). */
-function mergeStored(stored: unknown): PrefsMap {
+export function mergeStored(stored: unknown): PrefsMap {
   const m = buildDefaults();
   if (stored && typeof stored === "object") {
     const s = stored as Record<string, Partial<ItemPref>>;
@@ -105,11 +160,6 @@ export function SidebarPrefsProvider({
     }
   }, [prefs, mounted]);
 
-  // Stabile Sektions-Zugehörigkeit (Definition ist konstant zur Laufzeit).
-  const sectionOf = useRef<Map<string, SidebarSectionId>>(
-    new Map(SIDEBAR_ITEMS.map((it) => [it.key, it.section])),
-  ).current;
-
   const resolve = useCallback(
     (section: SidebarSectionId): ResolvedItem[] =>
       SIDEBAR_ITEMS.filter((it) => it.section === section)
@@ -124,63 +174,16 @@ export function SidebarPrefsProvider({
   );
 
   const toggleVisible = useCallback((key: string) => {
-    setPrefs((prev) => ({
-      ...prev,
-      [key]: { ...prev[key], visible: !prev[key].visible },
-    }));
+    setPrefs((prev) => togglePref(prev, key));
   }, []);
 
-  // Reihenfolge-Werte innerhalb der Sektion neu vergeben (0..n).
-  const applyOrder = useCallback(
-    (prev: PrefsMap, orderedKeys: string[]): PrefsMap => {
-      const next = { ...prev };
-      orderedKeys.forEach((k, i) => {
-        next[k] = { ...next[k], order: i };
-      });
-      return next;
-    },
-    [],
-  );
+  const move = useCallback((key: string, dir: -1 | 1) => {
+    setPrefs((prev) => movePref(prev, key, dir));
+  }, []);
 
-  const siblingKeysSorted = useCallback(
-    (prev: PrefsMap, section: SidebarSectionId): string[] =>
-      SIDEBAR_ITEMS.filter((it) => it.section === section)
-        .map((it) => it.key)
-        .sort((a, b) => prev[a].order - prev[b].order),
-    [],
-  );
-
-  const move = useCallback(
-    (key: string, dir: -1 | 1) => {
-      const section = sectionOf.get(key);
-      if (!section) return;
-      setPrefs((prev) => {
-        const keys = siblingKeysSorted(prev, section);
-        const i = keys.indexOf(key);
-        const j = i + dir;
-        if (i < 0 || j < 0 || j >= keys.length) return prev;
-        [keys[i], keys[j]] = [keys[j], keys[i]];
-        return applyOrder(prev, keys);
-      });
-    },
-    [applyOrder, siblingKeysSorted, sectionOf],
-  );
-
-  const reorder = useCallback(
-    (fromKey: string, beforeKey: string) => {
-      const section = sectionOf.get(fromKey);
-      if (!section || fromKey === beforeKey || sectionOf.get(beforeKey) !== section)
-        return;
-      setPrefs((prev) => {
-        const keys = siblingKeysSorted(prev, section).filter((k) => k !== fromKey);
-        const at = keys.indexOf(beforeKey);
-        if (at < 0) return prev;
-        keys.splice(at, 0, fromKey);
-        return applyOrder(prev, keys);
-      });
-    },
-    [applyOrder, siblingKeysSorted, sectionOf],
-  );
+  const reorder = useCallback((fromKey: string, beforeKey: string) => {
+    setPrefs((prev) => reorderPref(prev, fromKey, beforeKey));
+  }, []);
 
   const reset = useCallback(() => setPrefs(buildDefaults()), []);
 

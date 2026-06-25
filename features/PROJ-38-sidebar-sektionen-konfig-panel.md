@@ -1,6 +1,6 @@
 # PROJ-38: Sidebar-Sektionen + Konfigurations-Panel (Sichtbarkeit, Reihenfolge, RESET)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -144,7 +144,47 @@ Bestehende shadcn/ui-Bausteine vorhanden: Button, ScrollArea, Dialog, Separator,
 **Offen für QA:** Touch-Drag real auf Mobile (▲/▼-Fallback vorhanden); Verhalten bei blockiertem localStorage; Merge nach simuliertem PROJ-39-Item.
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-06-25 · **Branch:** dev · **Methode:** Vitest-Unit (Pure-Logik + Config-Invarianten) + statischer Code-Review gegen jedes Kriterium. Repo-Konvention: node-Env-Vitest (kein jsdom) → DOM-Interaktion per Code-Review verifiziert, Live-Browser/Touch als Rest-Check markiert.
+
+**Tests:** `nextjs_app/lib/sidebar-config.test.ts` (5) + `nextjs_app/components/cockpit/sidebar-prefs-provider.test.ts` (15). Gesamte Suite **152/152 grün**, `next build` + `tsc` + ESLint grün.
+- QA-Seam: Merge-/Reorder-/Toggle-Logik wurde behavior-preserving in exportierte pure Funktionen (`buildDefaults`, `mergeStored`, `togglePref`, `movePref`, `reorderPref`) gezogen, damit sie ohne DOM testbar ist. Keine Verhaltensänderung.
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis | Beleg |
+|---|-----------|----------|-------|
+| 1 | „Workspace"-Überschrift über Doku/Dateien, Stil uppercase/gedämpft | ✅ Pass | `session-rail.tsx` Heading-Klasse identisch zu „Aktive Sessions" |
+| 2 | Mission Control bleibt im Header | ✅ Pass | Rail enthält kein Mission Control; unberührt |
+| 3 | Einstellungs-Icon neben Überschrift, Tooltip „Sidebar anpassen" | ✅ Pass | `SidebarConfigButton` mit `title`+`aria-label` |
+| 4 | Klick öffnet Konfig-Panel mit Liste aller Einträge | ✅ Pass | Popover rendert `allItems` je Sektion |
+| 5 | Auge blendet sofort aus/ein | ✅ Pass | `togglePref` → Provider-State → Rerender; Test ✓ |
+| 6 | Drag-Reorder spiegelt sofort in der Sidebar | ✅ Pass | `reorderPref` (HTML5-DnD) → State; Test ✓ |
+| 7 | RESET stellt Default-Sichtbarkeit/-Reihenfolge her | ✅ Pass | `reset()=buildDefaults()`; Test ✓ |
+| 8 | Sichtbarkeit+Reihenfolge in localStorage, Reload-fest | ✅ Pass | `jupiter.sidebar.v1`, `mergeStored`; Tests ✓ |
+| 9 | Hilfezeile „Ziehen zum Sortieren · Auge zum Ausblenden" | ✅ Pass | Panel-Markup |
+| 10 | Aktive-Sessions-Sektion funktioniert; Sessions nicht einzeln gelistet | ✅ Pass | Sessions = EIN togglebarer Eintrag; Liste/Archiv unverändert |
+| 11 | Texte deutsch | ✅ Pass | gesamte UI |
+
+### Edge Cases
+| Fall | Ergebnis | Beleg |
+|------|----------|-------|
+| Alle Einträge ausgeblendet → Panel-Zugang bleibt | ✅ Pass | Überschrift+Gear immer gerendert (nicht togglebar) |
+| Veralteter/unbekannter localStorage-Key | ✅ Pass | `mergeStored` ignoriert; Test ✓ |
+| Neue Sektion trotz gespeicherter Konfig sichtbar (Merge) | ✅ Pass | Test „neue Sektion erscheint sichtbar an Default-Position" ✓ |
+| Kaputter Storage-Inhalt (falsche Typen / null / Unsinn) | ✅ Pass | Default-Fallback, kein Crash; Tests ✓ |
+| localStorage blockiert (Privatmodus) | ✅ Pass | try/catch → Defaults, Änderung nur für Session |
+| Aktive-Sessions-Sektion ausgeblendet → Sessions über Board erreichbar | ✅ Pass | Footer „Zum Board" bleibt; `flex-1`-Platzhalter |
+| Mobile-Drawer: Panel + Toggles + Sortieren | ⚠️ Logik ok, Live offen | ▲/▼-Touch-Fallback vorhanden; Popover z-50 > Drawer z-40 — **echtes Touch-Drag noch nicht im Browser geprüft** |
+
+### Security (Red-Team)
+- Reine Client-Präferenz, **kein Backend/Auth/Tenant** → kein Tenant-Leak/Auth-Bypass-Vektor.
+- Kein XSS: Labels stammen aus statischer Definition, nicht aus Nutzereingaben; `JSON.parse` in try/catch.
+- Keine Secrets/Netzwerk im Feature. → **Keine Findings.**
+
+### Bugs
+Keine Critical/High/Medium gefunden.
+- **Low (offen, nicht blockierend):** Live-Browser-Smoke (Touch-Drag auf 375px, Reload-Persistenz visuell, Popover im Mobile-Drawer) steht aus — headless QA. Empfehlung: kurzer manueller Check vor/nach Deploy.
+
+### Production-Ready: **JA** (keine Critical/High; 1 Low = manueller Browser-Smoke empfohlen)
 
 ## Deployment
 _To be added by /deploy_
