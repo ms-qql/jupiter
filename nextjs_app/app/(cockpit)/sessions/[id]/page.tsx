@@ -25,9 +25,9 @@ import { ApiError, getSession, sendInput, stopSession } from "@/lib/api";
 import {
   canReanimate,
   contextLabel,
+  displayName,
   formatDuration,
   modelLabel,
-  projectName,
   statusMeta,
 } from "@/lib/status";
 import { cn } from "@/lib/utils";
@@ -149,8 +149,8 @@ export default function SessionDetailPage({
             size="md"
           />
         )}
-        <h1 className="text-lg font-semibold">
-          {head ? projectName(head.project_path) : "Session"}
+        <h1 className="text-lg font-semibold" title={head ? displayName(head) : undefined}>
+          {head ? displayName(head) : "Session"}
         </h1>
         {head && (
           <>
@@ -360,25 +360,32 @@ export default function SessionDetailPage({
             if (e.dataTransfer.types.includes("Files")) e.preventDefault();
           }}
         />
+        {/* PROJ-36: Drei Reihen statt vier — Reihe 1 Senden (voll), Reihe 2
+            Mikrofon + Büroklammer (zwei Icon-Buttons nebeneinander), Reihe 3 Stop
+            (voll). Höhe bleibt aus den Buttons abgeleitet → PROJ-29-Symmetrie hält. */}
         <div className="flex flex-col gap-2">
           <Button type="submit" disabled={!input.trim() || busy || hasPending}>
             {ended ? "Fortsetzen" : "Senden"}
           </Button>
-          <SessionClipboardButton
-            onPick={attachFiles}
-            disabled={hasPending}
-            uploading={uploading}
-          />
-          {/* PROJ-20: Nachricht an die Session diktieren statt tippen. */}
-          <PushToTalkButton
-            disabled={hasPending}
-            onTranscript={(t) =>
-              setInput((prev) => {
-                const base = prev.trimEnd();
-                return base ? `${base} ${t}` : t;
-              })
-            }
-          />
+          <div className="flex gap-2">
+            {/* PROJ-20: Nachricht an die Session diktieren statt tippen. */}
+            <PushToTalkButton
+              className="flex-1"
+              disabled={hasPending}
+              onTranscript={(t) =>
+                setInput((prev) => {
+                  const base = prev.trimEnd();
+                  return base ? `${base} ${t}` : t;
+                })
+              }
+            />
+            <SessionClipboardButton
+              className="flex-1"
+              onPick={attachFiles}
+              disabled={hasPending}
+              uploading={uploading}
+            />
+          </div>
           {!ended && (
             <Button type="button" variant="outline" onClick={handleStop}>
               Stop

@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -75,6 +76,12 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // PROJ-34: Modus-Umschalter. „workflow" = bisheriges ABC-Verhalten (Smart-Launcher-
+  // Vorauswahl), „chat" = freies Chatfenster ohne abc-Bezug (ABC-Block ausgegraut,
+  // keine Rolle/Feature im Payload). Reiner lokaler Dialog-State, kein Backend-Flag.
+  const [workflowMode, setWorkflowMode] = useState<"workflow" | "chat">("workflow");
+  const chatMode = workflowMode === "chat";
+
   const [project, setProject] = useState("");
   const [projectPath, setProjectPath] = useState("/home/dev/projects/");
   const [prompt, setPrompt] = useState("");
@@ -118,8 +125,9 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
   }
 
   // Vorschlag nach Projektwahl laden (debounced), solange der Dialog offen ist.
+  // PROJ-34: im Chat-Modus kein Launcher-Request (Block bleibt ausgegraut).
   useEffect(() => {
-    if (!open) return;
+    if (!open || chatMode) return;
     const path = projectPath.trim();
     const ctrl = new AbortController();
     const timer = setTimeout(async () => {
@@ -148,7 +156,7 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [open, projectPath]);
+  }, [open, projectPath, chatMode]);
 
   // PROJ-18: konfigurierte Engines laden, sobald der Dialog öffnet. Nicht-blockierend
   // — schlägt es fehl, bleibt der Claude-Fallback wählbar.
@@ -181,6 +189,17 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
     if (suggestion?.modell) setModel(suggestion.modell);
   }, [suggestion]);
 
+  // PROJ-34: Moduswechsel. Nach „Chat" wird die abc-Vorauswahl verworfen (kein
+  // „Geister"-Feature), damit der Start ohne Feature-/Rollen-Verknüpfung erfolgt.
+  // Zurück nach „Workflow" reaktiviert den Block; der Launcher-Effect lädt neu.
+  function onModeChange(next: "workflow" | "chat") {
+    setWorkflowMode(next);
+    if (next === "chat") {
+      setSelectedId(null);
+      setRole("");
+    }
+  }
+
   function resetForm() {
     setPrompt("");
     setProject("");
@@ -190,6 +209,7 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
     setSugError(null);
     setEngine("claude");
     setModel("sonnet");
+    setWorkflowMode("workflow");
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -202,7 +222,8 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
         initial_prompt: prompt.trim(),
         model,
         permission_mode: mode,
-        role: role.trim() || undefined,
+        // PROJ-34: Chat-Modus startet ohne abc-Rolle (keine Feature-Verknüpfung).
+        role: chatMode ? undefined : role.trim() || undefined,
         project_name: project.trim() || undefined,
         engine,
       });
@@ -234,6 +255,27 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
           </DialogHeader>
 
           <div className="grid gap-4 py-4">
+            {/* PROJ-34: Modus-Umschalter — Workflow/ABC (Default) vs. freies Chatfenster. */}
+            <Tabs
+              value={workflowMode}
+              onValueChange={(v) => v && onModeChange(v as "workflow" | "chat")}
+            >
+              <TabsList className="w-full">
+                <TabsTrigger value="workflow" className="flex-1">
+                  Workflow/ABC
+                </TabsTrigger>
+                <TabsTrigger value="chat" className="flex-1">
+                  Chat
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {chatMode && (
+              <p className="text-xs text-muted-foreground">
+                Chat-Modus: freie Session ohne abc-Bezug — kein Feature und keine Rolle
+                werden verknüpft.
+              </p>
+            )}
+
             <div className="grid gap-2">
               <Label htmlFor="project_name">Projekt</Label>
               <Input
@@ -258,16 +300,42 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
               />
             </div>
 
-            {/* PROJ-9: Smart-Launcher-Vorschlag */}
-            <SuggestionCard
-              loading={sugLoading}
-              error={sugError}
-              suggestion={suggestion}
-              options={options}
-              selectedId={selectedId}
-              onApplyFeature={applyFeature}
-              onApplyDefault={applyDefault}
-            />
+            {/* PROJ-9: Smart-Launcher-Vorschlag.
+                PROJ-34: Im Chat-Modus sichtbar, aber ausgegraut + nicht klickbar. */}
+            {chatMode ? (
+              <div
+                aria-disabled
+                className="pointer-events-none select-none opacity-50"
+                title="Im Chat-Modus deaktiviert"
+              >
+                {suggestion ? (
+                  <SuggestionCard
+                    loading={false}
+                    error={null}
+                    suggestion={suggestion}
+                    options={options}
+                    selectedId={selectedId}
+                    onApplyFeature={applyFeature}
+                    onApplyDefault={applyDefault}
+                    disabled
+                  />
+                ) : (
+                  <p className="rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
+                    Workflow-Vorauswahl (im Chat-Modus deaktiviert).
+                  </p>
+                )}
+              </div>
+            ) : (
+              <SuggestionCard
+                loading={sugLoading}
+                error={sugError}
+                suggestion={suggestion}
+                options={options}
+                selectedId={selectedId}
+                onApplyFeature={applyFeature}
+                onApplyDefault={applyDefault}
+              />
+            )}
 
             <div className="grid gap-2">
               <div className="flex items-center justify-between gap-2">
@@ -297,11 +365,12 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
               <Label htmlFor="role">Rolle (optional)</Label>
               <Input
                 id="role"
-                value={role}
+                value={chatMode ? "" : role}
                 onChange={(e) => setRole(e.target.value)}
-                placeholder="z. B. backend-dev"
+                placeholder={chatMode ? "Im Chat-Modus deaktiviert" : "z. B. backend-dev"}
                 autoComplete="off"
                 spellCheck={false}
+                disabled={chatMode}
               />
             </div>
 
@@ -392,6 +461,7 @@ function SuggestionCard({
   selectedId,
   onApplyFeature,
   onApplyDefault,
+  disabled = false,
 }: {
   loading: boolean;
   error: string | null;
@@ -400,6 +470,7 @@ function SuggestionCard({
   selectedId: string | null;
   onApplyFeature: (opt: FeatureSuggestion) => void;
   onApplyDefault: () => void;
+  disabled?: boolean;
 }) {
   if (loading) {
     return (
@@ -436,7 +507,14 @@ function SuggestionCard({
     return (
       <div className="rounded-md border border-border bg-muted/30 p-3">
         <p className="text-sm">{suggestion.hinweis}</p>
-        <Button type="button" size="sm" variant="secondary" className="mt-2" onClick={onApplyDefault}>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="mt-2"
+          onClick={onApplyDefault}
+          disabled={disabled}
+        >
           /abc-requirements übernehmen
         </Button>
       </div>
@@ -468,7 +546,13 @@ function SuggestionCard({
         )}
       </p>
 
-      <Button type="button" size="sm" className="mt-2" onClick={() => onApplyFeature(selected)}>
+      <Button
+        type="button"
+        size="sm"
+        className="mt-2"
+        onClick={() => onApplyFeature(selected)}
+        disabled={disabled}
+      >
         Vorschlag starten
       </Button>
 
@@ -481,6 +565,7 @@ function SuggestionCard({
                 key={opt.id}
                 type="button"
                 onClick={() => onApplyFeature(opt)}
+                disabled={disabled}
                 className={`rounded border px-2 py-0.5 text-xs transition-colors ${
                   opt.id === selected.id
                     ? "border-primary bg-primary/10 text-foreground"

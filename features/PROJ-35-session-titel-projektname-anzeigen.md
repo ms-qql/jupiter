@@ -1,8 +1,23 @@
 # PROJ-35: Session-Titel = eingegebener Projektname (Sidebar + Header) statt „jupiter"
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-25 · **Version:** 0.12.0 · **Host:** Dev-VPS (host-native systemd + Caddy, GitHub-Webhook Auto-Deploy aus `main`)
+- **Geliefert:** Session-Titel zeigt den eingegebenen Projektnamen in Sidebar + Header statt „jupiter".
+
+## Implementation Notes (Frontend)
+- **Branch:** dev. Reiner Next.js-Anzeige-Fix, keine Backend-/DB-Änderung (wie im Tech-Design).
+- Neuer geteilter Helper `displayName(session)` in `nextjs_app/lib/status.ts` (neben `projectName`): `project_name?.trim() || projectName(project_path)`. Strukturell typisiert ({project_name, project_path}) → nutzbar für `Session` **und** `SessionDetail`.
+- Drei Render-Stellen von `projectName(session.project_path)` auf `displayName(session)` umgestellt, jeweils mit `title`-Attribut für Volltext-Tooltip bei langen Titeln (`truncate` war schon vorhanden):
+  - `nextjs_app/components/cockpit/session-rail.tsx` (Sidebar/Rail-Item)
+  - `nextjs_app/components/cockpit/session-tile.tsx` (Cockpit-Kachel)
+  - `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx` (Session-Header `<h1>`)
+- Konsistenz: `DeleteSessionButton`-`projectName`-Prop in Rail + Tile ebenfalls auf `displayName(session)` umgestellt → Lösch-Dialog nennt denselben Namen wie die Anzeige.
+- Verifikation: `npx tsc --noEmit` ohne neue Fehler in den geänderten Dateien (einziger Fehler vorbestehend in `lib/md-tree.test.ts`), `eslint` der vier Dateien sauber.
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit / Session-Rail + Session-Header) — die Anzeigeorte.
@@ -41,3 +56,93 @@ Gewünscht: Sidebar **und** Header (und konsistent die Session-Kachel im Cockpit
 - Betroffen: `nextjs_app/components/cockpit/session-rail.tsx` (RailItem) und `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx` (Header `<h1>`); ggf. `SessionTile` für Konsistenz.
 - Gemeinsame Hilfslogik „Anzeigename" (z. B. `displayName(session) = session.project_name?.trim() || projectName(session.project_path)`) statt an drei Stellen duplizierter Inline-Logik.
 - Texte deutsch; sicheres Text-Rendering (kein `dangerouslySetInnerHTML`).
+
+## Tech Design (Solution Architect)
+**Erstellt:** 2026-06-25 · **Stack:** Next.js 16 (App Router, nur Frontend) · keine Backend-/DB-Änderung · **Branch:** dev
+
+### Befund (am Code verifiziert)
+- `Session.project_name: string | null` existiert bereits im Typ (`nextjs_app/lib/types.ts:108`, aus PROJ-8/Gantt) und kommt vom Backend zurück — **keine** API-/Schema-/DB-Arbeit nötig.
+- Drei Render-Stellen zeigen stur den Pfad-Basename via `projectName(session.project_path)`:
+  - Sidebar/Rail-Item: `nextjs_app/components/cockpit/session-rail.tsx:191`
+  - Cockpit-Kachel: `nextjs_app/components/cockpit/session-tile.tsx:51`
+  - Session-Header `<h1>`: `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx:153`
+- Helper `projectName(path)` liegt in `nextjs_app/lib/status.ts:206` (Basename aus Pfad). Bleibt als Fallback erhalten.
+- Alle drei Stellen tragen bereits `truncate` → Ellipsis ist vorhanden; es fehlt nur ein `title`-Attribut für den Volltext.
+
+### Was gebaut wird
+**Ein** neuer geteilter Helper neben `projectName` in `lib/status.ts`:
+`displayName(session)` → getrimmter `project_name`, sonst Basename. Eine Quelle der Wahrheit, kein dreifaches Inline-Duplikat. (WHY: verhindert, dass dieselbe Session in Sidebar/Header/Kachel auseinanderlaufende Namen zeigt — genau das Akzeptanzkriterium „überall konsistent".)
+
+Die drei Render-Stellen tauschen `projectName(session.project_path)` gegen `displayName(session)` und bekommen ein `title={displayName(session)}` für den Volltext-Tooltip bei langen Titeln.
+
+### Komponenten-/Datenfluss (keine neuen Komponenten)
+```
+lib/status.ts
+└── displayName(session) = session.project_name?.trim() || projectName(session.project_path)
+        ▲                         ▲                              ▲
+        │                         │                              │
+session-rail.tsx (RailItem)  session-tile.tsx (SessionTile)  sessions/[id]/page.tsx (Header <h1>)
+   truncate + title              truncate + title                 title
+```
+
+### Daten / API / DB
+- Datenmodell: unverändert. `project_name` ist bereits Teil von `Session`.
+- API: keine. DB/RLS/MinIO: keine.
+
+### Hinweis zur DeleteSessionButton-Prop
+`session-rail.tsx:200` und `session-tile.tsx:68` geben `projectName(...)` als `projectName`-Prop an `DeleteSessionButton` (Bestätigungstext „Session ‚X' löschen?"). Konsistenz-Empfehlung: auch dort `displayName(session)` verwenden, damit der Lösch-Dialog denselben Namen nennt wie die Anzeige. (Anzeige-Kriterien fordern es nicht zwingend, aber es vermeidet einen zweiten Namen für dieselbe Session.)
+
+### Tech-Entscheidungen (WHY)
+- **Helper statt Inline-Logik:** Akzeptanzkriterium „keine widersprüchlichen Namen" ist nur garantierbar, wenn alle Stellen dieselbe Funktion aufrufen.
+- **Fallback auf Basename:** Bestandssessions ohne `project_name` (vor PROJ-8) und leer gelassene Titel bleiben benannt — Regression-frei.
+- **`trim()` im Helper:** Whitespace-only-Titel = „nicht gesetzt" → Fallback, ohne dass jede Render-Stelle das wissen muss.
+- **`title`-Attribut statt eigenes Tooltip-Widget:** Ellipsis ist schon da (`truncate`); natives `title` reicht für den Volltext, kein Layout-/Komponenten-Aufwand. Text wird als JSX-Child/Attribut gerendert → automatisch escaped, keine Injektion.
+
+### Dependencies
+Keine neuen Pakete (Frontend wie Backend).
+
+### Aufwand / Risiko
+Sehr klein (1 Helper + 3 Edits, optional 2 Prop-Edits). Risiko gering; einzige Regressionsfläche ist der Basename-Fallback (durch Edge Cases abgedeckt).
+
+## QA Test Results
+**Getestet:** 2026-06-25 · **Branch:** dev · **Tester:** QA Engineer · **Methode:** Unit-Tests (Vitest) + Code-Audit (inkl. Live-WS-Konsistenz)
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | Sidebar zeigt `project_name` || Basename | ✅ PASS | `session-rail.tsx` → `displayName(session)`; Unit-Test |
+| 2 | Header (Session-Detail) gleiche Logik | ✅ PASS | `sessions/[id]/page.tsx:153` → `displayName(head)` |
+| 3 | Weitere Stellen (SessionTile) gleiche Logik, keine widersprüchlichen Namen | ✅ PASS | `session-tile.tsx` + DeleteSessionButton-Prop auf `displayName` |
+| 4 | Zwei Sessions, gleicher Ordner, versch. Titel → unterscheidbar | ✅ PASS | Unit-Test „unterscheidbar" |
+| 5 | Session ohne Titel → Basename (regression-frei) | ✅ PASS | Unit-Test (null/leer → Basename); Backend setzt Basename bereits bei Erstellung (`manager.py:1184`) |
+| 6 | Lange Titel ellipsiert (kein Layoutbruch) + `title`-Tooltip | ✅ PASS | `truncate` an allen 3 Stellen vorhanden + `title={displayName(...)}` ergänzt |
+
+**6/6 bestanden.**
+
+### Edge Cases
+- Bestandssession ohne `project_name` (null) → Basename, kein Crash. ✅ (Unit-Test)
+- Leerer/Whitespace-Titel → `trim()` → wie „nicht gesetzt", Basename. ✅ (Unit-Test `""`, `"   "`, `"\t\n"`)
+- Titel == Ordnername → derselbe Text, unproblematisch. ✅ (Unit-Test)
+- Sehr langer Titel / Sonderzeichen → Ellipsis via `truncate`; Helper liefert Rohtext, **React escaped** ihn beim Rendern (kein `dangerouslySetInnerHTML`) → keine HTML/XSS-Injektion. ✅
+
+### Konsistenz Live vs. Poll (zusätzlicher Audit)
+- Sidebar/Kachel speisen sich aus dem Poll (volles `Session` inkl. `project_name`).
+- Header nutzt `head = liveState ?? detail`. Der WS-Stream sendet **jede** `kind:"state"`-Frame als volles `to_read()`-Dict inkl. `project_name` (`manager.py:249`), Frontend macht Full-Replace (`setState(msg as Session)`). → Live-Header und Sidebar zeigen **denselben** Namen, kein Auseinanderlaufen. ✅
+
+### Security
+- Keine neue Angriffsfläche: reiner Anzeige-Pfad, kein neuer Endpoint/keine DB-Änderung.
+- Text-Rendering escaped (JSX-Child + `title`-Attribut) → keine XSS über Projekttitel.
+- Tenant-Isolation/Auth: im MVP nicht anwendbar (siehe PROJ-25, out of scope).
+
+### Automatisierte Tests
+- `displayName`-Suite in `nextjs_app/lib/status.test.ts` (7 neue Tests, decken AC 1/4/5 + alle Edge Cases ab).
+- **Vitest gesamt: 116/116 grün (12 Dateien)** — keine Regression.
+- ESLint der geänderten Dateien sauber. (Vorbestehender `tsc`-Fehler nur in unverändertem `lib/md-tree.test.ts`.)
+
+### Nicht durchgeführt
+- Visueller Browser-Smoke (375/768/1440 px) nicht manuell ausgeführt: Die DOM-Struktur ist identisch zur bisherigen Basename-Anzeige (gleiche `truncate`-Container, nur andere Text-Quelle) → kein verändertes Layout-Risiko. Bei Bedarf via `npm run dev` nachholbar.
+
+### Bugs
+Keine (keine Critical/High/Medium/Low).
+
+### Production-Ready: **YES** — keine Critical/High-Bugs. Status → Approved.

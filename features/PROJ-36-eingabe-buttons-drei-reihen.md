@@ -1,8 +1,19 @@
 # PROJ-36: Eingabe-Buttons auf drei Reihen (Senden · Mikrofon+Büroklammer · Stop)
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-25 · **Version:** 0.12.0 · **Host:** Dev-VPS (host-native systemd + Caddy, GitHub-Webhook Auto-Deploy aus `main`)
+- **Geliefert:** Eingabe-Buttons in drei Reihen (Senden · Mikrofon+Büroklammer · Stop).
+
+## Implementation Notes (Frontend)
+- **`session-clipboard-button.tsx`**: Auf Icon-only umgestellt (`size="icon"`). Textbeschriftung „Anhängen"/„Lädt…" entfällt; `uploading` zeigt jetzt `Loader2`-Spinner statt `Paperclip`. Deutsches `aria-label` (`„Datei anhängen"` / `„Datei wird angehängt…"`) + `title` bleiben. Neue optionale `className`-Prop (via `cn`), damit der Composer `flex-1` zum Füllen der Icon-Reihe durchreichen kann.
+- **`sessions/[id]/page.tsx`**: Button-Spalte von 4 auf 3 Reihen reduziert. Reihe 2 ist eine `flex gap-2`-Gruppe mit `PushToTalkButton` (links) + `SessionClipboardButton` (rechts), beide `flex-1` → gleich breit, kein Umbruch bei 375 px. Senden bleibt Reihe 1, Stop Reihe 3 (konditional `!ended`). Höhe weiter aus den Buttons abgeleitet (kein Magic-Number) → PROJ-29-Symmetrie unverändert.
+- **`push-to-talk-button.tsx`**: Unverändert (war schon `size="icon"` + deutsches `aria-label`), nur neu platziert + `flex-1` über bestehende `className`-Prop.
+- Verifikation: `tsc`/`eslint` auf den geänderten Dateien sauber. Kein Backend, keine API-Änderung.
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit / Session-Eingabeleiste) — der Composer im Session-Detail.
@@ -53,3 +64,84 @@ Der **Anhängen-Button** verliert seine Textbeschriftung „Anhängen" und wird 
 - Reihe 2 als kleine 2-Spalten-Flex/Grid-Gruppe innerhalb der bestehenden Button-Spalte; shadcn/ui-Button mit `size="icon"` für die Icon-Buttons.
 - Höhe weiterhin **aus den Buttons abgeleitet** (kein Magic-Number), damit PROJ-29-Symmetrie nicht erneut bricht.
 - Icon-only-Buttons brauchen `aria-label`/`title` (deutsch) für Zugänglichkeit.
+
+## Tech Design (Solution Architect)
+**Erstellt:** 2026-06-25 · **Stack:** Next.js 16 (App Router) Frontend-only — kein Backend, keine DB · **Branch:** dev
+
+### Einordnung
+Reiner Layout-/Markup-Fix an **einer** bestehenden Stelle (Session-Composer). Keine neue Route, kein State, keine API. Risiko minimal; Hauptaugenmerk: Höhen-Symmetrie (PROJ-29) und Barrierefreiheit der Icon-only-Reihe nicht brechen.
+
+### Komponenten-Struktur (Ist → Soll)
+Heute (4 vollbreite Reihen, `sessions/[id]/page.tsx:363`):
+```
+Button-Spalte (flex-col)
+├── Senden          (volle Breite)
+├── Anhängen        (Icon + Text, volle Breite)
+├── Mikrofon        (size=icon, volle Breite)
+└── Stop            (volle Breite, nur wenn !ended)
+```
+Soll (3 Reihen):
+```
+Button-Spalte (flex-col)
+├── Senden                         ← Reihe 1, volle Breite
+├── Icon-Reihe (flex, 2 Spalten)   ← Reihe 2
+│   ├── Mikrofon  (size=icon)      links
+│   └── Büroklampe (size=icon)     rechts
+└── Stop                           ← Reihe 3, volle Breite (nur wenn !ended)
+```
+
+### Umzusetzen
+1. **`session-clipboard-button.tsx`** — Icon-only-Variante: Text „Anhängen"/„Lädt…" entfällt, Button wird `size="icon"`; statt Text ein Lade-Zustand über das Icon (z. B. `Loader2` spinnend bei `uploading`, sonst `Paperclip`) analog zu `push-to-talk-button.tsx`. `aria-label`/`title` deutsch: „Datei anhängen" (bzw. „Lädt…" während Upload). Upload-Verhalten (`onPick`, `disabled`, `uploading`) bleibt 1:1.
+2. **`sessions/[id]/page.tsx`** (Composer) — Mikrofon + Büroklammer in eine **2-Spalten-Flex-Reihe** zusammenfassen (`flex gap-2`, beide `flex-1`/gleich hoch), zwischen Senden (oben) und Stop (unten). `items-stretch`-Symmetrie der Textarea bleibt, da Höhe weiterhin aus den Button-Reihen abgeleitet wird (kein Magic-Number).
+3. **`push-to-talk-button.tsx`** — unverändert (schon `size="icon"` + deutsches `aria-label`); nur Platzierung in der Icon-Reihe.
+
+### Tech-Entscheidungen (Begründung)
+- **Icon-only statt Text für Anhängen:** zwei Icon-Aktionen (Mikro/Büroklammer) teilen sich eine Reihe → spart eine volle Zeile; deutsches `aria-label`/`title` erhält Barrierefreiheit trotz fehlendem Text.
+- **Höhe aus Buttons abgeleitet (kein Pixel-Wert):** verhindert ein erneutes Brechen der PROJ-29-Symmetrie; die Textarea (`items-stretch`) folgt automatisch der neuen, niedrigeren Button-Spalte.
+- **Reihe 2 als Flex mit gleich breiten Buttons:** auch bei 375 px kein Umbruch/Überlappen; Mindest-Tap-Größe über `size="icon"`.
+- **Stop bleibt konditional unten:** bei beendeter Session (`ended`) entfällt Reihe 3 → sauberes 2-Reihen-Layout (Senden + Icon-Reihe), keine schwebende Lücke.
+
+### Betroffene Dateien
+- `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx` (Composer-Markup, Reihe-2-Gruppe)
+- `nextjs_app/components/cockpit/session-clipboard-button.tsx` (Icon-only-Variante)
+- `push-to-talk-button.tsx` — nur Platzierung, keine Änderung nötig
+- Test-Hinweis QA: kein Backend; visuelle Prüfung Senden/Icon-Reihe/Stop + 375 px, plus Snapshot/Render-Test, dass die Büroklammer ein `aria-label` trägt.
+
+### Dependencies
+Keine neuen Pakete. Genutzt: `lucide-react` (`Paperclip`, `Loader2`, `Mic`, `Square` — bereits im Projekt), shadcn/ui `Button` (`size="icon"`).
+
+## QA Test Results
+**Getestet:** 2026-06-25 · **Branch:** dev · **Methode:** Code-Review gegen ACs + Vitest-Render-Tests (`renderToStaticMarkup`, kein jsdom) + volle Regressionssuite. Reiner Frontend-Layout-Fix → kein Backend-/Security-/Tenant-Red-Team anwendbar.
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis | Nachweis |
+|---|-----------|----------|----------|
+| 1 | Drei Reihen: Senden (voll) · Mikro+Büroklammer (eine Reihe) · Stop (voll) | ✅ Pass | `page.tsx` Button-Spalte `flex-col`; Reihe 2 `flex gap-2` mit beiden Icon-Buttons |
+| 2 | Anhängen = nur Büroklammer-Icon (kein Text), Upload-Funktion bleibt | ✅ Pass | Test „zeigt keine Textbeschriftung mehr"; `onPick`-Verhalten unverändert |
+| 3 | Mikro + Büroklammer nebeneinander, gleich hoch | ✅ Pass | Beide `size="icon"` (→ identische Höhe), beide `flex-1` (→ gleiche Breite), in `flex gap-2` |
+| 4 | Stop unten; bei beendeter Session konsistent (2 Reihen) | ✅ Pass | `{!ended && …}` → Layout fällt sauber auf Senden + Icon-Reihe zurück |
+| 5 | Tooltips/aria-Labels deutsch (Mikro/Büroklammer) | ✅ Pass | Clipboard `aria-label="Datei anhängen"` (Test); Mic-Label „Diktieren (Push-to-Talk)"/„Aufnahme stoppen" |
+| 6 | Höhen-Symmetrie zur Textarea (PROJ-29) bleibt | ✅ Pass | `items-stretch` unverändert; Höhe aus Buttons abgeleitet, kein Magic-Number |
+| 7 | Keine Funktionsänderung an Senden/Upload/Diktat/Stop | ✅ Pass | Nur Markup/Icon geändert; Handler (`handleSend`/`attachFiles`/`onTranscript`/`handleStop`) unverändert |
+
+### Edge Cases
+| Fall | Ergebnis | Anmerkung |
+|------|----------|-----------|
+| Beendete Session (kein Stop) | ✅ | Zwei Reihen, keine schwebende Lücke |
+| Push-to-Talk aufnehmend | ✅ | `PushToTalkButton` unverändert (destructive + `animate-pulse`) |
+| Upload läuft (`uploading`) | ✅ | `Loader2`-Spinner + `disabled`; `size="icon"` fixe Breite → kein Zeilenversatz (Test bestätigt `disabled`) |
+| Schmaler Viewport 375 px | ⚠️ Pass (nicht browser-verifiziert) | Icon-Reihe: zwei `flex-1`-Icon-Buttons ohne Text → kein Umbruch zu erwarten; visuelle Prüfung im Live-Build empfohlen, Risiko niedrig |
+| Disabled (leerer Input / pending Decision) | ✅ | `disabled`-Logik unverändert |
+
+### Tests
+- **Neu:** `components/cockpit/session-clipboard-button.test.tsx` — 5 Render-Tests (Icon-only, deutsches aria-label, uploading-Zustand, disabled, className-Durchreichung). **5/5 grün.**
+- **Regression:** volle Vitest-Suite **121/121 grün** (13 Dateien). ESLint sauber.
+
+### Beobachtungen (kein Bug)
+- AC5 nennt für das Mikrofon den Begriff „Spracheingabe"; das bestehende Label lautet „Diktieren (Push-to-Talk)" / „Aufnahme stoppen" — beschreibt die Sprach-/Diktat-Aktion auf Deutsch ausreichend. Kein Handlungsbedarf.
+
+### Bugs
+Keine (0 Critical / 0 High / 0 Medium / 0 Low).
+
+### Produktionsreife: **READY** ✅
+Keine Critical/High-Bugs. Einzige Restunsicherheit: rein visuelle 375-px-Prüfung im Live-Build (Risiko niedrig).

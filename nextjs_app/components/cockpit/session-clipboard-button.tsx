@@ -6,18 +6,21 @@
 // eingefügt — ohne Wechsel in den Fileexplorer.
 
 import { useRef } from "react";
-import { Paperclip } from "lucide-react";
+import { Loader2, Paperclip } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export function SessionClipboardButton({
   onPick,
   disabled,
   uploading,
+  className,
 }: {
   onPick: (files: File[]) => void;
   disabled?: boolean;
   uploading?: boolean;
+  className?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -36,13 +39,23 @@ export function SessionClipboardButton({
       />
       <Button
         type="button"
+        size="icon"
         variant="outline"
         disabled={disabled || uploading}
         onClick={() => inputRef.current?.click()}
-        title="Datei anhängen — oder ins Eingabefeld ziehen / einfügen (Strg/Cmd+V)"
+        aria-label={uploading ? "Datei wird angehängt…" : "Datei anhängen"}
+        title={
+          uploading
+            ? "Datei wird angehängt…"
+            : "Datei anhängen — oder ins Eingabefeld ziehen / einfügen (Strg/Cmd+V)"
+        }
+        className={cn("shrink-0", className)}
       >
-        <Paperclip className="size-4" />
-        {uploading ? "Lädt…" : "Anhängen"}
+        {uploading ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <Paperclip className="size-4" />
+        )}
       </Button>
     </>
   );
