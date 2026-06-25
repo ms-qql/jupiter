@@ -1,6 +1,6 @@
 # PROJ-24: Vault als geteilter Dienst (auch für eingebettete Apps)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-25
 **Baustein:** #14
@@ -122,6 +122,22 @@ Versioniert über Pfad-Präfix `/vault/v1`; interne Layout-Brüche werden in der
 | Beispiel-Konsument (iFrame-App) | Doku in `docs/` + Eintrag in `consumers.yaml` |
 
 **Verantwortlich:** Backend Developer (`/abc-backend`). Kein Frontend nötig (Konsumenten sind Apps/iFrames; optionales Konfig-UI für `consumers.yaml` später).
+
+### Implementierung (Backend, 2026-06-25 · Branch `dev`)
+Backend vollständig umgesetzt, 32 neue Tests + volle Suite (770) grün.
+
+**Neue/erweiterte Dateien:**
+- `backend/app/routes/vault_v1.py` (neu) — versionierte Fassade `/vault/v1` mit `GET /read`, `GET /search`, `GET /resolve`, `POST /write`. Consumer-Auth via Header-Dependency `get_consumer`; Scope-Gates `_require_read`/`_require_write`.
+- `backend/app/engine/consumers.py` (neu) — `ConsumerRegistry` (live mtime-gecacht wie `EngineRegistry`) + `Consumer` (Scope-Globs read/write). `_glob_to_regex`: `**` über Ordnergrenzen, `*` segment-intern. Key-Vergleich konstantzeit (`hmac.compare_digest`). Kein Default-Vollzugriff. Optionaler interner `jupiter`-Konsument nur bei gesetztem `JUPITER_VAULT_INTERNAL_CONSUMER_KEY`.
+- `backend/app/engine/vault.py` — `VaultService` erweitert: `file_version` (sha256-16 Inhalts-Hash), `read_at` (full/excerpt + 413 bei Übergröße), `resolve_pointer` (Pointer→Ausschnitt), `write_at` (create/overwrite/append + optimistische `base_version`-Prüfung), `audit_write` (Append-only JSONL). Neue `VersionConflictError` trägt `current` (→ 409 mit `current_version`).
+- `backend/app/schemas/vault_v1.py` (neu) — Pydantic-v2-Vertrag.
+- `backend/app/config.py` — `consumers_config_path`, `vault_internal_consumer_key`, `vault_max_read_bytes` (1 MB), `vault_audit_rel_path` (`_audit/vault-writes.jsonl`).
+- `backend/app/main.py` — Registry an `app.state.consumers`, Router registriert.
+- `backend/config/consumers.example.yaml` (neu) + `.gitignore`-Eintrag für `consumers.yaml`.
+
+**Konflikt-Sicherheit:** `create` auf existierende Datei → 409; `overwrite` ohne/mit falscher `base_version` → 409 (kein Last-Write-wins); `append` immer atomar mit Datei-Lock.
+
+**Deviationen vom Design:** Path-Resolution für Schreibzugriffe nutzt die vault-weite Traversal-Härtung (`_resolve_read`); die Bereichsgrenze kommt nun aus dem **Consumer-Scope** (nicht mehr fix aus dem Jupiter-Subdir) — so kann ein Konsument gezielt auf einen Teilbereich beschränkt werden. `.md`-Pflicht für Schreibzugriffe (offenes MD bleibt Wahrheit). Interne in-process-Aufrufer (challenge/coordinator/recovery/manager/scout) bleiben auf der direkten `VaultService`-API (eine Quelle der Wahrheit) — sie über HTTP `/vault/v1` zu zwingen wäre falsch; der versionierte Vertrag ist die **externe** Schicht.
 
 ## QA Test Results
 _To be added by /abc-qa_

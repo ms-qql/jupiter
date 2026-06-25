@@ -1,0 +1,35 @@
+# PROJ-24 — Konsumenten-Registry des geteilten Vault-Dienstes (/vault/v1).
+#
+# Kopiere diese Datei nach `consumers.yaml` (gitignored) und trage echte Keys ein.
+# Jeder Konsument (z. B. eine eingebettete/fremde App, PROJ-18 #13) bekommt:
+#   id      — eindeutiger Name (Header X-Vault-Consumer); landet im Audit-Log.
+#   api_key — geheimer Schlüssel (Header X-Vault-Key). NUR hier, nie im Repo.
+#   read    — Glob-Pfade (vault-relativ), die der Konsument LESEN/SUCHEN darf.
+#   write   — Glob-Pfade, die er SCHREIBEN darf. Leer = nur lesen.
+#
+# Glob-Regeln: `**` matcht über Ordnergrenzen (beliebige Tiefe), `*` nur innerhalb
+# eines Segments. KEIN Eintrag = kein Zugriff (kein Vollzugriff per Default).
+#
+# Der eingebaute Voll-Scope-Konsument „jupiter" (Lesen ganzer Vault, Schreiben im
+# Jupiter-Bereich) ist NICHT hier konfiguriert, sondern wird nur aktiv, wenn die
+# Server-Umgebung JUPITER_VAULT_INTERNAL_CONSUMER_KEY setzt (Single-User-Brücke
+# bis PROJ-25/JWT). Die id „jupiter" ist reserviert.
+
+consumers:
+  # Beispiel: eine eingebettete Whiteboard-/Notiz-App, die nur einen geteilten
+  # Arbeitsbereich + das kuratierte Wissen lesen und in den Shared-Bereich schreiben darf.
+  - id: excalidraw
+    api_key: "CHANGE_ME_zufaelliger_langer_key"
+    read:
+      - "Agentic OS/Jupiter/Shared/**"
+      - "Agentic OS/Jupiter/Knowledge/**"
+    write:
+      - "Agentic OS/Jupiter/Shared/**"
+
+  # Beispiel: ein reiner Lese-Konsument (z. B. ein externes Dashboard), das den
+  # kuratierten Wissensstand anzeigt, aber nichts schreiben darf.
+  - id: readonly-dashboard
+    api_key: "CHANGE_ME_anderer_langer_key"
+    read:
+      - "Agentic OS/Jupiter/Knowledge/**"
+    write: []

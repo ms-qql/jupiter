@@ -24,6 +24,7 @@ from .db import (
 from .engine import liveness
 from .engine.base import EngineDriver
 from .engine.challenge import ChallengeService
+from .engine.consumers import consumer_registry
 from .engine.coordinator import CoordinatorService
 from .engine.files import FileService
 from .engine.git_service import GitService
@@ -56,6 +57,7 @@ from .routes import (
     transcription,
     usage,
     vault,
+    vault_v1,
     video_summary,
 )
 
@@ -198,6 +200,8 @@ def create_app(
     )
     vault_service = vault_service or VaultService()
     app.state.vault = vault_service
+    # PROJ-24: Konsumenten-Registry des geteilten Vault-Dienstes (id+key+Scope, live aus YAML).
+    app.state.consumers = consumer_registry
     app.state.md_reader = MdReaderService()
     # PROJ-42: VPS-Admin Host-Metriken (read-only, in-memory Snapshot + Verlauf).
     app.state.metrics = MetricsService()
@@ -230,6 +234,7 @@ def create_app(
     app.include_router(sessions.router)
     app.include_router(constitution.router)
     app.include_router(vault.router)
+    app.include_router(vault_v1.router)  # PROJ-24: geteilter, versionierter Vault-Dienst
     app.include_router(md.router)
     app.include_router(metrics.router)
     app.include_router(permission.router)

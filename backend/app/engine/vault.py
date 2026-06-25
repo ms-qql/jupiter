@@ -17,6 +17,7 @@ Geschriebene Dateien sind valides Obsidian-MD mit YAML-Frontmatter
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -158,6 +159,18 @@ def _parse_block(block: str) -> dict:
             value = value.strip("'")
         out[key] = value
     return out
+
+
+class VersionConflictError(Exception):
+    """PROJ-24: optimistische Versionsprüfung schlug fehl (→ 409 in der Route).
+
+    ``current`` trägt die tatsächliche aktuelle Version mit, damit der Konsument nach
+    Re-Lesen mit korrektem ``base_version`` erneut schreiben kann.
+    """
+
+    def __init__(self, message: str, current: str | None = None) -> None:
+        super().__init__(message)
+        self.current = current
 
 
 @dataclass
@@ -492,6 +505,164 @@ class VaultService:
                 "project_name": state.project_name or title,
             },
         )
+
+    # --- Geteilter Dienst /vault/v1 (PROJ-24) ------------------------------
+    #
+    # Pfad-agnostische Bausteine für die versionierte Fassade: Lesen/Auflösen vault-weit
+    # (Scope-Gate liegt in der Route, nicht im Unterbaum), Schreiben an einen beliebigen
+    # erlaubten Pfad mit optimistischer Versionsprüfung (kein stilles Überschreiben).
+    # ``version`` = kurzer Inhalts-Hash → Konsumenten erkennen Konflikte (If-Match-Idee).
+
+    @staticmethod
+    def _hash(content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+
+    def file_version(self, rel_path: str) -> str | None:
+        """Aktuelle Version (Inhalts-Hash) einer Datei oder ``None`` wenn nicht vorhanden."""
+        try:
+            real = self._resolve_read(rel_path)
+            with open(real, encoding="utf-8") as fh:
+                return self._hash(fh.read())
+        except (OSError, ValueError):
+            return None
+
+    def read_at(
+        self, rel_path: str, *, mode: str = "full", offset: int = 0, limit: int | None = None,
+        max_bytes: int = 0,
+    ) -> dict:
+        """Liest Datei/Ausschnitt vault-weit (Pointer-first). ``mode``: full | excerpt.
+
+        ``full`` mit ``max_bytes > 0`` wirft ``ValueError`` bei Überschreitung (→ 413 in der
+        Route; Edge Case „Große Datei → Ausschnitt nutzen"). ``excerpt`` schneidet ab
+        ``offset`` ``limit`` Zeichen heraus (kontextsparsam). Liefert immer ``version`` +
+        ``total_chars`` + ``truncated``. ``FileNotFoundError`` wenn nicht vorhanden.
+        """
+        if mode not in ("full", "excerpt"):
+            raise ValueError("mode muss full | excerpt sein.")
+        real = self._resolve_read(rel_path)
+        if mode == "full" and max_bytes > 0:
+            try:
+                if os.path.getsize(real) > max_bytes:
+                    raise ValueError(
+                        "Datei zu groß für Volltext — bitte mode=excerpt (Ausschnitt) nutzen."
+                    )
+            except OSError:
+                pass  # getsize scheitert → das offene Lesen liefert den passenden Fehler.
+        with open(real, encoding="utf-8") as fh:  # FileNotFoundError → 404 in der Route
+            content = fh.read()
+        version = self._hash(content)
+        total = len(content)
+        if mode == "full":
+            return {
+                "path": self._rel(real), "version": version, "content": content,
+                "offset": 0, "returned_chars": total, "total_chars": total, "truncated": False,
+            }
+        start = max(0, int(offset))
+        span = total - start if limit is None else max(0, int(limit))
+        excerpt = content[start : start + span]
+        return {
+            "path": self._rel(real), "version": version, "content": excerpt,
+            "offset": start, "returned_chars": len(excerpt), "total_chars": total,
+            "truncated": start + len(excerpt) < total,
+        }
+
+    def resolve_pointer(self, rel_path: str, line: int, radius: int = 20) -> dict:
+        """Pointer (Pfad + Zeile) → Volltext-Ausschnitt um die Zeile (± ``radius`` Zeilen)."""
+        real = self._resolve_read(rel_path)
+        with open(real, encoding="utf-8") as fh:  # FileNotFoundError → 404
+            lines = fh.read().splitlines()
+        total_lines = len(lines)
+        center = max(1, int(line))
+        radius = max(0, int(radius))
+        start = max(0, center - 1 - radius)
+        end = min(total_lines, center + radius)
+        excerpt = "\n".join(lines[start:end])
+        return {
+            "path": self._rel(real), "line": center, "start_line": start + 1,
+            "end_line": end, "total_lines": total_lines, "excerpt": excerpt,
+            "version": self._hash("\n".join(lines)),
+        }
+
+    def write_at(
+        self, rel_path: str, content: str, *, mode: str = "create", base_version: str | None = None,
+    ) -> dict:
+        """Schreibt an einen erlaubten Vault-Pfad. ``mode``: create | overwrite | append.
+
+        Konfliktsicher (Edge Case „zwei Konsumenten, dieselbe Datei"):
+        - ``create``    → Datei darf NICHT existieren, sonst ``FileExistsError`` (→ 409).
+        - ``overwrite`` → existiert die Datei, MUSS ``base_version`` die aktuelle Version
+          treffen, sonst ``VersionConflictError`` (→ 409). Kein ``base_version`` bei
+          existierender Datei = abgelehnt (verhindert blindes Last-Write-wins).
+        - ``append``    → hängt atomar mit Datei-Lock an (immer konfliktfrei).
+
+        Der Pfad wird vault-weit traversal-gehärtet aufgelöst (``_resolve_read``); die
+        Scope-Erlaubnis prüft die Route VOR dem Aufruf. Nur ``.md`` (offenes MD bleibt
+        die Wahrheit). Liefert ``{path, version, action, bytes, version_before}``.
+        """
+        if mode not in ("create", "overwrite", "append"):
+            raise ValueError("mode muss create | overwrite | append sein.")
+        if not rel_path.lower().endswith(".md"):
+            raise ValueError("Nur Markdown-Dateien (.md) — der Vault bleibt offenes MD.")
+        real = self._resolve_read(rel_path)  # gleiche Traversal-Härtung wie beim Lesen
+        exists = os.path.exists(real)
+        if exists and os.path.isdir(real):
+            raise ValueError("Zielpfad ist ein Verzeichnis.")
+        before = self.file_version(rel_path) if exists else None
+        text = content if content.endswith("\n") else content + "\n"
+
+        if mode == "create":
+            if exists:
+                raise FileExistsError(f"Datei existiert bereits: {self._rel(real)}")
+            self._atomic_write(real, text)
+        elif mode == "overwrite":
+            if exists:
+                if not base_version:
+                    raise VersionConflictError(
+                        "base_version nötig zum Überschreiben einer bestehenden Datei.", before
+                    )
+                if base_version != before:
+                    raise VersionConflictError(
+                        "Versionskonflikt — die Datei wurde zwischenzeitlich geändert.", before
+                    )
+            self._atomic_write(real, text)
+        else:  # append
+            self._append_locked(real, ("" if not exists else "\n") + text)
+
+        after = self.file_version(rel_path)
+        return {
+            "path": self._rel(real), "version": after, "action": mode,
+            "bytes": len(text.encode("utf-8")), "version_before": before,
+        }
+
+    def audit_write(
+        self, *, consumer_id: str, path: str, action: str, byte_count: int,
+        version_before: str | None, version_after: str | None,
+    ) -> None:
+        """Schreibt eine Append-only Audit-Zeile (JSONL) in den Jupiter-Bereich.
+
+        Offen lesbar (keine Black-Box, AC) und trägt die Herkunft jedes Schreibzugriffs
+        (welcher Konsument, wann, welcher Pfad, Version vorher/nachher). Best-effort:
+        ein Audit-Fehler darf den erfolgreichen Schreibzugriff nicht zurückrollen.
+        """
+        rel = settings.vault_audit_rel_path
+        try:
+            target = self._resolve_write(rel)
+        except ValueError:
+            return
+        entry = {
+            "ts": _now().isoformat(),
+            "consumer": consumer_id,
+            "action": action,
+            "path": path,
+            "bytes": byte_count,
+            "version_before": version_before,
+            "version_after": version_after,
+        }
+        try:
+            self._append_locked(target, json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            log = __import__("logging").getLogger(__name__)
+            log.warning("Vault-Audit konnte nicht geschrieben werden (Pfad %s).", rel)
 
     # --- atomare Datei-Operationen -----------------------------------------
 

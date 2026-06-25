@@ -22,6 +22,11 @@ _DEFAULT_WATCHDOG_PATH = str(Path(__file__).resolve().parent.parent / "config" /
 # Codeänderung registriert (live editierbar, mtime-geprüft wie Policy/Watchdog).
 _DEFAULT_ENGINES_PATH = str(Path(__file__).resolve().parent.parent / "config" / "engines.yaml")
 
+# Standard-Ort der Konsumenten-Registry (PROJ-24): backend/config/consumers.yaml. Muss
+# NICHT existieren — fehlt/defekt → kein externer Konsument (nur der optionale interne
+# Voll-Scope-Konsument, falls ein Key gesetzt ist). Live mtime-geprüft wie engines.yaml.
+_DEFAULT_CONSUMERS_PATH = str(Path(__file__).resolve().parent.parent / "config" / "consumers.yaml")
+
 # Standard-Ort der Liveness-Schwellen (PROJ-27): backend/config/liveness.yaml. Muss
 # NICHT existieren — fehlt/defekt → eingebaute konservative Defaults (nie „kein Liveness";
 # Auto-Reanimierung mit hartem Limit). Live mtime-geprüft wie Policy/Watchdog.
@@ -173,6 +178,22 @@ class Settings(BaseSettings):
     vault_jupiter_subdir: str = "Agentic OS/Jupiter"
     # Roh-Session-Logs beim Session-Ende automatisch in den Vault schreiben (Grundlage #8/#9).
     vault_autolog: bool = True
+
+    # --- Vault als geteilter Dienst (PROJ-24) ----------------------------
+    # Konsumenten-Registry (id + api_key + read/write-Scope-Globs). Live mtime-geprüft;
+    # fehlt/kaputt → kein externer Konsument (Dienst bleibt nutzbar, nur intern/leer).
+    # Secrets (api_key) NUR hier in der gitignored Datei, nie im Repo.
+    consumers_config_path: str = _DEFAULT_CONSUMERS_PATH
+    # Optionaler eingebauter Voll-Scope-Konsument „jupiter" für HTTP-Aufrufer (Lesen ganzer
+    # Vault, Schreiben im Jupiter-Bereich). Leer = AUS (kein impliziter HTTP-Vollzugriff).
+    # Single-User-Brücke bis PROJ-25 (JWT) — Key aus der Server-Umgebung.
+    vault_internal_consumer_key: str = ""
+    # Harte Obergrenze für Volltext-Lesen über /vault/v1/read?mode=full (Bytes). Größere
+    # Dateien → 413 mit Hinweis auf mode=excerpt (Edge Case „Große Datei").
+    vault_max_read_bytes: int = 1_000_000
+    # Pfad des Audit-Logs (Append-only JSONL) relativ zum Jupiter-Schreibbereich. Bleibt
+    # offen lesbar (keine Black-Box) und trägt Herkunft jedes Schreibzugriffs.
+    vault_audit_rel_path: str = "_audit/vault-writes.jsonl"
 
     # --- Kuratierung / Vault Stufe 3 (PROJ-15) ---------------------------
     # Ereignisgetriebene Wissens-Vorschläge: erkannte Marker (Bug gelöst / ADR /
