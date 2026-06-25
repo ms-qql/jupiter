@@ -1,6 +1,6 @@
 # PROJ-41: Video Summary (native Micro-App)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -225,8 +225,47 @@ QueueItem: `{id, url, owner, status, result_note_path, result_pdf_path, error_me
 
 > Render läuft über den bestehenden native-Zweig in `app/(cockpit)/apps/[key]/page.tsx` (`NativeMicroAppHost` → `resolveMicroApp`) — keine Routen-Änderung nötig. Die Sidebar-Sektion „Micro-Apps" listet den Eintrag über `GET /engines` (group=micro); Direkt-URL `/apps/video_summary` bleibt auch bei ausgeblendeter Sektion erreichbar.
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (/abc-qa, 2026-06-25)
+
+**Branch:** `dev` · **Ergebnis: PRODUCTION-READY** (keine Critical/High-Bugs).
+
+### Automatisierte Tests
+- **Backend:** `test_proj41_video_summary.py` (17) + `test_proj41_qa.py` (6) = **23 PROJ-41-Tests grün**. Volle Suite **657 passed**, keine Regression. Regressions-Spot-Check `test_proj40_microapps`/`test_proj18_engines` (34) grün.
+- **Frontend:** `eslint` 0 Fehler · `tsc --noEmit` keine Fehler in den neuen Dateien · **`next build` erfolgreich** (`/apps/[key]` kompiliert inkl. lazy nativer Komponente).
+- **Integrationsbeweis AC1/AC2:** `GET /engines` liefert `video_summary` mit `kind=native, group=micro, icon=film, available=true, url=null` (TestClient gegen die echte `engines.yaml`).
+
+### Acceptance Criteria — Matrix
+| # | Kriterium | Status | Beleg |
+|---|-----------|--------|-------|
+| 1 | Eintrag in Sidebar „Micro-Apps" (group:micro, kind:native), Label+Icon, Vollbild /apps/<key> | ✅ | engines.yaml + GET /engines + native-Route |
+| 2 | Native Micro-App (React, registriert) — kein iFrame | ✅ | Komponente + microapps-registry.ts |
+| 3 | Textarea akzeptiert mehrere URLs per Paste; Block-Zerlegung (Zeilenumbruch/Leerzeichen/Komma/Semikolon), getrimmt, dedup | ✅ | `parse_urls`-Tests, `add_urls` |
+| 4 | URL-Validierung: ungültige abgewiesen (deutsch), gültige übernommen | ✅ | per-URL `rejected` + 400 bei nur-ungültig; `test_invalid_url_does_not_enter_queue` |
+| 5 | Warteschlangen-Liste mit Status Wartend/Läuft/Fertig/Fehler | ✅ | `StatusBadge`, QueueRead |
+| 6 | „Jetzt ausführen" startet sofort | ✅ | `run-now` + `test_drossel…` |
+| 7 | Wiederkehrender Zeitplan einstellbar, automatisch abgearbeitet | ✅ | Tagesplan HH:MM, `test_schedule_due_sets_draining_and_advances` |
+| 8 | Nie mehr als 4 in Folge → Cooldown (30), dann weiter bis leer | ✅ | `test_drossel_pauses_after_batch_size` |
+| 9 | Cooldown-Dauer konfigurierbar (Default 30) | ✅ | Settings, `test_settings_survive_restart` |
+| 10 | Jede Verarbeitung ruft `hal-video-summary` über headless Session, ohne Skill-Änderung | ✅ | `build_prompt` + `manager.create`; Skill unberührt |
+| 11 | Session bestimmt Hal-Kategorie automatisch (kein Dialog); Notiz+PDF unter 04 Resources/ | ✅ | Prompt erzwingt Auto-Kategorie + bypassPermissions (kein AskUserQuestion) |
+| 12 | Bei „Fertig": Link auf Notiz/PDF | ✅ | Download-Links via `fileDownloadUrl`; `test_done_item_records_result_paths` |
+| 13 | Bei „Fehler": knappe Ursache + „Erneut versuchen" | ✅ | `error_message` + `retry`; 409 bei Nicht-Fehler |
+| 14 | Einträge entfernen | ✅ | DELETE; `test_remove_running_stops_session` |
+| 15 | Queue + Einstellungen überleben Reload/Neustart | ✅ | SQLite; `test_running_reset_to_pending_on_restart`, `test_settings_survive_restart` |
+| 16 | Alle Texte deutsch | ✅ | UI + Fehlermeldungen deutsch (Eigenname „Video Summary") |
+
+**Edge Cases** (Spec) — alle abgedeckt: >4 Videos→Pause (test), run-now während laufend→kein Doppelstart (test), Cron während Lauf→keine Überlappung (sequenziell + idempotenter Drain, test), ungültige/Doppel-URL (tests), Skill/Session-Fehler→error+retry, Tab zu→serverseitige Verarbeitung läuft weiter (Worker im Lifespan), Backend-Neustart→running→pending (test), Sektion ausgeblendet→Direkt-URL erreichbar (page.tsx lädt aus /engines unabhängig von der Sidebar-Sichtbarkeit).
+
+### Security-Audit (Red-Team)
+- **SQL-Injection:** keine — alle Queries parametrisiert; `update` zusätzlich mit Spalten-Whitelist. ✅
+- **Pfad-Scope:** Session-cwd (`video_summary_project_path`) wird über `validate_project_path` auf `allowed_roots` geprüft; Ergebnis-Download über `/files/download` erzwingt ebenfalls `allowed_roots` → ein außerhalb liegender Pfad ist nicht abrufbar. ✅
+- **Auth/RLS:** im MVP bewusst keins (Projekt-Entscheidung); `owner` gestempelt, nicht gefiltert — wie der Rest von Jupiter. Akzeptiert.
+- **Beobachtung (Low, akzeptiert):** Verarbeitungs-Sessions laufen mit `bypassPermissions` → für DIESE Sessions greifen die PROJ-4-Decision-Cards/der Selbst-Restart-Guard nicht. Eingegrenzt dadurch, dass der Prompt fest auf `/hal-video-summary <URL>` lautet (wohldefinierter, vault-skopierter Skill) und der cwd in `allowed_roots` liegt. Headless erfordert bypass (kein interaktives Gate bedienbar) — dokumentierte Architektur-Entscheidung, kein Blocker.
+
+### Bugs
+Keine Critical/High/Medium gefunden. Eine Low-UX-Note: ungültige Zeilen einer gemischten Paste werden als Aggregat-Zähler („Y ungültig") gemeldet, nicht pro Zeile — AC4 ist über Zähler + 400-bei-nur-ungültig erfüllt; kein Fix nötig.
+
+**Production-Ready: JA.**
 
 ## Deployment
 _To be added by /abc-deploy_
