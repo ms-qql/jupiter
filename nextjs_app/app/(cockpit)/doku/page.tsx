@@ -33,6 +33,13 @@ const EXPAND_PREFIXES: Record<string, string[]> = {
   project: ["features"],
 };
 
+// PROJ-31: zur Überschrift mit der Anker-ID scrollen (Slug aus markdown-view).
+function scrollToAnchor(hash: string): void {
+  const id = decodeURIComponent(hash.replace(/^#/, ""));
+  if (!id) return;
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function DocReader() {
   const router = useRouter();
   const pathname = usePathname();
@@ -56,6 +63,8 @@ function DocReader() {
   // PROJ-12: Lesen ⇄ Bearbeiten; dirtyRef speist die Verlassen-Warnung beim Navigieren.
   const [editing, setEditing] = useState(false);
   const dirtyRef = useRef(false);
+  // PROJ-31: Anker, zu dem nach dem Laden einer (anderen) Datei gescrollt wird.
+  const pendingAnchorRef = useRef<string | null>(null);
 
   // 1) Quellen + Index beider Quellen laden (Cross-Source-Wikilinks). Löst auch
   //    einen vault-relativen Pointer (?rel=) auf einen absoluten Pfad auf.
@@ -173,8 +182,12 @@ function DocReader() {
   );
 
   const selectPath = useCallback(
-    (path: string) => {
-      if (path === selectedPath) return;
+    (path: string, hash?: string) => {
+      if (path === selectedPath) {
+        // Schon offen → bei Anker (z. B. eigener Datei-Link mit #) nur scrollen.
+        if (hash) scrollToAnchor(hash);
+        return;
+      }
       // PROJ-12: ungespeicherte Änderungen → vor dem Wechsel nachfragen.
       if (
         dirtyRef.current &&
@@ -184,6 +197,8 @@ function DocReader() {
       }
       dirtyRef.current = false;
       setEditing(false);
+      // PROJ-31: Anker merken → nach dem Laden der Zieldatei dorthin scrollen.
+      pendingAnchorRef.current = hash ?? null;
       // Springt der Pfad in eine andere Quelle (Cross-Source-Wikilink), Tab mitschalten.
       const owner = sourceOf(path);
       const nextSource = owner ?? activeSource;
@@ -195,6 +210,15 @@ function DocReader() {
     },
     [sourceOf, activeSource, updateUrl, selectedPath],
   );
+
+  // PROJ-31: nach dem Rendern einer frisch geladenen Datei zum gemerkten Anker springen.
+  useEffect(() => {
+    if (fileLoading || !file) return;
+    const hash = pendingAnchorRef.current;
+    if (!hash) return;
+    pendingAnchorRef.current = null;
+    requestAnimationFrame(() => scrollToAnchor(hash));
+  }, [file, fileLoading]);
 
   // PROJ-12: nach dem Speichern den geladenen Stand (inkl. mtime/Hash) auffrischen,
   // damit die Lese-Ansicht konsistent bleibt.
@@ -315,7 +339,12 @@ function DocReader() {
                     </Button>
                   </div>
                   <FrontmatterPanel frontmatter={file.frontmatter} />
-                  <MarkdownView body={file.body} index={wikiIndex} onNavigate={(f) => selectPath(f.path)} />
+                  <MarkdownView
+                    body={file.body}
+                    index={wikiIndex}
+                    currentPath={file.path}
+                    onNavigate={(f) => selectPath(f.path, f.hash)}
+                  />
                   <BacklinksPanel path={file.path} onNavigate={selectPath} />
                 </article>
               )
