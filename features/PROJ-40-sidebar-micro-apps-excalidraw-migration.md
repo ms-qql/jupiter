@@ -1,6 +1,6 @@
 # PROJ-40: Sidebar-Sektion „Micro-Apps" + Excalidraw-Migration aus „Werkzeuge"
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -274,4 +274,11 @@ Visueller Klick-Flow im eingeloggten Browser: Sektion sichtbar · `/apps/whitebo
 Keine Critical/High-Bugs. Alle automatisierbaren ACs bestanden; rein visuelle Punkte als Deploy-Smoke notiert.
 
 ## Deployment
-_To be added by /deploy_
+- **Production-URL:** https://jupiter.auxevo.tech (Sidebar → „Micro-Apps")
+- **Deployed:** 2026-06-25 · **Version:** 0.14.0 · **Tag:** v0.14.0 (gemeinsam mit PROJ-39)
+- **Host:** Dev-VPS host-nativ (systemd `jupiter-backend`/`jupiter-frontend`) + Caddy-TLS; GitHub-Webhook deployt `main`.
+- **Mit ausgeliefert:** Micro-Apps-Sidebar-Sektion + Route `/apps/[key]`; Excalidraw aus dem „Werkzeuge"-Tab migriert (`group: micro`); `kind: native` für In-App-Apps.
+- **Smoke-Test (Browser, nach Deploy):**
+  - [ ] Sidebar zeigt „Micro-Apps" mit Excalidraw (Whiteboard); öffnet als Vollbild-Route
+  - [ ] Excalidraw erscheint NICHT mehr im „Werkzeuge"-Tab (genau eine Quelle)
+  - [ ] Toggle/Sort im Konfig-Panel

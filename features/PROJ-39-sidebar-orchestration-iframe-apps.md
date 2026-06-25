@@ -1,6 +1,6 @@
 # PROJ-39: Sidebar-Sektion „Orchestration" — Fremd-Apps per iFrame (Paperclip, Wayland)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -240,4 +240,13 @@ Das Muster „eingebettete self-hosted App" = **Caddy-Subdomain + optionale `hea
 ⚠️ **Deploy-Gate:** Die *reale* Einbettung von Paperclip/Wayland ist erst nach dem Infra-Schritt (`/abc-deploy`: 2 DNS-A-Records + Caddy-Blöcke mit `forward_auth` (Paperclip) bzw. `header_down`-Overrides (Wayland) + `caddy reload`) testbar. Bis dahin greift nur der „In neuem Tab öffnen"-Fallback. Der Live-Browser-Smoke (Einbettung lädt, Wayland-Framing nach Header-Override, Paperclip nur nach Jupiter-Login, Toggle/Sort im Panel, Mobile-Drawer) ist **nach** Deploy nachzuholen.
 
 ## Deployment
-_To be added by /deploy_
+- **Production-URL:** https://jupiter.auxevo.tech (Sidebar → „Orchestration")
+- **Deployed:** 2026-06-25 · **Version:** 0.14.0 · **Tag:** v0.14.0
+- **Host:** Dev-VPS host-nativ (systemd `jupiter-backend`/`jupiter-frontend`) + Caddy-TLS; GitHub-Webhook deployt `main` (`deploy.sh`: `reset --hard origin/main` → `npm ci && npm run build` → Service-Restart).
+- **Mit ausgeliefert:** Orchestration-Sidebar-Sektion + Vollbild-Route `/orchestration/[key]`; Registry-Einträge Paperclip/Wayland (`group: orchestration`).
+- **Infra (manuell, vor diesem Deploy erledigt):** DNS-A-Records `paperclip`/`wayland` → `187.124.182.215`; Caddy-Blöcke (Paperclip hinter eigener Forward-Auth-Instanz `jupiter-auth-paperclip` Port 9101, eigenes Cookie `paperclip_session`; Wayland `-X-Frame-Options` + `frame-ancestors https://jupiter.auxevo.tech`).
+- **Smoke-Test (Browser, nach Deploy):**
+  - [ ] Einloggen auf jupiter.auxevo.tech → Sidebar zeigt „Orchestration" mit Paperclip + Wayland
+  - [ ] Paperclip öffnen → eigener Login im iFrame (gleiche Credentials), danach eingebettet
+  - [ ] Wayland öffnen → eigener Wayland-Login, eingebettet (Framing-Override greift)
+  - [ ] Toggle/Sort der Einträge im Konfig-Panel; Direkt-URL bei ausgeblendeter Sektion
