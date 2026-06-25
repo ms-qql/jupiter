@@ -1,6 +1,6 @@
 # PROJ-37: File Explorer — kein leeres Vorschau-Fenster; aktives Fenster (Session) bleibt rechts
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -149,3 +149,9 @@ Die Umschaltlogik ist ein lokales Conditional in der `<main>`-Spalte; `FilePrevi
 
 ### G) Out of Scope
 - Keine zweite Live-WebSocket-Session im Explorer (bewusst 2B). Voll-Live-Interaktion bleibt `/sessions/[id]`.
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-25 · **Version:** 0.13.0 · Host-nativ (systemd + Caddy, Webhook auf `main`)
+- **Geliefert:** Aktives Session-Fenster bleibt im File-Explorer rechts statt leerer Vorschau (Variante 2B + zuletzt-fokussiert).
+- Gemeinsamer Deploy mit PROJ-38 (Sidebar-Sektionen).

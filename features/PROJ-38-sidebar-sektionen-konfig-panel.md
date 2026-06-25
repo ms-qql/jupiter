@@ -1,6 +1,6 @@
 # PROJ-38: Sidebar-Sektionen + Konfigurations-Panel (Sichtbarkeit, Reihenfolge, RESET)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -187,4 +187,8 @@ Keine Critical/High/Medium gefunden.
 ### Production-Ready: **JA** (keine Critical/High; 1 Low = manueller Browser-Smoke empfohlen)
 
 ## Deployment
-_To be added by /deploy_
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-25 · **Version:** 0.13.0 · Host-nativ (systemd + Caddy, Webhook auf `main`)
+- **Geliefert:** Sidebar-Sektionen („Workspace") + Konfig-Panel (Sichtbarkeit/Auge, Drag-Reorder, RESET, localStorage `jupiter.sidebar.v1`). Strukturgerüst für PROJ-39/40.
+- Gemeinsamer Deploy mit PROJ-37.
+- **Offen (Low, nicht blockierend):** Live-Browser-Smoke (Touch-Drag 375px, Reload-Persistenz, Popover im Mobile-Drawer) headless nicht ausgeführt → manueller Sicht-Check nach Deploy empfohlen.
