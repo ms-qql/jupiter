@@ -208,6 +208,17 @@ export function projectName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+/** PROJ-35: einheitlicher Anzeigename einer Session — der beim Erstellen
+ *  eingegebene Projekttitel (`project_name`, oft die Feature-Nummer), sonst
+ *  Pfad-Basename als Fallback. Eine Quelle der Wahrheit für Sidebar, Header
+ *  und Kachel, damit dieselbe Session überall denselben Namen trägt. */
+export function displayName(session: {
+  project_name: string | null;
+  project_path: string;
+}): string {
+  return session.project_name?.trim() || projectName(session.project_path);
+}
+
 /** Kompakte Laufzeit/Relativzeit, z. B. „4m", „2h", „gerade eben". */
 export function formatDuration(fromIso: string, nowMs: number): string {
   const start = Date.parse(fromIso);

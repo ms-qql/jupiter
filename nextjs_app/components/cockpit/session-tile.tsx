@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { canReanimate, contextLabel, costLabel, formatDuration, isTerminalStatus, modelLabel, projectName, statusMeta } from "@/lib/status";
+import { canReanimate, contextLabel, costLabel, displayName, formatDuration, isTerminalStatus, modelLabel, statusMeta } from "@/lib/status";
 import type { Session } from "@/lib/types";
 import { Ampel } from "./ampel";
 import { ContextGauge } from "./context-gauge";
@@ -47,8 +47,8 @@ export function SessionTile({
           liveness={session.liveness}
           autoAttempts={session.liveness_auto_attempts}
         />
-        <span className="min-w-0 flex-1 truncate font-medium">
-          {projectName(session.project_path)}
+        <span className="min-w-0 flex-1 truncate font-medium" title={displayName(session)}>
+          {displayName(session)}
         </span>
         <Badge variant="secondary" className="shrink-0 text-[10px]">
           {modelLabel(session.model)}
@@ -65,7 +65,7 @@ export function SessionTile({
         {isTerminal && (
           <DeleteSessionButton
             sessionId={session.session_id}
-            projectName={projectName(session.project_path)}
+            projectName={displayName(session)}
           />
         )}
       </div>

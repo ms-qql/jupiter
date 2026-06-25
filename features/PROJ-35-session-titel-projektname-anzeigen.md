@@ -1,8 +1,18 @@
 # PROJ-35: Session-Titel = eingegebener Projektname (Sidebar + Header) statt „jupiter"
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## Implementation Notes (Frontend)
+- **Branch:** dev. Reiner Next.js-Anzeige-Fix, keine Backend-/DB-Änderung (wie im Tech-Design).
+- Neuer geteilter Helper `displayName(session)` in `nextjs_app/lib/status.ts` (neben `projectName`): `project_name?.trim() || projectName(project_path)`. Strukturell typisiert ({project_name, project_path}) → nutzbar für `Session` **und** `SessionDetail`.
+- Drei Render-Stellen von `projectName(session.project_path)` auf `displayName(session)` umgestellt, jeweils mit `title`-Attribut für Volltext-Tooltip bei langen Titeln (`truncate` war schon vorhanden):
+  - `nextjs_app/components/cockpit/session-rail.tsx` (Sidebar/Rail-Item)
+  - `nextjs_app/components/cockpit/session-tile.tsx` (Cockpit-Kachel)
+  - `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx` (Session-Header `<h1>`)
+- Konsistenz: `DeleteSessionButton`-`projectName`-Prop in Rail + Tile ebenfalls auf `displayName(session)` umgestellt → Lösch-Dialog nennt denselben Namen wie die Anzeige.
+- Verifikation: `npx tsc --noEmit` ohne neue Fehler in den geänderten Dateien (einziger Fehler vorbestehend in `lib/md-tree.test.ts`), `eslint` der vier Dateien sauber.
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit / Session-Rail + Session-Header) — die Anzeigeorte.

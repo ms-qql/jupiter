@@ -10,9 +10,9 @@ import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FolderIco
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
+  displayName,
   formatDuration,
   isTerminalStatus,
-  projectName,
   railRank,
   statusMeta,
 } from "@/lib/status";
@@ -187,8 +187,8 @@ function RailItem({
     >
       <Ampel color={meta.ampel} size="sm" className="shrink-0" />
       <div className="min-w-0 flex-1">
-        <div className="truncate font-medium leading-tight">
-          {projectName(session.project_path)}
+        <div className="truncate font-medium leading-tight" title={displayName(session)}>
+          {displayName(session)}
         </div>
         <div className="truncate text-xs text-muted-foreground">
           {role ? `${role} · ${meta.label}` : meta.label}
@@ -197,7 +197,7 @@ function RailItem({
       {isTerminal ? (
         <DeleteSessionButton
           sessionId={session.session_id}
-          projectName={projectName(session.project_path)}
+          projectName={displayName(session)}
           className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
         />
       ) : (

@@ -25,9 +25,9 @@ import { ApiError, getSession, sendInput, stopSession } from "@/lib/api";
 import {
   canReanimate,
   contextLabel,
+  displayName,
   formatDuration,
   modelLabel,
-  projectName,
   statusMeta,
 } from "@/lib/status";
 import { cn } from "@/lib/utils";
@@ -149,8 +149,8 @@ export default function SessionDetailPage({
             size="md"
           />
         )}
-        <h1 className="text-lg font-semibold">
-          {head ? projectName(head.project_path) : "Session"}
+        <h1 className="text-lg font-semibold" title={head ? displayName(head) : undefined}>
+          {head ? displayName(head) : "Session"}
         </h1>
         {head && (
           <>
