@@ -1,6 +1,6 @@
 # PROJ-23: Cross-Agent-Review / Challenge (adversariell, engine-übergreifend)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-25
 **Baustein:** #30
@@ -195,7 +195,50 @@ Backend implementiert in vier Dateien (kein neues DB-Schema — in-memory + Vaul
 **Bekannte Einschränkung (UX):** Der Challenge-Einstieg sitzt auf der Session-Detailseite (die Challenge braucht eine Autor-Session-ID). Ein zusätzlicher Trigger direkt aus einer Artefakt-/Doku-Ansicht ist möglich, sobald dort die Autor-Session bekannt ist.
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Datum:** 2026-06-25 · **Tester:** QA Engineer · **Branch:** dev · **Entscheidung:** ✅ Production-ready (Approved)
+
+### Testumfang
+- Automatisiert: `backend/tests/test_proj23_challenge.py` — **23 passed** (Parser, Engine-Auswahl, Start/Attribution, Collection, 3 Aktionen, Rundenlimit, keine Befunde, Drift, + QA-Lückentests).
+- Regression Backend: **736 passed** (`pytest backend/tests`, 22,6 s) — keine Regression.
+- Regression Frontend: **vitest 169 passed** (19 Dateien) · `tsc --noEmit` fehlerfrei (Restmeldung = vorbestehende `lib/md-tree.test.ts`, nicht von PROJ-23) · `eslint` der geänderten Dateien fehlerfrei.
+
+### Acceptance Criteria (pass/fail)
+| # | Kriterium | Status | Beleg |
+|---|-----------|:--:|-------|
+| 1 | „Challenge"-Aktion in der UI auf prüfbarem Artefakt | ✅ | `ChallengeDialog` (Button in Session-Actions); Pointer wählbar |
+| 2 | Challenge startet Reviewer-Session über Dispatch-Schicht mit Pointer (kein Volltext-Duplikat) | ✅ | `ChallengeService.start` → `manager.create(role="reviewer")`; `Review` speichert `artifact_pointer`, nicht den Volltext; `test_challenge_starts_reviewer_session` |
+| 3 | Reviewer standardmäßig andere Engine; sonst gleiche + Warnung | ✅ | `pick_reviewer_engine`; `test_pick_reviewer_engine_prefers_other` / `_same_when_only_one`; `same_engine`-Flag in UI |
+| 4 | Strukturiertes Ergebnis (Befund+Schweregrad+Fundstelle+Gegenvorschlag) als Review-Notiz/Decision Card | ✅ | `collect` → `review_finding`-Cards; `test_reviews_collect_structured_findings` |
+| 5 | Pro Befund übernehmen/verwerfen/zurück; „zurück" an Autor-Session | ✅ | `resolve_finding`; `test_resolve_uebernehmen/verwerfen/zurueck` |
+| 6 | Jeder Review nennt Autor- + Reviewer-Engine/-Modell | ✅ | `ReviewRead`-Felder; Attribution in Card + Panel; Test asserts |
+| 7 | Reviewer ändert das Artefakt nicht | ✅ | Befunde sind nur Vorschläge; `test_resolve_verwerfen_does_not_touch_author` (author.sent leer) |
+| 8 | Review-Ergebnisse im Vault (Audit-Spur) | ✅ | `_write_vault_note` → `Knowledge/`; `test_ac8_review_result_written_to_vault` + `_no_findings_also_written` |
+| 9 | Alle Texte deutsch | ✅ | Prompts, UI, Vault-Notiz, Fehlermeldungen deutsch (Sichtprüfung) |
+
+### Edge Cases
+| Fall | Status | Beleg |
+|------|:--:|-------|
+| Nur eine Engine → Warnhinweis statt Block | ✅ | `same_engine=True`; `test_pick_reviewer_engine_same_when_only_one` |
+| Artefakt zu groß → RAG-Fenster statt stummem Abschneiden | ✅ | `test_large_artifact_uses_rag_window_not_truncation` |
+| Reviewer findet nichts → explizite „keine Befunde"-Notiz | ✅ | `test_no_findings_explicit_note` + Vault-Notiz |
+| Halluzinierte Befunde → „verwerfen" schließt ohne Artefakt-Änderung | ✅ | `test_resolve_verwerfen_does_not_touch_author` |
+| Veraltetes Artefakt → Versions-Drift markiert | ✅ | `test_version_and_stale_detection`; `stale`-Badge im Panel |
+| Reviewer-Session stirbt/timeoutet → „Review unvollständig" | ✅ | `test_incomplete_when_reviewer_dies_without_output` |
+| Endlos-Challenge → Rundenlimit (2) + Eskalation | ✅ | `test_round_limit_escalates` (409) |
+
+### Security / Red-Team
+- **Pfad-Traversal** über `artifact_pointer` (`../../../etc/passwd`): eingedämmt — `VaultService._resolve_read` wirft, der Inhalt gilt als „nicht lesbar" (kein Leak, `artifact_version=null`). `test_path_traversal_pointer_is_contained`. ✅
+- **Ungültige/keine Session-Engine** als Reviewer → 400 (`test_invalid_reviewer_engine_400`). ✅
+- **Fremd-Steuerung**: Befund-Auflösung gegen unbekanntes Review/Befund → 404 (`test_resolve_finding_unknown_review_404`, `test_resolve_finding_twice_404`). ✅
+- **Autor-Session beschäftigt** beim Routing eines Befunds → 409 statt Verkeilung (gehandhabt in `_route_to_author`). ✅
+- Single-User-MVP: kein JWT/RLS (bewusst, Stack-Override) → Tenant-Isolations-Red-Team N/A; `owner` wird serverseitig gestempelt. Echtes Auth kommt mit PROJ-25.
+
+### Bugs / Beobachtungen
+- **Keine Critical/High/Medium.**
+- **Low-1 (Design, dokumentiert):** Befunde werden **lazy** eingesammelt — die `review_finding`-Cards auf der Reviewer-Session erscheinen erst, nachdem `GET /sessions/{autor}/reviews` (bzw. `GET /reviews/{id}`) einmal lief. Im UI-Flow löst der `ChallengeDialog`/das `ReviewsPanel` das aus; navigiert man jedoch direkt zur Reviewer-Session, bevor die Übersicht geladen wurde, sind die Cards noch nicht materialisiert. Empfehlung (nicht blockierend): Cockpit pollt `GET /reviews` für laufende Reviewer-Sessions, oder ein Collect-on-WAITING-Hook.
+- **Low-2:** Emittiert ein (fehlverhaltendes) Reviewer-Modell nach Turn-Ende keinen parsebaren JSON-Block und bleibt `waiting` (lebend), zeigt das Panel „Reviewer prüft noch…", bis die Session terminal ist (dann „unvollständig"). Durch den strikten JSON-Prompt unwahrscheinlich; Mitigation vorhanden.
+
+### Production-Ready: **JA** — keine Critical/High-Bugs. Status → Approved.
 
 ## Deployment
 _To be added by /abc-deploy_

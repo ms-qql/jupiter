@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.engine.challenge import (
+    MAX_ARTIFACT_CHARS,
     MAX_ROUNDS,
     ChallengeService,
     Finding,
@@ -327,3 +328,79 @@ def test_finding_dataclass_roundtrip():
     f = Finding("finding-1", "hoch", "loc", "titel", "vorschlag")
     d = f.to_read()
     assert d["finding_id"] == "finding-1" and d["state"] == "open" and d["resolution"] is None
+
+
+# --- QA-Lücken / Red-Team (PROJ-23) ----------------------------------------
+
+def test_ac8_review_result_written_to_vault(client: TestClient):
+    """AC8: Review-Ergebnisse liegen als Audit-Spur im Vault (Knowledge/)."""
+    author = _author(client)
+    client.post(f"/sessions/{author}/challenge", json={"artifact_pointer": "x.md"})
+    client.get(f"/sessions/{author}/reviews")  # triggert collect → Vault-Notiz
+    hits = client.app.state.vault.search_curated("Cross-Agent-Review")
+    assert hits, "Es sollte eine kuratierte Review-Notiz im Vault liegen."
+
+
+def test_ac8_no_findings_also_written_to_vault(client: TestClient, state):
+    """Edge: „keine Befunde" ist eine explizite Notiz im Vault (kein stilles Verschwinden)."""
+    state["reviewer_output"] = '```json\n{"findings": []}\n```'
+    author = _author(client)
+    client.post(f"/sessions/{author}/challenge", json={"artifact_pointer": "x.md"})
+    client.get(f"/sessions/{author}/reviews")
+    hits = client.app.state.vault.search_curated("Keine Befunde")
+    assert hits, "Auch eine Null-Befund-Challenge muss eine Vault-Notiz hinterlassen."
+
+
+def test_large_artifact_uses_rag_window_not_truncation(client: TestClient, monkeypatch):
+    """Edge: zu großes Artefakt → relevantes Fenster (RAG, #23), kein stummes Abschneiden."""
+    monkeypatch.setattr(settings, "allowed_roots", ["/home/dev/projects/jupiter"])
+    vault = client.app.state.vault
+    filler = "Lorem ipsum dolor sit amet. " * 2000  # ~56k Zeichen
+    body = filler + "\nKRITISCHER_ABSCHNITT zur Sicherheit hier.\n" + filler
+    written = vault.write(type="curated", body=body, title="gross23", dated=False)
+    svc: ChallengeService = client.app.state.challenge
+    content, version = svc._load_artifact(written.path, "Sicherheit")
+    assert version is not None
+    assert "gekürzt auf ein relevantes Fenster" in content  # expliziter Hinweis
+    assert len(content) <= MAX_ARTIFACT_CHARS + 200  # Fenster + kurzer Hinweis-Header
+
+
+def test_incomplete_when_reviewer_dies_without_output(client: TestClient, state):
+    """Edge: Reviewer-Session stirbt ohne verwertbaren Output → „Review unvollständig"."""
+    state["reviewer_output"] = "nur Fließtext, kein JSON-Block"
+    author = _author(client)
+    review_id = client.post(
+        f"/sessions/{author}/challenge", json={"artifact_pointer": "x.md"}
+    ).json()["review_id"]
+    client.post(f"/sessions/{review_id}/stop")  # Reviewer terminal ohne Befunde
+    rv = client.get(f"/reviews/{review_id}").json()
+    assert rv["incomplete"] is True and rv["collected"] is False
+    assert rv["findings"] == []
+
+
+def test_path_traversal_pointer_is_contained(client: TestClient):
+    """Red-Team: ein Ausbruchs-Pointer leakt nichts — Artefakt gilt als nicht lesbar."""
+    author = _author(client)
+    r = client.post(
+        f"/sessions/{author}/challenge",
+        json={"artifact_pointer": "../../../../etc/passwd"},
+    )
+    assert r.status_code == 201, r.text
+    # Kein Inhalt gelesen → keine Version (das Artefakt wurde NICHT außerhalb des Vaults gelesen).
+    assert r.json()["artifact_version"] is None
+
+
+def test_invalid_reviewer_engine_400(client: TestClient):
+    """Red-Team/Validierung: eine unbekannte Reviewer-Engine wird abgelehnt (400)."""
+    author = _author(client)
+    r = client.post(
+        f"/sessions/{author}/challenge",
+        json={"artifact_pointer": "x.md", "reviewer_engine": "gibtsnicht"},
+    )
+    assert r.status_code == 400
+
+
+def test_resolve_finding_unknown_review_404(client: TestClient):
+    """Red-Team: Befund-Auflösung gegen ein unbekanntes Review → 404 (keine Fremd-Steuerung)."""
+    r = client.post("/reviews/nope/findings/finding-1", json={"action": "verwerfen"})
+    assert r.status_code == 404
