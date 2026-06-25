@@ -1,6 +1,6 @@
 # PROJ-39: Sidebar-Sektion „Orchestration" — Fremd-Apps per iFrame (Paperclip, Wayland)
 
-## Status: Architected
+## Status: Approved
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -161,8 +161,83 @@ Diese Caddy-/DNS-Einträge legt `/abc-deploy` (Infra, host-nativ, kein Dokploy) 
 ### H) Generalisierung (Folge-Kandidat, nicht in PROJ-39)
 Das Muster „eingebettete self-hosted App" = **Caddy-Subdomain + optionale `header_down`-Overrides + optional `forward_auth` + `engines.yaml`-Eintrag (`kind: iframe`, `group`)** wird hier zum zweiten Mal angewandt (nach Excalidraw). Lohnt sich als wiederverwendbarer Architektur-Baustein für künftige Tools — als eigenes Folge-Ticket festhalten, sobald eine dritte App ansteht (YAGNI bis dahin).
 
-## QA Test Results
-_To be added by /qa_
+## Implementierungs-Notizen (Frontend + Registry) — 2026-06-25
+
+**Umgesetzt (Code, Branch `dev`):**
+- **Registry/Schema (Backend, klein):**
+  - `EngineProfile` (`backend/app/engine/registry.py`) um `group` + `icon` erweitert; `_coerce_profile` parst beide kind-unabhängig, `to_read()` gibt sie aus.
+  - `EngineRead` (`backend/app/schemas/engines.py`) um `group` + `icon` ergänzt.
+  - `backend/config/engines.yaml`: Einträge **paperclip** (`icon: paperclip`) und **wayland** (`icon: waves`) als `kind: iframe`, `group: orchestration`, `url: https://…auxevo.tech` (Caddy-Proxy-Zieladressen), Sandbox `allow-scripts allow-same-origin allow-forms allow-popups allow-downloads`.
+- **Frontend:**
+  - `lib/types.ts` `EngineRead` um `group`/`icon` erweitert.
+  - `lib/sidebar-config.ts`: neue Sektion **„Orchestration"** (unter „Aktive Sessions"); Icon-Auflösung (`resolveOrchestrationIcon`) + `orchestrationItemDef()`/`orchestrationItemKey()` (Namensraum `orch:`). *(Hinweis: dieselbe Datei trägt jetzt auch PROJ-40-Micro-Apps — koexistiert konfliktfrei.)*
+  - `sidebar-prefs-provider.tsx`: PROJ-38-Prefs um **dynamische, registry-getriebene Einträge** erweitert — `registerDynamicItems(namespace, items)`; pure Helfer abwärtskompatibel um optionalen `defs`-Parameter ergänzt (bestehende PROJ-38-Tests unverändert grün). Persistierte Sichtbarkeit/Reihenfolge wird aus dem Roh-Storage nach-gemerged, sobald die dynamischen Einträge bekannt sind.
+  - `use-orchestration-apps.tsx`: lädt `GET /engines`, filtert `kind=iframe & group=orchestration`, meldet sie als dynamische Items an (Namespace `orchestration`).
+  - `session-rail.tsx`: rendert die Orchestration-Sektion (Klick → Route); Hook unbedingt eingebunden, damit die Einträge auch bei ausgeblendeter Sektion im Konfig-Panel wieder einblendbar bleiben.
+  - `embed-tab.tsx`: `fullHeight`-Variante (Vollfläche statt 60vh) — wiederverwendet in der Route; „In neuem Tab öffnen" bleibt **immer** sichtbar.
+  - Route `app/(cockpit)/orchestration/[key]/page.tsx`: Vollbild-Ansicht; lädt den Eintrag, behandelt **Lädt / unbekannte App / Registry-Fehler / Mixed-Content (http)** explizit (kein stiller Leer-Frame); direkt per URL erreichbar, unabhängig von der Sektions-Sichtbarkeit.
+
+**Tests:** Frontend `vitest run` 152 grün (inkl. PROJ-38-Prefs + EmbedTab); Backend `test_proj18_engines.py` 27 grün; `eslint`/`tsc` für PROJ-39-Dateien sauber.
+
+**OFFEN (nicht im Frontend-Scope, blockiert die reale Einbettung) → `/abc-deploy`:**
+- **Caddy-Reverse-Proxy + DNS** für `paperclip.auxevo.tech` (mit `forward_auth 127.0.0.1:9100`, da Paperclip keinen eigenen Login hat) und `wayland.auxevo.tech` (mit `header_down -X-Frame-Options` + `+Content-Security-Policy "frame-ancestors https://jupiter.auxevo.tech"`), 2 A-Records → `187.124.182.215`, `caddy reload`.
+- **Bis dahin** lädt nur der „In neuem Tab öffnen"-Fallback (die `https://…auxevo.tech`-Hosts existieren noch nicht). Die Registry-URLs sind bereits auf diese Zieladressen gesetzt.
+- Cookie-Domain prüfen: Jupiter-Login-Cookie muss für `*.auxevo.tech` gelten (nicht host-only), damit `forward_auth` auf der Paperclip-Subdomain greift.
+
+## QA Test Results — 2026-06-25 (Branch `dev`)
+
+**Testart:** Statisches Code-Review gegen Akzeptanzkriterien + automatisierte Tests (vitest/pytest/eslint/tsc). **Live-Browser-Test** der eingebetteten Apps war NICHT möglich — die https-Zielhosts (`paperclip/wayland.auxevo.tech`) existieren erst nach dem Caddy/DNS-Schritt (`/abc-deploy`). Dynamische UI-Pfade (echtes iFrame-Laden, Mobile-Drawer, Responsive) sind per Code-Review verifiziert, der visuelle Live-Smoke steht nach Deploy aus.
+
+### Automatisierte Tests
+- **Frontend `vitest run`: 167 grün** (19 Dateien) — inkl. neuer Suiten:
+  - `lib/orchestration-config.test.ts` (Sektion existiert unter „Aktive Sessions", Icon-Auflösung inkl. Fallback/Case, `orchestrationItemDef`/`-Key`-Namensraum).
+  - `components/cockpit/embed-tab.test.tsx` erweitert (`fullHeight`-Variante: iFrame `flex-1` statt `h-[60vh]`, Fallback-Button bleibt; Default-60vh unverändert).
+  - PROJ-38-Prefs-Suite (23) trotz Signatur-/Defs-Erweiterung unverändert grün → keine Regression.
+- **Backend `pytest backend/tests/`: 634 grün** — inkl. neuer `test_proj39_orchestration.py` (4): `group`/`icon` parsen + via `to_read` ausliefern; Default `None` ohne Felder; iFrame immer `available`; echte `engines.yaml` trägt Paperclip+Wayland als `group=orchestration` mit **https**-URLs.
+- **eslint:** 0 Errors in PROJ-39-Dateien (1 Warning gehört zu PROJ-40 `microapps-registry.ts`). **tsc:** PROJ-39 sauber.
+
+### Akzeptanzkriterien
+| # | Kriterium | Status | Beleg |
+|---|-----------|--------|-------|
+| 1 | Sektion „Orchestration" unter „Aktive Sessions" | ✅ Pass | `session-rail.tsx` rendert Block nach dem Sessions-Block; `SIDEBAR_SECTIONS`-Index > sessions (Test). |
+| 2 | Einträge Paperclip + Wayland mit Label + Icon | ✅ Pass | `engines.yaml` (group=orchestration, icon=paperclip/waves) → `useOrchestrationApps` → `orchestrationItemDef` (Icon-Auflösung getestet). |
+| 3 | Klick → Vollbild-Route `/orchestration/[key]` mit iFrame | ✅ Pass | `app/(cockpit)/orchestration/[key]/page.tsx` + `EmbedTab fullHeight`. |
+| 4 | Bei Einbettungs-Verweigerung (https) „In neuem Tab öffnen"-Fallback | ✅ Pass | Button in `EmbedTab` **immer** sichtbar (nicht nur im onError-Fall) — getestet. |
+| 5 | Sektion + Einträge über Konfig-Panel (PROJ-38) toggel-/sortierbar | ✅ Pass (Code-Review) | Dynamische Items im `SidebarPrefsProvider` (Namespace `orchestration`); Konfig-Panel iteriert `SIDEBAR_SECTIONS` inkl. orchestration. Live-Klicktest nach Deploy empfohlen. |
+| 6 | Apps zentral konfiguriert (Registry), kein Code-Wildwuchs | ✅ Pass | Reine `engines.yaml`-Zeilen; weitere Apps ohne Code. |
+| 7 | Texte/Labels deutsch (App-Eigennamen bleiben) | ✅ Pass | Sektionslabel + Route-Hinweise deutsch; „Paperclip"/„Wayland" als Eigennamen. |
+
+### Edge Cases
+| Edge Case | Status | Anmerkung |
+|-----------|--------|-----------|
+| Mixed-Content (http-App in https-Jupiter) | ✅ Pass | Route erkennt `http://` → expliziter Hinweis „Einbettung blockiert … über Reverse-Proxy bereitstellen" + Fallback-Button, **kein** Leer-Frame. |
+| App nicht erreichbar / Port down | ⚠️ Teilweise (Low #3) | Kein Crash, Fallback-Button bleibt. Aber **kein expliziter Offline-Hinweis + Retry** wie im Edge-Case genannt — nur der generische `EmbedTab`-Hinweis. |
+| X-Frame-Options: DENY (Wayland) | ✅ Pass | Immer sichtbarer Fallback-Button ist die Garantie (onError unzuverlässig — bewusst dokumentiert). |
+| Tailscale getrennt | ⚠️ Teilweise (Low #3) | Wie „Port down": kein expliziter Retry. |
+| Sektion ausgeblendet → Direkt-URL erreichbar | ✅ Pass | Route prüft keine Sichtbarkeit; lädt Engine eigenständig aus `GET /engines`. |
+| Mobile: Drawer schließt nach Auswahl | ✅ Pass (Code-Review) | Orchestration-Links rufen `onItemClick` (Drawer-Close), wie Workspace-Items. |
+
+### Security-Audit (Red-Team)
+- **iFrame-Sandbox:** `allow-scripts allow-same-origin allow-forms allow-popups allow-downloads` — **kein** `allow-top-navigation`/`allow-top-navigation-by-user-activation` → eine eingebettete App kann das Eltern-Cockpit nicht wegnavigieren. ✅
+- **`allow-same-origin` + `allow-scripts`:** unkritisch, da die gerahmten Apps eine **andere Origin** (eigene Subdomain) als Jupiter haben → kein Sandbox-Self-Escape auf Jupiters Origin. ✅
+- **XSS:** `label` wird als Text gerendert (React-Escaping); `url` nur in `iframe src`/Anchor `href`. Quelle ist die operator-kontrollierte `engines.yaml` (Vertrauensgrenze = Betreiber), keine Nutzer-Eingabe. `LaunchButton` rendert nur `http(s)`-Ziele als Link (sonst „Befehl kopieren") → kein `javascript:`-Anchor. ✅
+- **Secrets:** `to_read()`/`GET /engines` bleibt secret-frei (kein `auth_env`/argv) — durch PROJ-18-Test `test_to_read_is_secret_free` weiter abgedeckt. ✅
+- **Architektur-Hinweis (an `/abc-deploy`, nicht Code):** Paperclip hat **keinen** eigenen Login → MUSS hinter `forward_auth 127.0.0.1:9100`; Login-Cookie muss für `*.auxevo.tech` gelten (sonst greift forward_auth auf der Subdomain nicht). Wayland-XFO-Override eng auf `frame-ancestors https://jupiter.auxevo.tech` begrenzen. **Ohne diese Schritte ist Paperclip über die öffentliche Subdomain ungeschützt** → vor Deploy zwingend prüfen.
+- Auth/RLS/Tenant/SQL-Injection: **n/a** — rein clientseitiges Feature + read-only Registry, keine DB/kein Mandantenpfad.
+
+### Gefundene Bugs
+| # | Sev | Beschreibung | Status |
+|---|-----|--------------|--------|
+| 1 | **Low** | `EmbedTab` setzt seinen `failed`-State beim Engine-Wechsel nicht zurück; die Route gab der `EmbedTab` keinen `key` → potenziell übernommene „verweigert"-Meldung. | ✅ **Behoben** — Route rendert `<EmbedTab key={engine.key} …>` → frischer Mount, `failed` automatisch zurückgesetzt. |
+| 2 | **Low** | Doppelte Kopfzeile in der Route (Route-Header + `EmbedTab`-Header zeigten beide das Label). | ✅ **Behoben** — neuer `headerLeading`-Slot in `EmbedTab`; Route reicht „← Cockpit" rein, separater Route-Header entfällt → **eine** Kopfzeile. |
+| 3 | **Low** | Edge-Case „App offline/Tailscale getrennt": kein Retry-Knopf, kein expliziter Offline-Text. | ✅ **Behoben** — „Erneut laden"-Button (iFrame-Remount via `reloadKey`) immer sichtbar; Fußzeilen-Hinweis nennt jetzt Offline/Tailscale. |
+
+**Keine Critical/High-Bugs.** Alle 3 Low-Findings wurden im Anschluss an die QA **behoben** (Commit-fähig); Re-Test: `vitest`/`pytest`/`eslint`/`tsc` grün.
+
+### Produktionsreife
+**READY (Code/Registry-Oberfläche)** — keine Critical/High-Bugs; automatisierte Tests grün; Sicherheits-Review ohne Code-Befund.
+
+⚠️ **Deploy-Gate:** Die *reale* Einbettung von Paperclip/Wayland ist erst nach dem Infra-Schritt (`/abc-deploy`: 2 DNS-A-Records + Caddy-Blöcke mit `forward_auth` (Paperclip) bzw. `header_down`-Overrides (Wayland) + `caddy reload`) testbar. Bis dahin greift nur der „In neuem Tab öffnen"-Fallback. Der Live-Browser-Smoke (Einbettung lädt, Wayland-Framing nach Header-Override, Paperclip nur nach Jupiter-Login, Toggle/Sort im Panel, Mobile-Drawer) ist **nach** Deploy nachzuholen.
 
 ## Deployment
 _To be added by /deploy_

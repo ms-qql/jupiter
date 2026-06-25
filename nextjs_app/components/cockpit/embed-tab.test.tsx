@@ -21,6 +21,8 @@ function iframeEngine(overrides: Partial<EngineRead> = {}): EngineRead {
     url: "https://excalidraw.com",
     sandbox: "allow-scripts allow-same-origin",
     target: null,
+    group: null,
+    icon: null,
     ...overrides,
   };
 }
@@ -42,5 +44,21 @@ describe("EmbedTab (PROJ-18 · Tiefe 2)", () => {
   it("ohne url → nichts rendern (defensiv)", () => {
     const html = renderToStaticMarkup(<EmbedTab engine={iframeEngine({ url: null })} />);
     expect(html).toBe("");
+  });
+
+  // PROJ-39: Vollbild-Variante für die Orchestration-Route.
+  it("fullHeight: iFrame füllt die Höhe (flex-1) statt fester 60vh", () => {
+    const full = renderToStaticMarkup(
+      <EmbedTab engine={iframeEngine({ key: "wayland", label: "Wayland" })} fullHeight />,
+    );
+    expect(full).toContain("flex-1");
+    expect(full).not.toContain("h-[60vh]");
+    // Fallback-Button bleibt auch in der Vollbild-Variante immer sichtbar.
+    expect(full).toContain("In neuem Tab öffnen");
+  });
+
+  it("Default (ohne fullHeight) bleibt die kompakte 60vh-Karte", () => {
+    const compact = renderToStaticMarkup(<EmbedTab engine={iframeEngine()} />);
+    expect(compact).toContain("h-[60vh]");
   });
 });

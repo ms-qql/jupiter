@@ -23,6 +23,8 @@ class EngineRead(BaseModel):
     url: str | None = None         # iFrame-Quelle (kind=iframe)
     sandbox: str | None = None
     target: str | None = None      # Launch-Ziel (kind=launch)
+    group: str | None = None       # PROJ-39: "orchestration" | "micro" (Sidebar-Filter)
+    icon: str | None = None        # PROJ-39: lucide-Icon-Name für die Sidebar
 
 
 class EnginesOverview(BaseModel):

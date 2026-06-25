@@ -68,6 +68,8 @@ const CLAUDE_FALLBACK: EngineRead = {
   url: null,
   sandbox: null,
   target: null,
+  group: null,
+  icon: null,
 };
 
 export function NewSessionDialog({ children }: { children: React.ReactNode }) {
