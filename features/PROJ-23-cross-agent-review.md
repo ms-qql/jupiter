@@ -1,6 +1,6 @@
 # PROJ-23: Cross-Agent-Review / Challenge (adversariell, engine-übergreifend)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-25
 **Baustein:** #30
@@ -154,6 +154,30 @@ Single-User-MVP: kein JWT/RLS (konsistent mit Jupiter-Stack-Overrides); `owner` 
 | 6 | Abnahme gegen Acceptance Criteria + Red-Team (Engine-Diversität, Drift, Timeout, „keine Befunde") | **QA Engineer** |
 
 **Reihenfolge:** PROJ-22 (Dispatch) muss minimal stehen → Backend #1–3 → Frontend #4–5 → QA #6.
+
+## Implementation Notes (Backend)
+**Datum:** 2026-06-25 · **Branch:** dev
+
+Backend implementiert in vier Dateien (kein neues DB-Schema — in-memory + Vault, konsistent mit PROJ-22):
+- `backend/app/engine/challenge.py` — `ChallengeService` (+ `Review`/`Finding`-Dataclasses):
+  - **Engine-Auswahl** `pick_reviewer_engine`: bevorzugt eine andere verfügbare Session-Engine als der Autor; gibt es keine → gleiche Engine mit `same_engine=True` (Warnhinweis statt Block).
+  - **`start`**: lädt das Artefakt über den Vault-Pointer (großes Artefakt → RAG-Fenster via `_best_window`, kein stummes Abschneiden), berechnet einen Versions-Hash, baut einen adversariellen deutschen Prompt mit JSON-Schema-Konvention, startet eine Reviewer-`SessionRuntime` (`role="reviewer"`) über den bestehenden `SessionManager`. Rundenlimit **2** je Autor-Session → danach `RoundLimitError` (Eskalation an den Menschen).
+  - **`collect`** (lazy, idempotent): parst den letzten ```json-Block aus dem Reviewer-Transkript → strukturierte Befunde (Schweregrad 3-stufig hoch/mittel/niedrig, ungültig → „mittel"), materialisiert sie als nicht-blockierende `card_type="review_finding"`-Cards auf der Reviewer-Session und schreibt eine Audit-Notiz in den Vault (`Knowledge/`, best-effort). Kein verwertbarer Output bei toter Session → `incomplete=True` (Retry möglich). Leere Liste → explizite „keine Befunde".
+  - **`resolve_finding`**: übernehmen → Gegenvorschlag als Eingabe an die **Autor-Session** (Umsetzung läuft über deren eigenen Decision-Card-Flow → menschliche Freigabe); zurück → Befund + Kommentar an die Autor-Session; verwerfen → nur schließen (Artefakt unberührt).
+  - **Versions-Drift** (`stale`): aktueller Artefakt-Hash vs. Review-Version.
+- `backend/app/schemas/challenge.py` — `ChallengeRequest`, `ReviewRead`, `FindingRead`, `FindingDecision`.
+- `backend/app/routes/challenge.py` — `POST /sessions/{id}/challenge`, `GET /sessions/{id}/reviews`, `GET /reviews/{id}`, `POST /reviews/{id}/findings/{finding_id}`.
+- `backend/app/main.py` — `app.state.challenge = ChallengeService(...)` + Router registriert. `decisions.py`: `card_type`-Kommentar um `review_finding` ergänzt.
+
+**Tests:** `backend/tests/test_proj23_challenge.py` (Parser, Engine-Auswahl inkl. Diversitäts-Fallback, Start/Attribution, Befund-Collection + Cards, übernehmen/verwerfen/zurück, Rundenlimit, keine Befunde, Versions-Drift).
+
+**API-Vertrag (für Frontend):**
+- `POST /sessions/{id}/challenge` `{artifact_pointer, reviewer_engine?, focus?}` → `ReviewRead` (201)
+- `GET /sessions/{id}/reviews` → `ReviewRead[]` (Befunde werden beim Lesen eingesammelt)
+- `POST /reviews/{review_id}/findings/{finding_id}` `{action: "übernehmen"|"verwerfen"|"zurück", comment?}` → `FindingRead`
+- Befunde erscheinen zusätzlich als `pending_decisions` (`card_type="review_finding"`) auf der Reviewer-Session (WS-Stream + `GET /sessions`).
+
+**Hinweis Diversität:** Aktuell ist (laut engines.yaml/Verfügbarkeit) i. d. R. nur Claude verfügbar → `same_engine=True`. Echte Cross-Engine-Diversität greift, sobald eine zweite Session-Engine (PROJ-18) verfügbar ist.
 
 ## QA Test Results
 _To be added by /abc-qa_

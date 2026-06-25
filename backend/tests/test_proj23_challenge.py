@@ -26,6 +26,7 @@ from app.engine.challenge import (
 from app.engine.base import EngineDriver, EventHandler, LaunchSpec
 from app.engine.events import StreamEvent
 from app.engine.manager import SessionManager
+from app.engine.registry import CLAUDE_KEY, _builtin_claude, engine_registry
 from app.engine.vault import VaultService
 from app.main import create_app
 
@@ -108,6 +109,16 @@ class _ChallengeFake(EngineDriver):
             "modelUsage": {"claude-haiku-4-5-20251001": {"contextWindow": 200000}},
             "session_id": self._spec.session_id,
         }))
+
+
+@pytest.fixture(autouse=True)
+def _claude_only(monkeypatch):
+    """Deterministisch: nur die eingebaute Claude-Engine sichtbar (der VPS hat reale
+    Engines in engines.yaml → Reviewer würde sonst an einen echten Nicht-Claude-Treiber
+    dispatchen). So fährt der Reviewer den Fake-Treiber; same_engine=True ist erwartbar.
+    Den Cross-Engine-Fall deckt ``test_pick_reviewer_engine_prefers_other`` ab."""
+    monkeypatch.setattr(engine_registry, "_reload_if_changed", lambda: None)
+    monkeypatch.setattr(engine_registry, "_profiles", {CLAUDE_KEY: _builtin_claude()})
 
 
 @pytest.fixture()
