@@ -231,5 +231,28 @@ class Settings(BaseSettings):
     # Harte Obergrenze der Audio-Größe (Bytes) als zweite Verteidigungslinie.
     max_audio_bytes: int = 25 * 1024 * 1024  # 25 MB
 
+    # --- Video Summary (PROJ-41) -----------------------------------------
+    # Native Micro-App: reiht Video-URLs ein und lässt sie von einer headless
+    # Claude-Session über den `hal-video-summary`-Skill in Notiz+PDF (Hal-Vault)
+    # umwandeln. Warteschlange + Einstellungen leben in einer eigenen SQLite-Datei
+    # (überlebt Neustart, Akzeptanzkriterium). Wird inkl. Elternverzeichnis bei
+    # Bedarf automatisch angelegt.
+    video_summary_db_path: str = str(Path.home() / "jupiter-data" / "video_summary.db")
+    # Poll-Frequenz des Hintergrund-Workers (Sek.). Niedrigfrequent — die Skill-Läufe
+    # dauern Minuten, der Tick muss nur Zustandswechsel einsammeln und nachstarten.
+    video_summary_poll_interval_seconds: float = 5.0
+    # Drossel gegen YouTube-Blocking: nach `batch_size` Videos in Folge eine
+    # Cooldown-Pause; Default-Werte (pro App-Einstellungen überschreibbar/persistiert).
+    video_summary_default_cooldown_minutes: int = 30
+    video_summary_batch_size: int = 4
+    # Modell + Permission-Mode der Verarbeitungs-Sessions. bypassPermissions, weil
+    # headless KEIN interaktives Decision-Card-Gate bedient werden kann (sonst hinge
+    # jeder yt-dlp-/ffmpeg-Aufruf ewig auf einer Freigabe).
+    video_summary_model: str = "sonnet"
+    video_summary_permission_mode: str = "bypassPermissions"
+    # Arbeitsverzeichnis (cwd/Scope) der Verarbeitungs-Sessions. Default = Hal-Vault,
+    # in dem der Skill ohnehin schreibt. MUSS innerhalb allowed_roots liegen + existieren.
+    video_summary_project_path: str = "/home/dev/tools/Hal"
+
 
 settings = Settings()

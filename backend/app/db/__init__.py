@@ -13,10 +13,18 @@ from .session_index import (
     SqliteSessionIndexRepository,
     build_session_index_repo,
 )
+from .video_summary_queue import (
+    SqliteVideoSummaryRepository,
+    VideoSummaryRepository,
+    build_video_summary_repo,
+)
 
 __all__ = [
     "SessionIndexRepository",
     "SqliteSessionIndexRepository",
     "NullSessionIndexRepository",
     "build_session_index_repo",
+    "VideoSummaryRepository",
+    "SqliteVideoSummaryRepository",
+    "build_video_summary_repo",
 ]

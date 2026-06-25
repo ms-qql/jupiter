@@ -1,6 +1,6 @@
 # PROJ-41: Video Summary (native Micro-App)
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -168,6 +168,44 @@ Kein Auth/RLS (MVP-Entscheidung); `owner` wird gesetzt, aber nicht gefiltert. UR
 - Settings-Vorbild: `backend/app/routes/settings.py`, `backend/app/engine/policy.py`
 - Native Micro-App: `nextjs_app/lib/microapps-registry.ts`, `nextjs_app/app/(cockpit)/apps/[key]/page.tsx` (native-Zweig, `MicroAppComponentProps`)
 - Registry: `backend/config/engines.yaml` (neuer Eintrag `video_summary`)
+
+## Implementation Notes (Backend — /abc-backend, 2026-06-25)
+
+**Branch:** `dev` (laut Tech-Design). Backend vollständig; Frontend (native Komponente + `engines.yaml`/Registry-Eintrag) ist der nächste Hand-off.
+
+### Neue/geänderte Dateien
+- `backend/app/db/video_summary_queue.py` — SQLite-Repo (Vorbild `session_index.py`): Tabellen `video_summary_queue` (eine Zeile/Video) + `video_summary_settings` (1-Zeile: cooldown/batch/schedule). `init`/`list_queue`/`add`/`get`/`update`(Whitelist)/`delete`/`reset_running`/`get_settings`/`save_settings`. Off-thread via `asyncio.to_thread`, WAL.
+- `backend/app/engine/video_summary.py` — `VideoSummaryWorker` (sequenziell, **eine** Session zur Zeit) + reine Helfer `parse_urls`, `parse_result_paths`, `build_prompt`, `_next_run_at`.
+- `backend/app/schemas/video_summary.py` — Pydantic v2 (QueueItemRead, WorkerStateRead, QueueRead, QueueAddRequest/Result, Settings Read/Patch).
+- `backend/app/routes/video_summary.py` — Router (siehe API unten).
+- `backend/app/config.py` — neue Settings: `video_summary_db_path`, `video_summary_poll_interval_seconds` (5s), `video_summary_default_cooldown_minutes` (30), `video_summary_batch_size` (4), `video_summary_model` (`sonnet`), `video_summary_permission_mode` (`bypassPermissions`), `video_summary_project_path` (Default Hal-Vault).
+- `backend/app/main.py` — `vs_repo` gebaut, `app.state.video_summary` (Worker), `_video_summary_loop` als Lifespan-Task, `startup()` (Schema + running→pending) im Lifespan, Router registriert, `vs_repo.close()` beim Shutdown.
+- `backend/app/db/__init__.py` — Exporte; `backend/tests/conftest.py` — Test-Isolation (eigene DB in tmp, Poll-Intervall 3600s aus).
+- `backend/tests/test_proj41_video_summary.py` — 17 Tests (Helper + Worker-Drossel + Persistenz + API). **651/651 grün, keine Regression.**
+
+### Worker-Verhalten (umgesetzt)
+- **Sequenziell + Drossel:** genau eine headless Session gleichzeitig; nach je `batch_size` (4) verarbeiteten Videos `paused_until = jetzt + cooldown_minutes`; danach automatisch weiter, bis Queue leer (→ idle, consecutive-Reset).
+- **Turn-Ende-Erkennung:** der `claude -p`-Prozess bleibt nach dem One-Shot-Lauf **alive** (Status `waiting`, nicht `done`) → Worker wertet `waiting`/`done` als „fertig", liest Notiz-/PDF-Pfad aus dem `JUPITER_VIDEO_RESULT`-Block des Abschlussberichts (best-effort) und **stoppt** danach die Session (gibt Slot/Prozess frei, PROJ-14).
+- **Skill unverändert:** `build_prompt` ruft `/hal-video-summary <URL>` + Anweisung „Kategorie selbst wählen, keine Rückfragen" + maschinenlesbarer Pfad-Block. `permission_mode=bypassPermissions` (headless kann kein Decision-Card-Gate bedienen).
+- **Zeitplan:** dependency-freier Tagesplan `HH:MM` (kein cron-Paket); fällig → Drain anstoßen (idempotent, keine Überlappung).
+- **Persistenz:** Queue + Einstellungen in SQLite (überleben Neustart); `running`→`pending` beim Start; Laufzeit-Zustand (consecutive/paused/draining) bewusst nur im Speicher.
+- **Fehler/Retry:** Start-/Skill-Fehler → Eintrag `error` + Ursache, Queue läuft weiter; `retry` setzt `error`→`pending` + Drain. `SessionLimitError` → Eintrag bleibt `pending` (nächster Tick).
+
+### API-Vertrag (für Frontend)
+```
+GET    /video-summary/queue            → {items:[QueueItem], state:{status:idle|running|paused, draining, paused_until, next_scheduled_run}}
+POST   /video-summary/queue            → Body {urls: string|string[]}  → {added, rejected, duplicates, queue}; nur-ungültig → 400
+DELETE /video-summary/queue/{id}       → 204 (404 unbekannt)
+POST   /video-summary/queue/{id}/retry → QueueRead (404 unbekannt, 409 wenn nicht error)
+POST   /video-summary/run-now          → QueueRead (Drain sofort, idempotent)
+GET    /video-summary/settings         → {cooldown_minutes, batch_size, schedule}
+PATCH  /video-summary/settings         → Teil-Update {cooldown_minutes?, batch_size?, schedule?}; ungültiger schedule → 400
+```
+QueueItem: `{id, url, owner, status, result_note_path, result_pdf_path, error_message, session_id, created_at, started_at, finished_at}`.
+
+### Offener Hand-off (Frontend, /abc-frontend)
+- `engines.yaml`-Eintrag `video_summary` (`kind: native`, `group: micro`, Label „Video Summary", Icon z. B. `film`/`play`).
+- Eintrag in `nextjs_app/lib/microapps-registry.ts` (`video_summary → lazy(import …)`) + Komponente `components/microapps/video_summary/` (Eingabe-Textarea/Paste, Queue-Liste mit Polling auf `GET /queue`, Steuerleiste „Jetzt ausführen"/Status-Badge, Einstellungs-Dialog). Render über native-Zweig in `app/(cockpit)/apps/[key]/page.tsx`.
 
 ## QA Test Results
 _To be added by /abc-qa_

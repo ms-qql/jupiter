@@ -19,3 +19,10 @@ def _isolate_vault(tmp_path, monkeypatch):
     # injizieren ein eigenes Repository explizit.
     monkeypatch.setattr(settings, "session_index_enabled", False)
     monkeypatch.setattr(settings, "session_index_db_path", str(tmp_path / "session_index.db"))
+    # PROJ-41: Video-Summary-Queue-DB ebenfalls auf tmp umbiegen (nie in den echten
+    # Home-Pfad schreiben). vault_root liegt unter tmp → muss als project_path der
+    # Verarbeitungs-Sessions existieren (allowed_roots-Check), daher anlegen.
+    monkeypatch.setattr(settings, "video_summary_db_path", str(tmp_path / "video_summary.db"))
+    # Hintergrund-Worker-Tick im Test praktisch ausschalten (großes Intervall) →
+    # Tests treiben den Worker deterministisch selbst via tick().
+    monkeypatch.setattr(settings, "video_summary_poll_interval_seconds", 3600.0)
