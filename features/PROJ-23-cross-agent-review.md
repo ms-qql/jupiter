@@ -179,6 +179,21 @@ Backend implementiert in vier Dateien (kein neues DB-Schema — in-memory + Vaul
 
 **Hinweis Diversität:** Aktuell ist (laut engines.yaml/Verfügbarkeit) i. d. R. nur Claude verfügbar → `same_engine=True`. Echte Cross-Engine-Diversität greift, sobald eine zweite Session-Engine (PROJ-18) verfügbar ist.
 
+## Implementation Notes (Frontend)
+**Datum:** 2026-06-25 · **Branch:** dev · **Stack:** Next.js (Cockpit)
+
+- `lib/types.ts` — `Severity`, `FindingAction`, `FindingRead`, `ReviewRead`, `ChallengeRequest`; `card_type`-Union um `review_finding` erweitert; `PendingDecision.context` um die Review-Felder (Engine-Attribution, `review_id`, `severity`, `same_engine`).
+- `lib/api.ts` — `startChallenge`, `listReviews`, `resolveFinding`.
+- `components/cockpit/review-finding.tsx` — gemeinsame Bausteine: `SeverityBadge` (3-stufig, farbcodiert) + `FindingActions` (Übernehmen/Verwerfen/Mit-Kommentar-zurück → `resolveFinding`).
+- `components/cockpit/decision-card.tsx` — neue `ReviewFindingCard`-Variante (indigo, klar abgesetzt) für `card_type="review_finding"` auf der Reviewer-Session: Schweregrad, Fundstelle, Gegenvorschlag, Reviewer→Autor-Engine-Attribution, Diversitäts-Warnung, 3 Aktionen.
+- `components/cockpit/challenge-dialog.tsx` — „Challenge"-Button + Dialog: Artefakt-Pointer (vorbelegt mit `contract_pointer`), Reviewer-Engine-Select (Default „automatisch — andere Engine bevorzugt", nur verfügbare `kind=engine`), Fokus; Ergebnis nennt Reviewer-Engine/-Modell + `same_engine`-Hinweis + Link zur Reviewer-Session.
+- `components/cockpit/reviews-panel.tsx` — Review-Übersicht auf der Autor-Session: Reviews + Befunde, Autor-/Reviewer-Engine-Attribution, Versions-Drift-Badge (`stale`), „keine Befunde"/„unvollständig"-Zustände, je Befund die 3 Aktionen.
+- `app/(cockpit)/sessions/[id]/page.tsx` — `ChallengeDialog` in die Actions-Bar, ausklappbares „Cross-Agent-Reviews"-Panel; `reviewsKey` lädt die Übersicht nach jedem Challenge-Start neu.
+
+**Verifikation:** `tsc --noEmit` fehlerfrei (einzige verbleibende Meldung ist die vorbestehende `lib/md-tree.test.ts`), `eslint` der geänderten/neuen Dateien fehlerfrei.
+
+**Bekannte Einschränkung (UX):** Der Challenge-Einstieg sitzt auf der Session-Detailseite (die Challenge braucht eine Autor-Session-ID). Ein zusätzlicher Trigger direkt aus einer Artefakt-/Doku-Ansicht ist möglich, sobald dort die Autor-Session bekannt ist.
+
 ## QA Test Results
 _To be added by /abc-qa_
 

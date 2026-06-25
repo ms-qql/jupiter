@@ -47,6 +47,10 @@ import type {
   MetricsSnapshot,
   MetricsStatus,
   TerminalInfo,
+  ChallengeRequest,
+  ReviewRead,
+  FindingRead,
+  FindingAction,
   CoordinatorPlan,
   CoordinatorPlanItem,
   CoordinatorFleet,
@@ -196,6 +200,47 @@ export function resolveDecision(
       edited_title: edited?.title ?? null,
       edited_body: edited?.body ?? null,
     }),
+  });
+}
+
+// --- PROJ-23: Cross-Agent-Review / Challenge -------------------------------
+
+/** Eine Challenge auf einem Artefakt der Autor-Session starten → Reviewer-Session.
+ *  409 = Rundenlimit erreicht (Eskalation an den Menschen) · 429 = Session-Limit ·
+ *  503 = Reviewer-Engine nicht verfügbar (→ ApiError.status). */
+export function startChallenge(
+  sessionId: string,
+  body: ChallengeRequest,
+): Promise<ReviewRead> {
+  return request<ReviewRead>(`/sessions/${sessionId}/challenge`, {
+    method: "POST",
+    body: JSON.stringify({
+      artifact_pointer: body.artifact_pointer,
+      reviewer_engine: body.reviewer_engine ?? null,
+      focus: body.focus ?? null,
+    }),
+  });
+}
+
+/** Reviews, in denen diese Session die Autor-Session ist (Befunde werden serverseitig
+ *  beim Lesen eingesammelt). */
+export function listReviews(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<ReviewRead[]> {
+  return request<ReviewRead[]>(`/sessions/${sessionId}/reviews`, { signal });
+}
+
+/** Pro Befund entscheiden: übernehmen · verwerfen · zurück (+ Kommentar). */
+export function resolveFinding(
+  reviewId: string,
+  findingId: string,
+  action: FindingAction,
+  comment?: string,
+): Promise<FindingRead> {
+  return request<FindingRead>(`/reviews/${reviewId}/findings/${findingId}`, {
+    method: "POST",
+    body: JSON.stringify({ action, comment: comment ?? null }),
   });
 }
 

@@ -14,9 +14,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ApiError, resolveDecision, stopSession } from "@/lib/api";
 import { projectName } from "@/lib/status";
-import type { AskUserQuestionInput, PendingDecision } from "@/lib/types";
+import type { AskUserQuestionInput, PendingDecision, Severity } from "@/lib/types";
 import { QuestionCard } from "./question-card";
 import { PushToTalkButton } from "./push-to-talk-button";
+import { FindingActions, SeverityBadge } from "./review-finding";
 
 type CardProps = {
   decision: PendingDecision;
@@ -29,6 +30,10 @@ export function DecisionCard(props: CardProps) {
   // PROJ-15: Wissens-Vorschlag → eigene, nicht-blockierende Karte (Freigeben/Editieren/Verwerfen).
   if (props.decision.card_type === "knowledge_proposal") {
     return <KnowledgeProposalCard {...props} />;
+  }
+  // PROJ-23: Cross-Agent-Review-Befund → eigene Karte (übernehmen/verwerfen/zurück).
+  if (props.decision.card_type === "review_finding") {
+    return <ReviewFindingCard {...props} />;
   }
   // Frage-Tool (AskUserQuestion) → lesbare Auswahl-Karte statt Approve/Deny-JSON.
   const questions = (props.decision.tool_input as AskUserQuestionInput | undefined)?.questions;
@@ -159,6 +164,87 @@ function KnowledgeProposalCard({ decision, showJump = true, className }: CardPro
               In Session springen →
             </Link>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// PROJ-23 — Cross-Agent-Review-Befund: erscheint auf der Reviewer-Session (nicht-
+// blockierend). Eigene indigo/violette Farbe, klar abgesetzt von Freigabe-Cards. Zeigt
+// Schweregrad, Fundstelle, Gegenvorschlag + die Reviewer→Autor-Engine-Attribution.
+function ReviewFindingCard({ decision, showJump = true, className }: CardProps) {
+  const obsolete = decision.state === "obsolete";
+  const ctx = decision.context ?? {};
+  const severity = (ctx.severity ?? "mittel") as Severity;
+  const reviewId = ctx.review_id;
+  const proj = ctx.project_path ? projectName(ctx.project_path) : null;
+  const attribution =
+    ctx.reviewer_engine && ctx.author_engine
+      ? `${ctx.reviewer_engine}/${ctx.reviewer_model ?? "?"} → Autor ${ctx.author_engine}/${ctx.author_model ?? "?"}`
+      : null;
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border border-indigo-500/50 bg-indigo-500/5 p-3 ring-1 ring-indigo-500/20",
+        obsolete && "border-border bg-muted/30 opacity-60 ring-0",
+        className,
+      )}
+    >
+      <div className="flex items-start gap-2">
+        <Badge
+          variant="secondary"
+          className="shrink-0 gap-1 border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400"
+        >
+          <Scale className="size-3" />
+          Review-Befund
+        </Badge>
+        <SeverityBadge severity={severity} />
+        <span className="min-w-0 flex-1 break-words text-sm font-medium">
+          {decision.proposal_title ?? decision.action}
+        </span>
+      </div>
+
+      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+        {proj && <span className="font-mono">{proj}</span>}
+        {ctx.same_engine && (
+          <span className="text-amber-600 dark:text-amber-400">
+            · ⚠️ gleiche Engine (eingeschränkte Diversität)
+          </span>
+        )}
+        {attribution && <span>· {attribution}</span>}
+      </div>
+
+      {/* Fundstelle */}
+      {decision.excerpt && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground/70">Fundstelle: </span>
+          {decision.excerpt}
+        </p>
+      )}
+
+      {/* Gegenvorschlag */}
+      <pre className="mt-2 max-h-44 overflow-auto rounded-md border border-border bg-background/60 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">
+        {decision.proposal_body ?? decision.rationale}
+      </pre>
+
+      {obsolete ? (
+        <p className="mt-3 text-xs italic text-muted-foreground">
+          Obsolet — die Session wurde beendet.
+        </p>
+      ) : reviewId ? (
+        <FindingActions reviewId={reviewId} findingId={decision.decision_id} />
+      ) : null}
+
+      {showJump && !obsolete && (
+        <div className="mt-2">
+          <Link
+            href={`/sessions/${decision.session_id}`}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            In Reviewer-Session springen →
+          </Link>
         </div>
       )}
     </div>

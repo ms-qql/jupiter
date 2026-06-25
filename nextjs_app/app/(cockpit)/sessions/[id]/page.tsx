@@ -12,6 +12,8 @@ import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { ContextGauge } from "@/components/cockpit/context-gauge";
 import { ThresholdBadge } from "@/components/cockpit/threshold-badge";
 import { HandoverDialog } from "@/components/cockpit/handover-dialog";
+import { ChallengeDialog } from "@/components/cockpit/challenge-dialog";
+import { ReviewsPanel } from "@/components/cockpit/reviews-panel";
 import { HeartbeatDot } from "@/components/cockpit/heartbeat-dot";
 import { ReanimateButton } from "@/components/cockpit/reanimate-button";
 import { ResetSessionButton } from "@/components/cockpit/reset-session-button";
@@ -54,6 +56,8 @@ export default function SessionDetailPage({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // PROJ-23: erhöht sich nach jedem Challenge-Start → ReviewsPanel lädt neu.
+  const [reviewsKey, setReviewsKey] = useState(0);
   const logRef = useRef<HTMLDivElement>(null);
   // Surface B (PROJ-11): Datei anhängen → Upload in den Clipboard-Ordner →
   // absoluten Pfad ins Eingabefeld einfügen (referenzieren).
@@ -173,6 +177,12 @@ export default function SessionDetailPage({
       {head && (
         <div className="flex flex-wrap items-center gap-2 border-b border-border py-2">
           <HandoverDialog sessionId={id} />
+          {/* PROJ-23: Cross-Agent-Review auf einem Artefakt dieser Session starten. */}
+          <ChallengeDialog
+            sessionId={id}
+            defaultPointer={head.contract_pointer}
+            onStarted={() => setReviewsKey((k) => k + 1)}
+          />
           {/* Bereits zurückgesetzte Stränge haben genau einen Nachfolger → kein zweiter Reset. */}
           {!head.child_session_id && (
             <ResetSessionButton sessionId={id} numTurns={head.num_turns} />
@@ -305,6 +315,18 @@ export default function SessionDetailPage({
             <DecisionCard key={d.decision_id} decision={d} showJump={false} />
           ))}
         </div>
+      )}
+
+      {/* PROJ-23: Cross-Agent-Reviews dieser (Autor-)Session + ihre Befunde. */}
+      {head && (
+        <details className="mb-3 rounded-lg border border-border bg-card/30 p-3">
+          <summary className="cursor-pointer text-xs font-medium text-indigo-500">
+            Cross-Agent-Reviews
+          </summary>
+          <div className="mt-2">
+            <ReviewsPanel sessionId={id} refreshKey={reviewsKey} />
+          </div>
+        </details>
       )}
 
       {/* Eingabe IMMER zeigen — an beendeten Sessions setzt eine Nachricht sie fort. */}

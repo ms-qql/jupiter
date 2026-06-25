@@ -34,6 +34,16 @@ export interface PendingDecision {
     phase?: string | null;
     /** PROJ-15: bei knowledge_proposal die erkannte Marker-Art (bug_geloest|adr|sackgasse). */
     curation_marker?: string | null;
+    /** PROJ-23: bei review_finding die Kontext-Felder des Cross-Agent-Reviews
+     *  (Engine-Attribution + Verknüpfung Review↔Befund + Schweregrad). */
+    review_id?: string;
+    author_session_id?: string;
+    author_engine?: string;
+    author_model?: string;
+    reviewer_engine?: string;
+    reviewer_model?: string;
+    same_engine?: boolean;
+    severity?: Severity;
   };
   created_at: string;
   state: string; // open | resolved | obsolete
@@ -58,10 +68,60 @@ export interface PendingDecision {
     | "self_restart"
     /** PROJ-22: Der Koordinator konnte einen Vertrags-Konflikt zwischen zwei
      *  Spezialisten-Sessions nicht automatisch vermitteln → Eskalation an den Menschen. */
-    | "contract_conflict";
+    | "contract_conflict"
+    /** PROJ-23: ein Cross-Agent-Review-Befund (nicht-blockierend) — erscheint auf der
+     *  Reviewer-Session; Aktionen übernehmen/verwerfen/zurück laufen über die Review-API. */
+    | "review_finding";
   /** PROJ-15: editierbarer Inhalt eines Wissens-Vorschlags (nur knowledge_proposal). */
   proposal_title?: string | null;
   proposal_body?: string | null;
+}
+
+// --- PROJ-23: Cross-Agent-Review / Challenge -------------------------------
+
+/** 3-stufige Schweregrad-Skala eines Befunds (Design-Entscheid 2026-06-25). */
+export type Severity = "hoch" | "mittel" | "niedrig";
+
+/** Aktion pro Befund: übernehmen (Gegenvorschlag an die Autor-Session) ·
+ *  verwerfen (Artefakt unberührt) · zurück (Befund + Kommentar an die Autor-Session). */
+export type FindingAction = "übernehmen" | "verwerfen" | "zurück";
+
+/** Ein einzelner Review-Befund. Spiegelt FindingRead (backend/app/schemas/challenge.py). */
+export interface FindingRead {
+  finding_id: string;
+  severity: Severity;
+  location: string;
+  title: string;
+  suggestion: string;
+  state: string; // open | resolved
+  resolution: FindingAction | null;
+}
+
+/** Ein Cross-Agent-Review (1 Challenge = 1 Reviewer-Session). Spiegelt ReviewRead. */
+export interface ReviewRead {
+  review_id: string;
+  author_session_id: string;
+  author_engine: string;
+  author_model: string;
+  reviewer_engine: string;
+  reviewer_model: string;
+  same_engine: boolean;
+  artifact_pointer: string;
+  artifact_version: string | null;
+  round: number;
+  focus: string | null;
+  collected: boolean;
+  incomplete: boolean;
+  stale: boolean;
+  created_at: string;
+  findings: FindingRead[];
+}
+
+/** Body von POST /sessions/{id}/challenge. */
+export interface ChallengeRequest {
+  artifact_pointer: string;
+  reviewer_engine?: string | null;
+  focus?: string | null;
 }
 
 /** Struktur des AskUserQuestion-Tool-Inputs (für die Frage-Karte, PROJ-4). */
