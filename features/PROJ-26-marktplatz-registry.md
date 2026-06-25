@@ -1,8 +1,8 @@
 # PROJ-26: Marktplatz/Registry für Rollen/Skills/Agenten
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-23
-**Last Updated:** 2026-06-23
+**Last Updated:** 2026-06-25
 **Baustein:** — (Roadmap-Erweiterung, Phase 2)
 **Prio:** P2 (Phase 2 — Skalierung)
 
@@ -63,7 +63,91 @@ Rollen, Skills und Agenten-Definitionen sind heute lose Dateien im Setup (`rules
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-25 · **Stack:** Next.js 16 (Cockpit) + FastAPI · **Persistenz: file-first** (kein Postgres — konsistent mit Konstitution/Policy/Engines) · **Branch:** dev
+
+### Grundentscheidung: warum file-basiert
+Jupiter hat keine DB-Schicht. Alles ist Datei/Config: Konstitution (`backend/constitution/global.md` + `roles/<role>.md`), Policy/Watchdog/Engines (`backend/config/*.yaml`), Sessions in-memory + Vault file-backed. Die Registry folgt demselben Muster — ein durchsuchbarer Index über die ohnehin existierenden Rollen-/Skill-/Agenten-Dateien + ein portierbares Paketformat. Deckt sich mit dem Spec-Hinweis „dateibasiert, konsistent mit Jupiters offenem-MD/Datei-Ansatz" und „Versionierung ohne DB-Zwang". Dateien sind git-versionierbar → Versionierung & Rollback praktisch „kostenlos", und der Nutzer kann Pakete von Hand inspizieren (Transparenz-Prinzip).
+
+### A) Daten-/Speichermodell (Klartext, kein SQL)
+```
+backend/registry/
+├── catalog.yaml                  # Live-Index: was existiert, Status (installed/active/inactive), version
+├── installed/
+│   ├── roles/<id>/
+│   │   ├── manifest.yaml         # Metadaten + Default-Policy + Schema-Version + owner + angeforderte Tools
+│   │   ├── definition.md         # der eigentliche Rollen-/Skill-Prompt
+│   │   └── versions/<v>/         # frühere Versionen (Rollback-Quelle)
+│   ├── skills/<id>/...
+│   └── agents/<id>/...
+└── packages/                     # exportierte/importierte .jupkg (zip aus manifest+definition)
+```
+Jeder Katalog-Eintrag trägt: **id, typ** (role | skill | agent), **name, beschreibung**, **status** (installiert / aktiv / inaktiv), **version** (+ Historie), **owner** (PROJ-25-kompatibles Feld; bis Auth da ist lokaler Single-User-Default), **capabilities** (welche Tools die Definition anfordert), **default_policy** (konservativ: card/deny — nie auto-allow).
+
+**Aktiv-Schaltung wirkt über die bestehenden Resolver:** eine aktive Rolle wird als Datei dorthin gelegt, wo `resolve_constitution()` / `list_roles()` (`backend/app/engine/constitution.py`) bereits lesen → Sessions/Launcher (PROJ-9) sehen sie ohne Umbau automatisch. Skills analog im Skill-Pfad. Die Registry füllt nur den Vorrat, den der Session-Start ohnehin liest.
+
+### B) Paketformat `.jupkg` (selbstbeschreibend)
+Zip aus `manifest.yaml` (Metadaten + Default-Policy + **Schema-Version** + owner + angeforderte Tools) + `definition.md`. **Export** packt, **Import** validiert:
+- Schema-Version inkompatibel → klare Ablehnung, **kein Teil-Import**.
+- ID-Kollision → neue **Version** statt stillem Überschreiben (oder Umbenennen).
+- fordert unbekannte/gefährliche Tools → **Capability-Vorschau** warnt; Default-Policy stuft konservativ ein.
+- defektes/manipuliertes Paket → Validierung weist ab; ohne PROJ-25 Hinweis „Quelle nicht verifiziert".
+
+### C) API-Shape (nur Endpunkte, kein Code)
+```
+GET    /registry/catalog            → Katalog durchsuchen (typ, status, query)
+GET    /registry/{typ}/{id}         → Detail + Versions-Historie + capabilities
+POST   /registry/{typ}/{id}/install → installieren (Datei extrahieren)
+PATCH  /registry/{typ}/{id}/toggle  → aktivieren/deaktivieren
+POST   /registry/{typ}/{id}/rollback→ frühere Version wiederherstellen
+DELETE /registry/{typ}/{id}         → deinstallieren
+GET    /registry/{typ}/{id}/export  → .jupkg herunterladen
+POST   /registry/import             → .jupkg hochladen → Capability-/Policy-Vorschau (NOCH NICHT aktiv)
+POST   /registry/import/confirm     → nach Bestätigung aktivieren (Human-in-the-Loop)
+```
+Konfliktfrei zu bestehenden Routen: `/constitution` bleibt read-only, `/settings` bleibt Policy-Quelle. Neue Router-Datei `backend/app/routes/registry.py`.
+
+### D) Komponenten-Struktur (Cockpit-UI)
+Neuer Tab im bestehenden `settings-dialog.tsx` (Muster wie Policy/Watchdog-Tabs), optional zusätzlich Sidebar-Sektion.
+```
+RegistryTab
+├── CatalogSearchBar (Filter: Typ · Status · Suchtext)
+├── CatalogList
+│   └── CatalogRow (Name · Typ-Badge · Status-Badge · Version-Select · Toggle · ⋯)
+├── EmptyState ("Katalog leer — importiere ein Paket")
+├── ImportDialog
+│   └── CapabilityPreview (angeforderte Tools + Trust-Defaults · "Quelle nicht verifiziert"-Warnung)
+│       → Bestätigen aktiviert erst dann
+└── EntryDetailSheet (Versions-Historie · Rollback · Export · Deinstallieren)
+```
+Wiederverwendung: shadcn/ui Dialog, Tabs, Badge, Select, Switch — keine neuen Komponenten.
+
+### E) Tech-Entscheidungen (WARUM)
+- **File-first statt Postgres:** keine DB-Schicht im Projekt; git-Versionierung liefert Versionierung/Rollback und manuelle Inspizierbarkeit der Pakete.
+- **Aktiv = Datei am Resolver-Pfad:** kein Umbau an Session-Start/Launcher nötig — die Registry erweitert nur den Vorrat, den `list_roles()` ohnehin liest.
+- **Import zweistufig (Vorschau → Bestätigen):** erzwingt Human-in-the-Loop; importierte Definitionen laufen nie ungeprüft mit Vollrechten (PROJ-10 Default-Policy konservativ).
+- **owner-Feld jetzt, Teilen später:** Feld wird mitgeführt; öffentlicher Online-Marktplatz/Signaturen bleiben klar abgegrenzte Ausbaustufe.
+
+### F) Abhängigkeiten
+- Backend: keine neuen Pakete (`pyyaml` für Manifest vorhanden, `zipfile` stdlib für `.jupkg`).
+- Frontend: keine neuen — vorhandene shadcn/ui-Komponenten.
+
+### Bewusst NICHT im Scope (Ausbaustufe → offene Punkte)
+Öffentlicher Online-Marktplatz mit Fremdanbietern, Signatur-/Trust-Chain, Ratings; echtes Teilen/Sichtbarkeit (braucht PROJ-25 Auth).
+
+### Mapping Akzeptanzkriterium → Baustein
+| Kriterium | Baustein |
+|---|---|
+| Durchsuchbarer Katalog + Status | `GET /registry/catalog` + CatalogList |
+| Install/Aktivieren/Deaktivieren | `install` + `toggle`; aktiv = Datei am Resolver-Pfad |
+| Export/Import Paket | `.jupkg` + `export`/`import` |
+| Capability-/Policy-Vorschau vor Aktivierung | `import` (Vorschau) → `import/confirm`; CapabilityPreview |
+| Versionierung + Rollback | `versions/<v>/` + `rollback` |
+| Default-Trust-Policy (PROJ-10) | `default_policy` im manifest, konservativ |
+| owner (PROJ-25-kompatibel) | owner-Feld im manifest |
+| Defektes Paket abgewiesen | Import-Validierung (Schema-Version, Struktur) |
+| Texte deutsch | UI/Fehlermeldungen deutsch |
+
+**Verantwortliche Spezialisten:** Backend Developer (`registry.py`, Manifest/Validierung, `.jupkg`, Resolver-Anbindung) → Frontend Developer (RegistryTab + Import-Flow). QA: Import-Validierung & Capability-Vorschau red-teamen.
 
 ## QA Test Results
 _To be added by /abc-qa_
