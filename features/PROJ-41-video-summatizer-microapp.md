@@ -36,7 +36,7 @@ Eine native Micro-App **„Video Summary"** in der Sidebar-Sektion „Micro-Apps
 ## Acceptance Criteria
 - [ ] **Video Summary** erscheint als Eintrag in der Sidebar-Sektion „Micro-Apps" (`group: micro`, `kind: native`) mit Label + Icon und öffnet als Vollbild unter `/apps/<key>`.
 - [ ] Die App ist als **native** Micro-App umgesetzt (React-Komponente im Repo, registriert in `microapps-registry.ts`) — **kein** iFrame.
-- [ ] Ein **Eingabefeld** akzeptiert **eine oder mehrere Video-URLs** (ein Link pro Zeile); „Hinzufügen" reiht sie in die Warteschlange ein.
+- [ ] Ein **Eingabefeld (Textarea)** akzeptiert **eine oder mehrere Video-URLs per Copy-and-Paste**; ein eingefügter Block wird beim „Hinzufügen" in einzelne Einträge zerlegt (Trenner: Zeilenumbruch, Leerzeichen, Komma, Semikolon), getrimmt und dedupliziert.
 - [ ] **URL-Validierung:** offensichtlich ungültige Zeilen werden abgewiesen mit deutscher Fehlermeldung; gültige werden übernommen.
 - [ ] Eine **Warteschlangen-Liste** zeigt alle Einträge mit Status **Wartend · Läuft · Fertig · Fehler**.
 - [ ] Button **„Jetzt ausführen"** startet die Abarbeitung der Warteschlange sofort.
@@ -89,7 +89,10 @@ Video Summary ist eine **native Micro-App** (PROJ-40-Muster): React-Komponente i
 /apps/video_summary  (native, Vollbild)
 └── VideoSummaryApp
     ├── EingabeKarte
-    │   ├── Textarea „Video-URLs (ein Link pro Zeile)"
+    │   ├── Textarea „Video-URLs (per Copy-and-Paste, ein Link pro Zeile)"
+    │   │     → native Paste-Unterstützung; ein eingefügter Block wird beim
+    │   │       Hinzufügen in mehrere Einträge zerlegt (Trenner: Zeilenumbruch,
+    │   │       Leerzeichen, Komma, Semikolon), getrimmt + dedupliziert
     │   └── Button „Zur Warteschlange hinzufügen"  + Inline-Validierungsfehler (deutsch)
     ├── SteuerLeiste
     │   ├── Button „Jetzt ausführen"         (startet Drain sofort)
