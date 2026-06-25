@@ -134,6 +134,29 @@ export function railRank(status: SessionStatus): number {
   }
 }
 
+/**
+ * PROJ-37: „aktives Fenster" für den Fileexplorer. Bevorzugt die zuletzt
+ * fokussierte Session, sofern sie noch läuft (nicht terminal); sonst die
+ * dringlichste laufende Session (railRank, dann jüngste Aktivität). Gibt es
+ * keine laufende Session → null (Fileexplorer zeigt dann den neutralen Hinweis).
+ */
+export function pickActiveSession(
+  sessions: Session[],
+  focusedId: string | null,
+): Session | null {
+  const live = sessions.filter((s) => !isTerminalStatus(s.status));
+  if (live.length === 0) return null;
+  if (focusedId) {
+    const focused = live.find((s) => s.session_id === focusedId);
+    if (focused) return focused;
+  }
+  return [...live].sort(
+    (a, b) =>
+      railRank(a.status) - railRank(b.status) ||
+      Date.parse(b.last_activity) - Date.parse(a.last_activity),
+  )[0];
+}
+
 // ABC-Workflow-Gantt (PROJ-8) -------------------------------------------------
 
 export interface AbcPhaseMeta {

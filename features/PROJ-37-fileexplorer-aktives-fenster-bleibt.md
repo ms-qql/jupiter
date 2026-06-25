@@ -1,8 +1,18 @@
 # PROJ-37: File Explorer — kein leeres Vorschau-Fenster; aktives Fenster (Session) bleibt rechts
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## Implementation Notes (Frontend)
+**Umgesetzt:** 2026-06-25 · Branch `dev` · Variante 2B (Embedded-Compact) + 3i (zuletzt fokussiert).
+
+- **`components/cockpit/sessions-provider.tsx`** — `focusedSessionId` zur Context-Value ergänzt: ID wird beim Betreten von `/sessions/<id>` abgeleitet (Muster „State beim Pathname-Wechsel anpassen", kein `setState` im Effect → erfüllt die strikten `react-hooks`-Lintregeln) und in `localStorage` (`jupiter.focusedSessionId`) gespiegelt (Reload-stabil, SSR-sicher via `readStoredFocus`).
+- **`lib/status.ts`** — `pickActiveSession(sessions, focusedId)`: bevorzugt die fokussierte **laufende** Session, sonst die dringlichste (`railRank`, dann jüngste Aktivität); keine laufende Session → `null`.
+- **`components/cockpit/active-session-panel.tsx`** (NEU) — kompakte Session-Ansicht aus dem bereits pollenden `SessionsProvider` (Ampel, Name, Rolle/Status, Phase, Kontext, Laufzeit/letzte Aktivität, Freigabe-Hinweis, „Session öffnen" → `/sessions/<id>`). **Keine** zweite WebSocket-Instanz, kein Reconnect, kein Doppel-Mount. Ohne laufende Session → neutraler Hinweis (kein Leer-Bug).
+- **`components/cockpit/file-explorer.tsx`** — rechte `<main>`-Spalte: `selectedEntry ? <FilePreview> : <ActiveSessionPanel>`. Ordner-Navigation lässt die Auswahl leer → Session-Panel bleibt; Datei-Klick ersetzt es; gelöschte/umbenannte Datei fällt automatisch zurück. Mobile Pane-Umschalten (PROJ-28) unverändert.
+- `FilePreview`-Empty-State bleibt als harmlose Sicherheits-Fallback bestehen (im Explorer nicht mehr erreicht; der neutrale Hinweis lebt jetzt im `ActiveSessionPanel`).
+- **Keine** Backend-/API-Änderung. ESLint + tsc (für die berührten Dateien) sauber.
 
 ## Dependencies
 - Requires: PROJ-28 (Fileexplorer Drei-Spalten-Layout: Sidebar · Panel · Ansicht) — betrifft die rechte „Ansicht"-Spalte.
