@@ -1,6 +1,6 @@
 # PROJ-34: Chat-Modus im Neue-Session-Dialog (freies Chatfenster ohne ABC-Bezug)
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -42,3 +42,42 @@ Gewünscht: ein **kleiner Umschalter** (z. B. Knopf/Segment „Chat" neben dem D
 - Der „Chat"-Zustand ist **lokaler Dialog-State**; beim Start wird der bestehende `createSession`-Payload nur **ohne** Feature-/Rollen-Verknüpfung gebaut.
 - Ausgegraut = `disabled`/reduzierte Opazität, **nicht** entfernen (Erkennbarkeit, dass es bewusst deaktiviert ist).
 - Texte/Tooltips deutsch; shadcn/ui-Primitive (z. B. Toggle/SegmentedControl) statt handgerollter Button-Logik.
+
+## Tech Design (Solution Architect)
+**Erstellt:** 2026-06-25 · **Stack:** Next.js 16 (App Router) + shadcn/ui — reiner Frontend-Fix, kein Backend · **Branch:** dev
+
+### Einordnung (CodeGraph-Befund)
+Alles spielt sich in **einer Datei** ab: `nextjs_app/components/cockpit/new-session-dialog.tsx`. Kein Backend, keine DB, kein neues Schema. Die Erkundung hat drei für das Design entscheidende Fakten bestätigt:
+- Es existiert bereits ein lokales `mode`-Feld — das ist aber die **Berechtigung** (`default`/`acceptEdits`/`bypassPermissions`). Der neue Umschalter braucht deshalb einen **eigenen Namen** (`workflowMode`), sonst Namenskollision.
+- Die ABC-Verknüpfung einer Session hängt am **`role`-Feld** im Erstell-Payload. Die Feature-ID selbst wird heute **nie** ans Backend geschickt — sie befüllt nur lokal Prompt/Modell. Chat-Modus = Session **ohne `role`** starten.
+- Der Smart-Launcher-Block wird über die `SuggestionCard`-Komponente gerendert und per **debounced Fetch (300 ms)** bei Pfadwechsel geladen.
+
+### A) Komponenten-Struktur (was sich ändert)
+```
+NewSessionDialog
+├── ModusUmschalter  ← NEU (shadcn Tabs/ToggleGroup: „Workflow/ABC" · „Chat")
+├── SuggestionCard (ABC-Block: Vorschlag + „Weitere offene Features")
+│   └── im Chat-Modus: sichtbar, aber disabled + reduzierte Opazität
+├── Projekt-Titel · Projekt-Pfad · Initial-Prompt   (immer aktiv)
+└── Engine · Modell · Berechtigung                  (immer aktiv)
+```
+
+### B) Daten / State (Klartext)
+- Neues lokales Dialog-State-Feld **`workflowMode: 'workflow' | 'chat'`**, Default `'workflow'`.
+- Steuert zweierlei: (1) ob `SuggestionCard` als `disabled` gerendert wird, (2) ob beim Wechsel nach „Chat" die abc-Auswahl (`selectedId` + `role`) **zurückgesetzt** wird.
+- Im Chat-Modus unterbleibt der Launcher-Fetch bei Pfadwechsel (bzw. dessen Ergebnis bleibt ausgegraut/unsichtbar) — kein störender Request.
+- Keine Persistenz nötig: rein lokaler State, lebt nur solange der Dialog offen ist.
+
+### C) API / Payload (kein neuer Endpoint)
+- Unverändert `POST /sessions` über `createSession`.
+- **Workflow-Modus:** Payload wie heute (inkl. `role`, falls gesetzt).
+- **Chat-Modus:** identischer Payload (`project_path`, `initial_prompt`, `model`, `engine`) **ohne `role`** — fertig. Backend merkt davon nichts (kein Flag, kein Sonder-Lifecycle).
+
+### D) Tech-Entscheidungen (warum so)
+- **Kein Backend-Flag:** Eine Chat-Session ist technisch eine ganz normale Session ohne abc-Rolle. Ein extra „is_chat"-Feld würde Lifecycle, Recovery und Cockpit unnötig verzweigen — laut Klärung 2026-06-25 bewusst vermieden.
+- **Ausgrauen statt Ausblenden:** Der ABC-Block bleibt sichtbar (`disabled`), damit erkennbar ist, dass er bewusst deaktiviert wurde — kein „verschwundenes" UI.
+- **Eigenes State-Feld statt `mode` wiederverwenden:** `mode` ist die Berechtigung; Mischen würde zwei Bedeutungen in eine Variable pressen.
+- **shadcn-Primitive (Tabs/ToggleGroup):** vorhandenes `tabs.tsx` nutzen statt handgerollter Button-Toggle-Logik (Konvention „shadcn first", Fokus/A11y gratis).
+
+### E) Abhängigkeiten (Packages)
+Keine neuen Packages. Nur ein bereits vorhandenes shadcn-Primitiv (`tabs` / ggf. `toggle-group` neu per shadcn-CLI kopieren, falls Segmented-Look gewünscht).
