@@ -1,6 +1,6 @@
 # PROJ-13: Git-Branch-Handling (in-App, abc-konform)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-25
 **Baustein:** #31
@@ -179,4 +179,6 @@ Keine. (0 Critical · 0 High · 0 Medium · 0 Low)
 - Push/Pull/Force sind bewusst **nicht** Teil dieses Stands (Spec: kein Ein-Klick-Force) — Folge-Feature bei Bedarf.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-06-25 · **Version:** 0.11.0 · **Host:** jupiter.auxevo.tech (host-nativ, systemd + Caddy, GitHub-Webhook) · **Release:** `dev → main`, Tag `v0.11.0`.
+Geliefert: Backend `/git`-Endpunkte (status/switch/feature-branch/promote/stash/init) + Frontend `BranchBadge`/`BranchPanel` im FileExplorer-Header.
+Smoke-Test (Prod) ausstehend: Branch-Badge zeigt Status, Wechsel main↔dev, Feature-Branch anlegen, Promote dev→main.

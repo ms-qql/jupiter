@@ -1,6 +1,6 @@
 # PROJ-31: Spec-Links im MD-Reader auflösen (Doku führt ins Leere)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-25
 
@@ -165,3 +165,8 @@ Keine Critical/High/Medium gefunden.
 
 ### Produktionsreife
 **READY** — 7/7 AC + alle Edge Cases PASS, keine Critical/High/Medium-Bugs, keine Regression (100/100). Status → **Approved**.
+
+## Deployment
+**Deployed:** 2026-06-25 · **Version:** 0.11.0 · **Host:** jupiter.auxevo.tech (host-nativ, systemd + Caddy, GitHub-Webhook) · **Release:** `dev → main`, Tag `v0.11.0`.
+Geliefert: relative MD→MD-Link-Auflösung + Anker-Navigation im MD-Reader (reines Frontend).
+Smoke-Test (Prod) ausstehend: Spec-Link in `INDEX.md` öffnet die Ziel-Spec im Reader.
