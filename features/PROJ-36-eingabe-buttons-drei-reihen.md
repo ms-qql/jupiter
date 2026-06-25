@@ -1,6 +1,6 @@
 # PROJ-36: Eingabe-Buttons auf drei Reihen (Senden · Mikrofon+Büroklammer · Stop)
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -53,3 +53,48 @@ Der **Anhängen-Button** verliert seine Textbeschriftung „Anhängen" und wird 
 - Reihe 2 als kleine 2-Spalten-Flex/Grid-Gruppe innerhalb der bestehenden Button-Spalte; shadcn/ui-Button mit `size="icon"` für die Icon-Buttons.
 - Höhe weiterhin **aus den Buttons abgeleitet** (kein Magic-Number), damit PROJ-29-Symmetrie nicht erneut bricht.
 - Icon-only-Buttons brauchen `aria-label`/`title` (deutsch) für Zugänglichkeit.
+
+## Tech Design (Solution Architect)
+**Erstellt:** 2026-06-25 · **Stack:** Next.js 16 (App Router) Frontend-only — kein Backend, keine DB · **Branch:** dev
+
+### Einordnung
+Reiner Layout-/Markup-Fix an **einer** bestehenden Stelle (Session-Composer). Keine neue Route, kein State, keine API. Risiko minimal; Hauptaugenmerk: Höhen-Symmetrie (PROJ-29) und Barrierefreiheit der Icon-only-Reihe nicht brechen.
+
+### Komponenten-Struktur (Ist → Soll)
+Heute (4 vollbreite Reihen, `sessions/[id]/page.tsx:363`):
+```
+Button-Spalte (flex-col)
+├── Senden          (volle Breite)
+├── Anhängen        (Icon + Text, volle Breite)
+├── Mikrofon        (size=icon, volle Breite)
+└── Stop            (volle Breite, nur wenn !ended)
+```
+Soll (3 Reihen):
+```
+Button-Spalte (flex-col)
+├── Senden                         ← Reihe 1, volle Breite
+├── Icon-Reihe (flex, 2 Spalten)   ← Reihe 2
+│   ├── Mikrofon  (size=icon)      links
+│   └── Büroklampe (size=icon)     rechts
+└── Stop                           ← Reihe 3, volle Breite (nur wenn !ended)
+```
+
+### Umzusetzen
+1. **`session-clipboard-button.tsx`** — Icon-only-Variante: Text „Anhängen"/„Lädt…" entfällt, Button wird `size="icon"`; statt Text ein Lade-Zustand über das Icon (z. B. `Loader2` spinnend bei `uploading`, sonst `Paperclip`) analog zu `push-to-talk-button.tsx`. `aria-label`/`title` deutsch: „Datei anhängen" (bzw. „Lädt…" während Upload). Upload-Verhalten (`onPick`, `disabled`, `uploading`) bleibt 1:1.
+2. **`sessions/[id]/page.tsx`** (Composer) — Mikrofon + Büroklammer in eine **2-Spalten-Flex-Reihe** zusammenfassen (`flex gap-2`, beide `flex-1`/gleich hoch), zwischen Senden (oben) und Stop (unten). `items-stretch`-Symmetrie der Textarea bleibt, da Höhe weiterhin aus den Button-Reihen abgeleitet wird (kein Magic-Number).
+3. **`push-to-talk-button.tsx`** — unverändert (schon `size="icon"` + deutsches `aria-label`); nur Platzierung in der Icon-Reihe.
+
+### Tech-Entscheidungen (Begründung)
+- **Icon-only statt Text für Anhängen:** zwei Icon-Aktionen (Mikro/Büroklammer) teilen sich eine Reihe → spart eine volle Zeile; deutsches `aria-label`/`title` erhält Barrierefreiheit trotz fehlendem Text.
+- **Höhe aus Buttons abgeleitet (kein Pixel-Wert):** verhindert ein erneutes Brechen der PROJ-29-Symmetrie; die Textarea (`items-stretch`) folgt automatisch der neuen, niedrigeren Button-Spalte.
+- **Reihe 2 als Flex mit gleich breiten Buttons:** auch bei 375 px kein Umbruch/Überlappen; Mindest-Tap-Größe über `size="icon"`.
+- **Stop bleibt konditional unten:** bei beendeter Session (`ended`) entfällt Reihe 3 → sauberes 2-Reihen-Layout (Senden + Icon-Reihe), keine schwebende Lücke.
+
+### Betroffene Dateien
+- `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx` (Composer-Markup, Reihe-2-Gruppe)
+- `nextjs_app/components/cockpit/session-clipboard-button.tsx` (Icon-only-Variante)
+- `push-to-talk-button.tsx` — nur Platzierung, keine Änderung nötig
+- Test-Hinweis QA: kein Backend; visuelle Prüfung Senden/Icon-Reihe/Stop + 375 px, plus Snapshot/Render-Test, dass die Büroklammer ein `aria-label` trägt.
+
+### Dependencies
+Keine neuen Pakete. Genutzt: `lucide-react` (`Paperclip`, `Loader2`, `Mic`, `Square` — bereits im Projekt), shadcn/ui `Button` (`size="icon"`).
