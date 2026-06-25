@@ -1,8 +1,14 @@
 # PROJ-36: Eingabe-Buttons auf drei Reihen (Senden · Mikrofon+Büroklammer · Stop)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## Implementation Notes (Frontend)
+- **`session-clipboard-button.tsx`**: Auf Icon-only umgestellt (`size="icon"`). Textbeschriftung „Anhängen"/„Lädt…" entfällt; `uploading` zeigt jetzt `Loader2`-Spinner statt `Paperclip`. Deutsches `aria-label` (`„Datei anhängen"` / `„Datei wird angehängt…"`) + `title` bleiben. Neue optionale `className`-Prop (via `cn`), damit der Composer `flex-1` zum Füllen der Icon-Reihe durchreichen kann.
+- **`sessions/[id]/page.tsx`**: Button-Spalte von 4 auf 3 Reihen reduziert. Reihe 2 ist eine `flex gap-2`-Gruppe mit `PushToTalkButton` (links) + `SessionClipboardButton` (rechts), beide `flex-1` → gleich breit, kein Umbruch bei 375 px. Senden bleibt Reihe 1, Stop Reihe 3 (konditional `!ended`). Höhe weiter aus den Buttons abgeleitet (kein Magic-Number) → PROJ-29-Symmetrie unverändert.
+- **`push-to-talk-button.tsx`**: Unverändert (war schon `size="icon"` + deutsches `aria-label`), nur neu platziert + `flex-1` über bestehende `className`-Prop.
+- Verifikation: `tsc`/`eslint` auf den geänderten Dateien sauber. Kein Backend, keine API-Änderung.
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit / Session-Eingabeleiste) — der Composer im Session-Detail.
