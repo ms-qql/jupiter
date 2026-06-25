@@ -19,6 +19,7 @@ from .db import SessionIndexRepository, build_session_index_repo
 from .engine import liveness
 from .engine.base import EngineDriver
 from .engine.files import FileService
+from .engine.git_service import GitService
 from .engine.launcher import LauncherService
 from .engine.manager import SessionManager
 from .engine.md_reader import MdReaderService
@@ -32,6 +33,7 @@ from .routes import (
     constitution,
     engines,
     files,
+    git,
     md,
     permission,
     projects,
@@ -118,6 +120,8 @@ def create_app(
     app.state.md_reader = MdReaderService()
     app.state.launcher = LauncherService()
     app.state.files = FileService()
+    # PROJ-13: in-App Git-Branch-Handling (Subprozess-Git innerhalb der Roots).
+    app.state.git = GitService()
     app.state.session_index_repo = repo
     app.state.manager = SessionManager(
         driver_factory=driver_factory,
@@ -140,6 +144,7 @@ def create_app(
     app.include_router(permission.router)
     app.include_router(settings_routes.router)
     app.include_router(files.router)
+    app.include_router(git.router)
     app.include_router(projects.router)
     app.include_router(recovery.router)
     app.include_router(engines.router)

@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     # Pfad/Name des Claude-Code-CLI-Binaries (Subscription-Auth via `claude login`).
     claude_bin: str = "claude"
 
+    # PROJ-13: Pfad/Name des git-Binaries + hartes Zeitlimit je Git-Aufruf.
+    # Git läuft als parametrisierter Subprozess (kein Shell, keine interaktiven
+    # Flags) ausschließlich innerhalb der allowed_roots. Status muss schnell sein
+    # (pollbar im Cockpit) → knappes Timeout statt unbegrenztem Hängen.
+    git_bin: str = "git"
+    git_timeout_seconds: float = 15.0
+
     # Verzeichnisse, in denen Sessions arbeiten dürfen (Projekt-Scope, PROJ-1-Entscheidung).
     allowed_roots: list[str] = ["/home/dev/projects", "/home/dev/tools"]
 
