@@ -1,6 +1,6 @@
 # PROJ-38: Sidebar-Sektionen + Konfigurations-Panel (Sichtbarkeit, Reihenfolge, RESET)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -125,6 +125,23 @@ Bestehende shadcn/ui-Bausteine vorhanden: Button, ScrollArea, Dialog, Separator,
 - neu: `nextjs_app/components/cockpit/sidebar-prefs-provider.tsx` (Context + `useSidebarPrefs`-Hook + localStorage-Merge/Reset) — eingehängt im Cockpit-Layout neben `SessionsProvider`
 - neu: `nextjs_app/components/cockpit/sidebar-config-panel.tsx` (Panel-UI: Auge, Reorder, RESET, Hilfezeile)
 - ggf. neu: `nextjs_app/components/ui/{popover,switch,tooltip,sheet}.tsx` (shadcn-generiert)
+
+## Implementation Notes (Frontend)
+**Umgesetzt:** 2026-06-25 · **Branch:** dev · Build + Lint + tsc grün.
+
+**Neue Dateien:**
+- `nextjs_app/lib/sidebar-config.ts` — zentrale Definition (`SIDEBAR_SECTIONS`, `SIDEBAR_ITEMS` mit `key/label/icon/href/section/defaultVisible/defaultOrder`). Einzige Andock-Stelle für PROJ-39/40. „Aktive Sessions" ist EIN Eintrag (`key: "sessions"`, ohne `href`).
+- `nextjs_app/components/cockpit/sidebar-prefs-provider.tsx` — Context + `useSidebarPrefs`-Hook. Hält `{visible, order}` pro key, persistiert nach `localStorage["jupiter.sidebar.v1"]`. **Merge** beim Laden (Defaults für neue/unbekannte keys, Nutzerwunsch gewinnt). `mounted`-Flag via `requestAnimationFrame` (Repo-Muster, Hydration-sicher); Storage-Fehler → stiller Default-Fallback. API: `visibleItems/allItems(section)`, `toggleVisible`, `move(±1)`, `reorder(from,before)`, `reset`.
+- `nextjs_app/components/cockpit/sidebar-config-panel.tsx` — `SidebarConfigButton` (Gear `Settings2Icon`) öffnet Popover. Pro Sektion gruppierte Liste; je Zeile Drag-Griff, ▲/▼ (Touch-Fallback), Auge (`Eye`/`EyeOff`). RESET „Auf Standard zurücksetzen". Hilfezeile „Ziehen zum Sortieren · Auge zum Ausblenden".
+- `nextjs_app/components/ui/popover.tsx` — shadcn-/Base-UI-Wrapper (`@base-ui/react/popover`), analog `select.tsx`/`dialog.tsx`. (Switch/Tooltip nicht nötig: Auge = Icon-Toggle, Tooltip via `title`-Attribut.)
+
+**Geändert:**
+- `nextjs_app/components/cockpit/session-rail.tsx` — rendert „Workspace"-Überschrift (Stil wie „Aktive Sessions") mit Gear daneben; Workspace-Einträge aus `visibleItems("workspace")` (Reihenfolge inkl.); Sessions-Sektion nur wenn `sessions` sichtbar, sonst `flex-1`-Platzhalter (Footer bleibt unten). Mission Control unberührt (Header).
+- `nextjs_app/app/(cockpit)/layout.tsx` — `SidebarPrefsProvider` umschließt `CockpitShell` (teilt State über Desktop-Rail + Mobile-Drawer).
+
+**Abweichungen/Entscheidungen:** Kein neues DnD-Paket (natives HTML5-DnD, `reorder` on drop). Auge statt Switch (entspricht Spec-UX). Gear sitzt an der Workspace-Überschrift und ist nie ausblendbar → kein Aussperren (Edge-Case erfüllt).
+
+**Offen für QA:** Touch-Drag real auf Mobile (▲/▼-Fallback vorhanden); Verhalten bei blockiertem localStorage; Merge nach simuliertem PROJ-39-Item.
 
 ## QA Test Results
 _To be added by /qa_

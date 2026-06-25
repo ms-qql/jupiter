@@ -6,7 +6,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FolderIcon } from "lucide-react";
+import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
@@ -18,9 +18,12 @@ import {
 } from "@/lib/status";
 import type { Session } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
+import { sectionLabel } from "@/lib/sidebar-config";
 import { Ampel } from "./ampel";
 import { DeleteSessionButton } from "./delete-session-button";
 import { NewSessionDialog } from "./new-session-dialog";
+import { SidebarConfigButton } from "./sidebar-config-panel";
+import { useSidebarPrefs } from "./sidebar-prefs-provider";
 import { useNow, useSessions } from "./sessions-provider";
 
 const RAIL_LIMIT = 10;
@@ -38,6 +41,12 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
   const pathname = usePathname();
   const now = useNow();
   const [showArchived, setShowArchived] = useState(false);
+  const { visibleItems } = useSidebarPrefs();
+
+  // PROJ-38: Workspace-Einträge + ob die Session-Sektion sichtbar ist —
+  // beides aus der Nutzer-Präferenz (localStorage), Reihenfolge inklusive.
+  const workspaceItems = visibleItems("workspace");
+  const sessionsVisible = visibleItems("sessions").length > 0;
 
   // Aktive Sessions in der Rail; beendete (done) wandern ins ausklappbare Archiv.
   const activeSorted = sortForRail(sessions.filter((s) => s.status !== "done"));
@@ -65,77 +74,59 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
         </NewSessionDialog>
       </div>
 
-      <div className="px-2 pb-1">
-        <Link
-          href="/doku"
-          onClick={onItemClick}
-          className={cn(
-            "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
-            pathname.startsWith("/doku")
-              ? "bg-accent text-accent-foreground"
-              : "text-foreground/90 hover:bg-accent/50",
-          )}
-        >
-          <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
-          Doku
-        </Link>
-        <Link
-          href="/dateien"
-          onClick={onItemClick}
-          className={cn(
-            "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
-            pathname.startsWith("/dateien")
-              ? "bg-accent text-accent-foreground"
-              : "text-foreground/90 hover:bg-accent/50",
-          )}
-        >
-          <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
-          Dateien
-        </Link>
+      {/* PROJ-38: Workspace-Sektion. Überschrift + Einstellungs-Icon sind
+          IMMER sichtbar (auch wenn alle Einträge ausgeblendet sind) — der
+          Panel-Zugang darf nie verloren gehen. */}
+      <div className="flex items-center justify-between px-4 pb-1 pt-1">
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          {sectionLabel("workspace")}
+        </span>
+        <SidebarConfigButton />
       </div>
-
-      <div className="px-4 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        Aktive Sessions
-      </div>
-
-      <ScrollArea className="flex-1">
-        <div className="flex flex-col gap-0.5 px-2 py-1">
-          {initialLoading ? (
-            <RailSkeleton />
-          ) : activeSorted.length === 0 ? (
-            <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-              {error && sessions.length === 0 ? error : "Keine aktiven Sessions."}
-            </p>
-          ) : (
-            shown.map((s) => (
-              <RailItem
-                key={s.session_id}
-                session={s}
-                now={now}
-                active={pathname === `/sessions/${s.session_id}`}
-                onNavigate={onItemClick}
-              />
-            ))
-          )}
-
-          {/* Archiv: beendete Sessions, einklappbar, weiterhin fortsetzbar. */}
-          {archived.length > 0 && (
-            <div className="mt-1">
-              <button
-                type="button"
-                onClick={() => setShowArchived((v) => !v)}
-                className="flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-              >
-                {showArchived ? (
-                  <ChevronDownIcon className="size-3.5" />
-                ) : (
-                  <ChevronRightIcon className="size-3.5" />
+      {workspaceItems.length > 0 && (
+        <div className="px-2 pb-1">
+          {workspaceItems.map((item) => {
+            const Icon = item.icon;
+            const href = item.href ?? "/";
+            return (
+              <Link
+                key={item.key}
+                href={href}
+                onClick={onItemClick}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+                  pathname.startsWith(href)
+                    ? "bg-accent text-accent-foreground"
+                    : "text-foreground/90 hover:bg-accent/50",
                 )}
-                <ArchiveIcon className="size-3.5" />
-                Archiv ({archived.length})
-              </button>
-              {showArchived &&
-                archived.map((s) => (
+              >
+                <Icon className="size-4 shrink-0 text-muted-foreground" />
+                {item.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Sessions-Sektion: als Ganzes über das Panel ausblendbar. */}
+      {sessionsVisible ? (
+        <>
+          <div className="px-4 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {sectionLabel("sessions")}
+          </div>
+
+          <ScrollArea className="flex-1">
+            <div className="flex flex-col gap-0.5 px-2 py-1">
+              {initialLoading ? (
+                <RailSkeleton />
+              ) : activeSorted.length === 0 ? (
+                <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+                  {error && sessions.length === 0
+                    ? error
+                    : "Keine aktiven Sessions."}
+                </p>
+              ) : (
+                shown.map((s) => (
                   <RailItem
                     key={s.session_id}
                     session={s}
@@ -143,11 +134,44 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
                     active={pathname === `/sessions/${s.session_id}`}
                     onNavigate={onItemClick}
                   />
-                ))}
+                ))
+              )}
+
+              {/* Archiv: beendete Sessions, einklappbar, weiterhin fortsetzbar. */}
+              {archived.length > 0 && (
+                <div className="mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowArchived((v) => !v)}
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                  >
+                    {showArchived ? (
+                      <ChevronDownIcon className="size-3.5" />
+                    ) : (
+                      <ChevronRightIcon className="size-3.5" />
+                    )}
+                    <ArchiveIcon className="size-3.5" />
+                    Archiv ({archived.length})
+                  </button>
+                  {showArchived &&
+                    archived.map((s) => (
+                      <RailItem
+                        key={s.session_id}
+                        session={s}
+                        now={now}
+                        active={pathname === `/sessions/${s.session_id}`}
+                        onNavigate={onItemClick}
+                      />
+                    ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </ScrollArea>
+          </ScrollArea>
+        </>
+      ) : (
+        // Sessions ausgeblendet → Platzhalter, damit der Footer unten bleibt.
+        <div className="flex-1" />
+      )}
 
       <div className="border-t border-border px-4 py-2">
         <Link
