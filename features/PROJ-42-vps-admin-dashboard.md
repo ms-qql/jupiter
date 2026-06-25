@@ -1,6 +1,6 @@
 # PROJ-42: VPS-Admin — Dashboard (native Micro-App)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -210,8 +210,59 @@ Umgesetzt nach Tech-Design Abschnitt F/E/J-1 — read-only, in-memory, Worker + 
 
 **Abweichungen:** keine. Bewertung/Schwellen bleiben vollständig im Backend (eine Quelle der Wahrheit; Banner und Sidebar-Ampel können nicht driften).
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (/abc-qa, 2026-06-25)
+**Branch:** dev · **Ergebnis: PRODUCTION-READY ✅** — 0 kritische/hohe/mittlere Bugs.
+**Automatisiert:** Backend `pytest` **682 passed** (davon **25** PROJ-42, warnungsfrei) · Frontend `vitest` **169 passed** (167 Bestand + 2 neu) · `npm run build` + ESLint grün.
+**Live verifiziert** (echter Host, nicht gemockt): Snapshot + `systemctl`-Service-Health end-to-end.
+
+### Akzeptanzkriterien (14/14 bestanden)
+| # | Kriterium | Status | Nachweis |
+|---|-----------|--------|----------|
+| 1 | Eintrag in Sektion „Micro-Apps" (group:micro, kind:native), Vollbild `/apps/vps_admin` | ✅ | Smoke: in `GET /engines`; native-Zweig `apps/[key]/page.tsx` |
+| 2 | Native (kein iFrame fürs Dashboard) | ✅ | `microapps-registry.ts` lazy import, `NativeMicroAppHost` |
+| 3 | Status-Banner Gut·Achtung·Kritisch (schlechtester Wert) | ✅ | `BANNER`-Map ↔ Backend `_worst`; Live overall=green |
+| 4 | Gauges CPU/RAM/Disk/Load mit % **und** absolut | ✅ | Live: CPU 0,18/8 Cores · RAM 5,56/31,34 GB · Disk 31/386 GB · Load Ø 0,65 „Niedrig" |
+| 5 | Verlaufs-Sparkline je Kern-Kennzahl | ✅ | `Sparkline`-SVG; `history`-Felder; Live hist-len wächst |
+| 6 | Uptime · Netz-I/O · Swap · Top-Prozesse | ✅ | Live: uptime 448687s · rx/tx ~15 KB/s · swap 0% · top1 python |
+| 7 | Service-Health (backend/frontend/webhook/caddy) aktiv·inaktiv·fehlerhaft | ✅ | Live: alle 4 `active`; Tests: failed/inactive/unknown |
+| 8 | Sidebar-Ampel (grün/gelb/rot), periodisch | ✅ | generischer Provider `microapp-status.ts` + `useMicroAppStatuses` (15 s) + `<Ampel>` |
+| 9 | Schwellen 75/90 %; Load rel. Core-Zahl; Gesamt = schlechtester | ✅ | `_status_for`/`_worst` + 6 Schwellen-Tests |
+| 10 | Host-nativ gelesen, Frontend pollt | ✅ | `psutil`+`systemctl`; Worker-Cache; `/current` 5-s-Poll |
+| 11 | Loading-/Error-/Empty-Zustände | ✅ | Initial-Loading, „veraltet"-Banner bei Fehler, Empty-Fälle (keine Prozesse/Dienste) |
+| 12 | Texte deutsch (Eigenname „VPS-Admin" bleibt) | ✅ | UI + `de-DE`-Formatierung |
+| 13 | Sektion ausgeblendet → Direkt-URL bleibt erreichbar | ✅ | `apps/[key]/page.tsx` lädt unabhängig von Sidebar-Prefs |
+| 14 | Schwellen-Bewertung im Backend (eine Quelle) | ✅ | Banner + Sidebar lesen denselben `overall_status` → kein Drift |
+
+### Edge Cases (alle abgedeckt)
+- **Metrik transient nicht lesbar** → Tick-`try/except` im Lifespan-Loop; letzter Snapshot bleibt, Frontend zeigt „veraltet" statt Crash. ✅
+- **systemd-Dienst fehlt/umbenannt** → `unknown`, ampel-neutral (kein falsches Rot). ✅ Test `…unknown_faerbt_ampel_nicht`.
+- **`systemctl` hängt** → Timeout → `unknown`, Prozess gekillt; Tick blockiert nie. ✅ neuer Test `…timeout_degradiert_zu_unknown`.
+- **Übergangszustände** (activating/reloading→active, deactivating→inactive). ✅ neuer parametrisierter Mapping-Test.
+- **Load Single- vs. Many-Core** → Bewertung über `per_core`. ✅
+- **Frisch gebootet / kurze Historie** → Sparkline < 2 Punkte = ruhiger Leerzustand, feste 0..max-Skala (kein Springen). ✅
+- **Hintergrund-Tab** → Polling gedrosselt (`document.hidden`), sofortiger Refresh bei `visibilitychange`. ✅
+- **Sidebar-Ampel ohne offene App** → eigener 15-s-Poll auf leichtem `/metrics/status` (gecacht). ✅
+- **Backend-Neustart** → In-Memory-Verlauf beginnt neu (vom AC erlaubt). ✅
+
+### Security-Audit (Red-Team)
+- **Read-only**: keine Schreib-/Mutationspfade → minimale Angriffsfläche. ✅
+- **Command-Injection**: `systemctl is-active <unit>` über `create_subprocess_exec` mit **fester Argumentliste**, keine Shell-Interpolation, Units serverseitig konfiguriert (kein Client-Einfluss). ✅
+- **XSS**: Prozess-/Dienstnamen als React-Textknoten gerendert (auto-escaped), kein `dangerouslySetInnerHTML`. ✅
+- **Kein SQL/keine DB** → keine SQLi/Tenant-Leaks im Scope. ✅
+- **Kein Auth (MVP)**: bewusste Projekt-Entscheidung (single-user hinter Tailscale, [[jupiter-stack-overrides]]). `/metrics/*` legt Host-Infos + Prozessliste offen — akzeptabel im MVP-Scope, mit echtem Auth (PROJ-25) später abzusichern. **Informativ, kein Bug.**
+
+### Beobachtungen (Low / informativ, nicht blockierend)
+- **L1 (Low):** `_systemctl_is_active` killt einen hängenden Subprozess beim Timeout, ruft aber kein `await proc.wait()` — in der Praxis vom Event-Loop-Child-Watcher abgeräumt; bei Dauer-Timeouts theoretisch Zombie-Risiko. Kein Funktionsfehler.
+- **L2 (Info):** Kein Auth auf `/metrics/*` — by design (siehe oben), Wiedervorlage mit PROJ-25.
+
+### Regression
+- Full Backend-Suite (682) + Frontend-Suite (169) grün. Geänderte geteilte Komponente `session-rail.tsx` (Ampel-Zusatz) ohne Bestands-Bruch; Build/Lint grün.
+
+### Neue/erweiterte Tests
+- `backend/tests/test_proj42_metrics.py`: +`inactive→mind. amber`, +`systemctl`-Mapping (8 Fälle inkl. Übergänge/leer), +Timeout→unknown (25 gesamt).
+- `nextjs_app/lib/sidebar-config.test.ts`: +Round-Trip `microAppItemKey`↔`microAppEngineKey` (Sidebar-Ampel-Auflösung).
+
+**Empfehlung:** Approve → bereit für `/abc-deploy`. **Deploy-Hinweis:** Live-`engines.yaml` (gitignored) trägt den `vps_admin`-Eintrag bereits; auf dem Prod-VPS muss er ebenfalls vorhanden sein (committed nur `engines.example.yaml`).
 
 ## Deployment
 _To be added by /abc-deploy_

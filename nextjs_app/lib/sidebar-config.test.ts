@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import {
   SIDEBAR_ITEMS,
   SIDEBAR_SECTIONS,
+  microAppEngineKey,
+  microAppItemKey,
   sectionLabel,
 } from "./sidebar-config";
 
@@ -42,5 +44,17 @@ describe("sidebar-config (PROJ-38)", () => {
   it("liefert die Sektionslabels Workspace und Aktive Sessions", () => {
     expect(sectionLabel("workspace")).toBe("Workspace");
     expect(sectionLabel("sessions")).toBe("Aktive Sessions");
+  });
+
+  // PROJ-42: der Item-Key (micro:<key>) muss verlustfrei zum Registry-Key
+  // zurückführen — sonst findet die Sidebar-Ampel den Status-Provider nicht.
+  it("microAppEngineKey ist die Umkehr von microAppItemKey", () => {
+    for (const key of ["vps_admin", "video_summary", "whiteboard"]) {
+      expect(microAppEngineKey(microAppItemKey(key))).toBe(key);
+    }
+  });
+
+  it("microAppEngineKey lässt einen Key ohne micro:-Präfix unverändert", () => {
+    expect(microAppEngineKey("vps_admin")).toBe("vps_admin");
   });
 });

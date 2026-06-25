@@ -121,6 +121,80 @@ async def test_service_unknown_faerbt_ampel_nicht(monkeypatch):
     assert snap["overall_status"] in ("green", "amber", "red")
 
 
+async def test_service_inactive_macht_gesamt_mindestens_amber(monkeypatch):
+    """Tech-Design D: ein erwarteter, aber inaktiver Dienst → mindestens gelb."""
+    monkeypatch.setattr(settings, "metrics_services", ["ruht"])
+
+    async def fake_is_active(unit):
+        return "inactive"
+
+    monkeypatch.setattr(MetricsService, "_systemctl_is_active", staticmethod(fake_is_active))
+    svc = MetricsService()
+    await svc.tick()
+    snap = svc.snapshot()
+    assert snap["services"][0]["status"] == "inactive"
+    # Host ist im Test gewöhnlich grün → der inaktive Dienst hebt auf gelb.
+    assert snap["overall_status"] in ("amber", "red")
+
+
+class _FakeProc:
+    """Minimaler Stub für asyncio-Subprozesse (deterministisch, kein echtes systemctl)."""
+
+    def __init__(self, out: bytes):
+        self._out = out
+        self.returncode = 0
+
+    async def communicate(self):
+        return self._out, b""
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (b"active\n", "active"),
+        (b"inactive\n", "inactive"),
+        (b"failed\n", "failed"),
+        (b"activating\n", "active"),     # Übergang → nächstliegender stabiler Zustand
+        (b"reloading\n", "active"),
+        (b"deactivating\n", "inactive"),
+        (b"unknown\n", "unknown"),
+        (b"", "unknown"),                # leere/unerwartete Ausgabe → unknown, nie Crash
+    ],
+)
+async def test_systemctl_is_active_mapping(monkeypatch, raw, expected):
+    async def fake_exec(*args, **kwargs):
+        return _FakeProc(raw)
+
+    monkeypatch.setattr(
+        "app.engine.metrics.asyncio.create_subprocess_exec", fake_exec
+    )
+    assert await MetricsService._systemctl_is_active("egal") == expected
+
+
+async def test_systemctl_timeout_degradiert_zu_unknown(monkeypatch):
+    """Hängt `systemctl`, darf der Tick nie blockieren — Timeout → unknown."""
+
+    class _HangProc:
+        returncode = None
+
+        async def communicate(self):
+            raise AssertionError("communicate sollte vom Timeout abgefangen werden")
+
+        def kill(self):
+            self.returncode = -9
+
+    async def fake_exec(*args, **kwargs):
+        return _HangProc()
+
+    async def fake_wait_for(coro, timeout):
+        coro.close()  # die echte communicate()-Coroutine sauber verwerfen
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr("app.engine.metrics.asyncio.create_subprocess_exec", fake_exec)
+    monkeypatch.setattr("app.engine.metrics.asyncio.wait_for", fake_wait_for)
+    assert await MetricsService._systemctl_is_active("egal") == "unknown"
+
+
 # --- Endpunkte ----------------------------------------------------------------
 
 @pytest.fixture
