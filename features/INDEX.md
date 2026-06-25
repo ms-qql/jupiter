@@ -53,8 +53,8 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-38 | Sidebar-Sektionen + Konfig-Panel (Sichtbarkeit · Reorder · RESET) | P1 | Deployed | PROJ-3 | [Spec](PROJ-38-sidebar-sektionen-konfig-panel.md) |
 | PROJ-39 | Sidebar-Sektion „Orchestration" — Fremd-Apps per iFrame (Paperclip, Wayland) | P1 | Deployed | PROJ-38, PROJ-3, PROJ-18 | [Spec](PROJ-39-sidebar-orchestration-iframe-apps.md) |
 | PROJ-40 | Sidebar-Sektion „Micro-Apps" + Excalidraw-Migration aus „Werkzeuge" | P1 | Deployed | PROJ-38, PROJ-3, PROJ-18 | [Spec](PROJ-40-sidebar-micro-apps-excalidraw-migration.md) |
-| PROJ-41 | Video Summary (native Micro-App: URL-Queue → `hal-video-summary` → Hal) | P1 | Approved | PROJ-40, PROJ-1, PROJ-2 | [Spec](PROJ-41-video-summatizer-microapp.md) |
-| PROJ-42 | VPS-Admin — Dashboard (native Micro-App: Metriken + Sidebar-Ampel) | P1 | Approved | PROJ-40, PROJ-3, PROJ-38 | [Spec](PROJ-42-vps-admin-dashboard.md) |
+| PROJ-41 | Video Summary (native Micro-App: URL-Queue → `hal-video-summary` → Hal) | P1 | Deployed | PROJ-40, PROJ-1, PROJ-2 | [Spec](PROJ-41-video-summatizer-microapp.md) |
+| PROJ-42 | VPS-Admin — Dashboard (native Micro-App: Metriken + Sidebar-Ampel) | P1 | Deployed | PROJ-40, PROJ-3, PROJ-38 | [Spec](PROJ-42-vps-admin-dashboard.md) |
 | PROJ-43 | VPS-Admin — Terminal (ttyd-iFrame Shell-Zugriff) | P1 | Architected | PROJ-42, PROJ-40, PROJ-3 | [Spec](PROJ-43-vps-admin-terminal.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)

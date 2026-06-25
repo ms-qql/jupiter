@@ -1,6 +1,6 @@
 # PROJ-41: Video Summary (native Micro-App)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -268,4 +268,9 @@ Keine Critical/High/Medium gefunden. Eine Low-UX-Note: ungültige Zeilen einer g
 **Production-Ready: JA.**
 
 ## Deployment
-_To be added by /abc-deploy_
+- **Production URL:** https://jupiter.auxevo.tech (Route `/apps/video_summary`)
+- **Deployed:** 2026-06-25 · **Version:** 0.15.0 · **Tag:** v0.15.0
+- **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend` + Caddy TLS), Auto-Deploy via GitHub-Webhook auf `main` ([[jupiter-deployment]]).
+- **Geshippt:** native Micro-App Video Summary — Backend-Queue-Worker (URL-Queue → `hal-video-summary` → Hal-Vault, Drossel/Cooldown/Zeitplan) + Frontend (Paste-Queue, Settings, Polling).
+- **Hinweis:** Prod-`engines.yaml` (gitignored) trägt den `video_summary`-Eintrag bereits.
+- **Browser-Smoke (nach SW-Hard-Refresh):** Kachel „Video Summary" in Micro-Apps, URL einreihen → Verarbeitung, Ergebnis-Links (Notiz/PDF).

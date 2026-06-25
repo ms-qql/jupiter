@@ -1,6 +1,6 @@
 # PROJ-42: VPS-Admin — Dashboard (native Micro-App)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -265,4 +265,9 @@ Umgesetzt nach Tech-Design Abschnitt F/E/J-1 — read-only, in-memory, Worker + 
 **Empfehlung:** Approve → bereit für `/abc-deploy`. **Deploy-Hinweis:** Live-`engines.yaml` (gitignored) trägt den `vps_admin`-Eintrag bereits; auf dem Prod-VPS muss er ebenfalls vorhanden sein (committed nur `engines.example.yaml`).
 
 ## Deployment
-_To be added by /abc-deploy_
+- **Production URL:** https://jupiter.auxevo.tech (Route `/apps/vps_admin`)
+- **Deployed:** 2026-06-25 · **Version:** 0.15.0 · **Tag:** v0.15.0
+- **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend` + Caddy TLS), Auto-Deploy via GitHub-Webhook auf `main` ([[jupiter-deployment]]).
+- **Geshippt:** native Micro-App VPS-Admin — Backend-Metrik-Worker (`/metrics/current` + `/metrics/status`, `psutil` + `systemctl`-Service-Health) + Frontend-Dashboard (Gauges/Sparklines/Top-Prozesse/Service-Health) + generische Sidebar-Ampel.
+- **Hinweis:** Prod-`engines.yaml` (gitignored) trägt den `vps_admin`-Eintrag bereits (überlebt `git reset --hard`); `requirements.txt` führt `psutil>=5.9` (im Env vorhanden).
+- **Browser-Smoke (nach SW-Hard-Refresh):** Kachel „VPS-Admin" in Sidebar-Sektion Micro-Apps, Gauges/Live-Werte, Sidebar-Ampel, Direkt-URL `/apps/vps_admin`.

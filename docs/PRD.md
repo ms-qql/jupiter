@@ -64,8 +64,8 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-38 | Sidebar-Sektionen + Konfig-Panel (Sichtbarkeit · Reorder · RESET) | P1 | Sidebar-Ausbau | Planned |
 | PROJ-39 | Sidebar-Sektion „Orchestration" — Fremd-Apps per iFrame (Paperclip, Wayland) | P1 | Sidebar-Ausbau | Planned |
 | PROJ-40 | Sidebar-Sektion „Micro-Apps" + Excalidraw-Migration | P1 | Sidebar-Ausbau | Deployed |
-| PROJ-41 | Video Summary (native Micro-App: URL-Queue → `hal-video-summary` → Hal) | P1 | Micro-Apps | Approved |
-| PROJ-42 | VPS-Admin — Dashboard (native Micro-App: Metriken + Sidebar-Ampel) | P1 | Micro-Apps | Approved |
+| PROJ-41 | Video Summary (native Micro-App: URL-Queue → `hal-video-summary` → Hal) | P1 | Micro-Apps | Deployed |
+| PROJ-42 | VPS-Admin — Dashboard (native Micro-App: Metriken + Sidebar-Ampel) | P1 | Micro-Apps | Deployed |
 | PROJ-43 | VPS-Admin — Terminal (ttyd-iFrame Shell-Zugriff) | P1 | Micro-Apps | Architected |
 
 ---
