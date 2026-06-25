@@ -1,6 +1,6 @@
 # PROJ-35: Session-Titel = eingegebener Projektname (Sidebar + Header) statt „jupiter"
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -41,3 +41,50 @@ Gewünscht: Sidebar **und** Header (und konsistent die Session-Kachel im Cockpit
 - Betroffen: `nextjs_app/components/cockpit/session-rail.tsx` (RailItem) und `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx` (Header `<h1>`); ggf. `SessionTile` für Konsistenz.
 - Gemeinsame Hilfslogik „Anzeigename" (z. B. `displayName(session) = session.project_name?.trim() || projectName(session.project_path)`) statt an drei Stellen duplizierter Inline-Logik.
 - Texte deutsch; sicheres Text-Rendering (kein `dangerouslySetInnerHTML`).
+
+## Tech Design (Solution Architect)
+**Erstellt:** 2026-06-25 · **Stack:** Next.js 16 (App Router, nur Frontend) · keine Backend-/DB-Änderung · **Branch:** dev
+
+### Befund (am Code verifiziert)
+- `Session.project_name: string | null` existiert bereits im Typ (`nextjs_app/lib/types.ts:108`, aus PROJ-8/Gantt) und kommt vom Backend zurück — **keine** API-/Schema-/DB-Arbeit nötig.
+- Drei Render-Stellen zeigen stur den Pfad-Basename via `projectName(session.project_path)`:
+  - Sidebar/Rail-Item: `nextjs_app/components/cockpit/session-rail.tsx:191`
+  - Cockpit-Kachel: `nextjs_app/components/cockpit/session-tile.tsx:51`
+  - Session-Header `<h1>`: `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx:153`
+- Helper `projectName(path)` liegt in `nextjs_app/lib/status.ts:206` (Basename aus Pfad). Bleibt als Fallback erhalten.
+- Alle drei Stellen tragen bereits `truncate` → Ellipsis ist vorhanden; es fehlt nur ein `title`-Attribut für den Volltext.
+
+### Was gebaut wird
+**Ein** neuer geteilter Helper neben `projectName` in `lib/status.ts`:
+`displayName(session)` → getrimmter `project_name`, sonst Basename. Eine Quelle der Wahrheit, kein dreifaches Inline-Duplikat. (WHY: verhindert, dass dieselbe Session in Sidebar/Header/Kachel auseinanderlaufende Namen zeigt — genau das Akzeptanzkriterium „überall konsistent".)
+
+Die drei Render-Stellen tauschen `projectName(session.project_path)` gegen `displayName(session)` und bekommen ein `title={displayName(session)}` für den Volltext-Tooltip bei langen Titeln.
+
+### Komponenten-/Datenfluss (keine neuen Komponenten)
+```
+lib/status.ts
+└── displayName(session) = session.project_name?.trim() || projectName(session.project_path)
+        ▲                         ▲                              ▲
+        │                         │                              │
+session-rail.tsx (RailItem)  session-tile.tsx (SessionTile)  sessions/[id]/page.tsx (Header <h1>)
+   truncate + title              truncate + title                 title
+```
+
+### Daten / API / DB
+- Datenmodell: unverändert. `project_name` ist bereits Teil von `Session`.
+- API: keine. DB/RLS/MinIO: keine.
+
+### Hinweis zur DeleteSessionButton-Prop
+`session-rail.tsx:200` und `session-tile.tsx:68` geben `projectName(...)` als `projectName`-Prop an `DeleteSessionButton` (Bestätigungstext „Session ‚X' löschen?"). Konsistenz-Empfehlung: auch dort `displayName(session)` verwenden, damit der Lösch-Dialog denselben Namen nennt wie die Anzeige. (Anzeige-Kriterien fordern es nicht zwingend, aber es vermeidet einen zweiten Namen für dieselbe Session.)
+
+### Tech-Entscheidungen (WHY)
+- **Helper statt Inline-Logik:** Akzeptanzkriterium „keine widersprüchlichen Namen" ist nur garantierbar, wenn alle Stellen dieselbe Funktion aufrufen.
+- **Fallback auf Basename:** Bestandssessions ohne `project_name` (vor PROJ-8) und leer gelassene Titel bleiben benannt — Regression-frei.
+- **`trim()` im Helper:** Whitespace-only-Titel = „nicht gesetzt" → Fallback, ohne dass jede Render-Stelle das wissen muss.
+- **`title`-Attribut statt eigenes Tooltip-Widget:** Ellipsis ist schon da (`truncate`); natives `title` reicht für den Volltext, kein Layout-/Komponenten-Aufwand. Text wird als JSX-Child/Attribut gerendert → automatisch escaped, keine Injektion.
+
+### Dependencies
+Keine neuen Pakete (Frontend wie Backend).
+
+### Aufwand / Risiko
+Sehr klein (1 Helper + 3 Edits, optional 2 Prop-Edits). Risiko gering; einzige Regressionsfläche ist der Basename-Fallback (durch Edge Cases abgedeckt).
