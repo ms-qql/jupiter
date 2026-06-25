@@ -1,6 +1,6 @@
 # PROJ-37: File Explorer — kein leeres Vorschau-Fenster; aktives Fenster (Session) bleibt rechts
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -13,6 +13,47 @@
 - **`components/cockpit/file-explorer.tsx`** — rechte `<main>`-Spalte: `selectedEntry ? <FilePreview> : <ActiveSessionPanel>`. Ordner-Navigation lässt die Auswahl leer → Session-Panel bleibt; Datei-Klick ersetzt es; gelöschte/umbenannte Datei fällt automatisch zurück. Mobile Pane-Umschalten (PROJ-28) unverändert.
 - `FilePreview`-Empty-State bleibt als harmlose Sicherheits-Fallback bestehen (im Explorer nicht mehr erreicht; der neutrale Hinweis lebt jetzt im `ActiveSessionPanel`).
 - **Keine** Backend-/API-Änderung. ESLint + tsc (für die berührten Dateien) sauber.
+
+## QA Test Results
+**Getestet:** 2026-06-25 · Branch `dev` · QA Engineer · Next.js (Vitest + SSR-Static-Render)
+
+### Zusammenfassung
+- **Acceptance Criteria:** 6/6 bestanden (Code-Verifikation + Unit-Tests).
+- **Edge Cases:** 6/6 abgedeckt.
+- **Automatisierte Tests:** 132/132 grün (11 neu für PROJ-37; 0 Regressionen, vorher 121).
+- **Bugs:** keine (Critical 0 · High 0 · Medium 0 · Low 0).
+- **Security:** ohne Befund (rein Frontend, keine Backend-/Auth-Änderung).
+- **Produktionsreife:** **READY**.
+
+### Acceptance Criteria (pass/fail)
+| # | Kriterium | Status | Nachweis |
+|---|-----------|--------|----------|
+| 1 | Öffnen ohne Datei → aktives Fenster statt Leer-Platzhalter | ✅ | `file-explorer.tsx` Conditional; `pickActiveSession` (Unit-Test) |
+| 2 | Datei mit Vorschau → FilePreview ersetzt das Fenster | ✅ | `selectFile` → `selectedEntry` → `FilePreview` |
+| 3 | Auswahl aufgehoben (gelöscht/Ordnerwechsel/Vorschau zu) → zurück zum Fenster, kein Leer | ✅ | `selectedEntry`-Ableitung + Null-Setzen in delete/rename/openDir |
+| 4 | Ordner-Klick lässt rechte Spalte am aktiven Fenster | ✅ | `openDir` setzt `selectedPath=null` → `ActiveSessionPanel` |
+| 5 | Kein aktives Fenster → neutraler Hinweis statt Fehler | ✅ | `pickActiveSession`=null → Hinweis (Panel-Test) |
+| 6 | 3-Spalten-Layout (PROJ-28) + Mobile-Pane bleiben funktionsfähig | ✅ | Markup/`mobilePane`-Logik unverändert |
+
+### Edge Cases
+- Keine aktive Session → neutraler Hinweis (Test „done"-only → null). ✅
+- Mehrere Sessions → deterministisch (fokussiert, sonst railRank+jüngste Aktivität; Tests). ✅
+- Ausgewählte Datei gelöscht/umbenannt → Auswahl `null` → aktives Fenster. ✅
+- Binär-Datei aktiv gewählt → `FilePreview`-Hinweis „keine Vorschau" (konsistent mit Spec-Festlegung). ✅
+- Mobile schmaler Viewport → Ansicht-Pane zeigt aktives Fenster, nicht Leer. ✅
+- Performance: kein Doppel-Mount/Neustart — Panel nutzt ausschließlich den bestehenden `SessionsProvider`-Poll, keine zweite WebSocket-Instanz. ✅
+
+### Neue Tests
+- `lib/active-session.test.ts` — 7 Fälle für `pickActiveSession` (Fokus-Vorrang, Terminal-Ignoranz, Fallback-Reihenfolge, Leerfälle).
+- `components/cockpit/active-session-panel.test.tsx` — 4 Render-Fälle (aktive Session · neutraler Hinweis · Erstladen · Freigabe-Hinweis) via Modul-Mock.
+
+### Security-Audit
+- Rein Frontend; keine Backend-/API-/Auth-Änderung (MVP ohne JWT/RLS). 
+- `session_id` in `localStorage` (`jupiter.focusedSessionId`) — nicht sensibler als die ohnehin sichtbare URL; in `href`/Text via React escaped → kein XSS/Injection.
+- Keine Geheimnis-Exposition, keine neuen Netzwerk-Endpunkte.
+
+### Offen / Empfehlung
+- Live-Visual-Smoke (Browser 375/768/1440 px) in dieser Umgebung **nicht** ausgeführt — Markup der 3 Spalten/Mobile-Pane ist unverändert, Risiko gering. Empfehlung: kurzer Sicht-Check im Rahmen von `/abc-deploy`.
 
 ## Dependencies
 - Requires: PROJ-28 (Fileexplorer Drei-Spalten-Layout: Sidebar · Panel · Ansicht) — betrifft die rechte „Ansicht"-Spalte.
