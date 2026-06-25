@@ -101,6 +101,17 @@ engines:
     group: micro
     icon: film
 
+  # PROJ-42: VPS-Admin — Dashboard (native Micro-App). Read-only Host-Metriken
+  # (CPU/RAM/Disk/Load/Swap/Netz/Uptime/Prozesse) + systemd-Service-Health über
+  # GET /metrics/current (Polling) + /metrics/status (leichte Gesamt-Ampel fürs
+  # Sidebar-Farb-Icon). Code unter components/microapps/vps_admin/, registriert in
+  # lib/microapps-registry.ts. Terminal (PROJ-43) dockt an dieselbe Kachel an.
+  - key: vps_admin
+    label: "VPS-Admin"
+    kind: native
+    group: micro
+    icon: server
+
   # --- Tiefe 3: Launch-Button ---------------------------------------------
   # Für nicht integrierbare Tools: öffnet/startet extern.
   - key: gpt-web

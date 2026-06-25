@@ -661,3 +661,92 @@ export interface VideoSummarySettings {
   batch_size: number;
   schedule: string;
 }
+
+// --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------
+
+/** Ampel-Status eines Gauges / des Gesamtzustands (spiegelt backend
+ *  `schemas/metrics.py` Status). Teilmenge des Sidebar-`Ampel`-Typs. */
+export type MetricStatus = "green" | "amber" | "red";
+
+/** systemd-Dienst-Zustand (spiegelt backend `ServiceStatus`). */
+export type MetricServiceStatus = "active" | "inactive" | "failed" | "unknown";
+
+export interface GaugeCpu {
+  percent: number;
+  cores: number;
+  /** Belegte Cores ≈ percent/100 · cores (für „0,2 / 8"). */
+  used_cores: number;
+  status: MetricStatus;
+  /** Rollierender Verlauf für die Sparkline. */
+  history: number[];
+}
+
+export interface GaugeMem {
+  percent: number;
+  used_gb: number;
+  total_gb: number;
+  status: MetricStatus;
+  history: number[];
+}
+
+export interface GaugeSwap {
+  percent: number;
+  used_gb: number;
+  total_gb: number;
+}
+
+export interface GaugeDisk {
+  percent: number;
+  used_gb: number;
+  total_gb: number;
+  mount: string;
+  status: MetricStatus;
+  history: number[];
+}
+
+export interface GaugeLoad {
+  load1: number;
+  load5: number;
+  load15: number;
+  /** (Load1/Cores)·100 — Bewertungsgröße für die Ampel. */
+  per_core: number;
+  status: MetricStatus;
+  history: number[];
+}
+
+export interface MetricNetIO {
+  rx_bytes_per_sec: number;
+  tx_bytes_per_sec: number;
+}
+
+export interface MetricTopProcess {
+  pid: number;
+  name: string;
+  cpu_percent: number;
+  mem_percent: number;
+}
+
+export interface MetricServiceHealth {
+  name: string;
+  status: MetricServiceStatus;
+}
+
+/** Antwort von GET /metrics/current — vollständiger Snapshot inkl. Verlauf. */
+export interface MetricsSnapshot {
+  timestamp: string;
+  overall_status: MetricStatus;
+  cpu: GaugeCpu;
+  memory: GaugeMem;
+  swap: GaugeSwap;
+  disk: GaugeDisk;
+  load: GaugeLoad;
+  net: MetricNetIO;
+  uptime_seconds: number;
+  top_processes: MetricTopProcess[];
+  services: MetricServiceHealth[];
+}
+
+/** Antwort von GET /metrics/status — leichtgewichtige Gesamt-Ampel (Sidebar). */
+export interface MetricsStatus {
+  status: MetricStatus;
+}

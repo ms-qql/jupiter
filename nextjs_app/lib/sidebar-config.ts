@@ -13,6 +13,7 @@ import {
   PaperclipIcon,
   PenToolIcon,
   RadioIcon,
+  ServerIcon,
   WavesIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -105,6 +106,7 @@ const ORCHESTRATION_ICONS: Record<string, LucideIcon> = {
   bot: BotIcon,
   appwindow: AppWindowIcon,
   pentool: PenToolIcon,
+  server: ServerIcon, // PROJ-42: VPS-Admin
 };
 
 /** Icon-Name (aus der Registry) → Komponente; Fallback ist ein neutrales App-Icon. */
@@ -142,6 +144,12 @@ export function orchestrationItemDef(
  *  Registry-Keys nie mit statischen Einträgen oder Orchestration kollidieren. */
 export function microAppItemKey(engineKey: string): string {
   return `micro:${engineKey}`;
+}
+
+/** Umkehr von `microAppItemKey`: holt den Registry-Key (engines.yaml) aus einem
+ *  Sidebar-Item-Key zurück (für die Status-Ampel-Auflösung, PROJ-42). */
+export function microAppEngineKey(itemKey: string): string {
+  return itemKey.startsWith("micro:") ? itemKey.slice("micro:".length) : itemKey;
 }
 
 /** Baut aus einem Registry-Eintrag (key/label/icon) eine Sidebar-Item-Definition.

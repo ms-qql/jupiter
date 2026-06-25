@@ -36,6 +36,10 @@ export const MICROAPP_REGISTRY: Record<string, MicroAppComponent> = {
   video_summary: lazy(
     () => import("@/components/microapps/video_summary/video-summary-app"),
   ),
+  // PROJ-42: VPS-Admin — Dashboard (Host-Metriken + systemd-Service-Health).
+  vps_admin: lazy(
+    () => import("@/components/microapps/vps_admin/vps-admin-app"),
+  ),
 };
 
 /** Liefert die native Komponente zu einem key — oder null, wenn nicht registriert

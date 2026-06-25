@@ -193,6 +193,23 @@ Umgesetzt nach Tech-Design Abschnitt F/E/J-1 — read-only, in-memory, Worker + 
 - `GET /metrics/current` → `MetricsSnapshot` (`overall_status`, `cpu/memory/swap/disk/load`, `net`, `uptime_seconds`, `top_processes[]`, `services[]`; je Gauge `history: float[]` für Sparklines).
 - `GET /metrics/status` → `{ "status": "green"|"amber"|"red" }` (leichtgewichtig, Sidebar-Ampel).
 
+## Implementation Notes (Frontend — /abc-frontend, 2026-06-25)
+**Branch:** dev · **Build:** `npm run build` grün (TypeScript ok), ESLint sauber. Stack: Next.js (native Micro-App nach PROJ-40/41-Muster), kein Plotly — leichte SVG-Gauges/Sparklines.
+
+- **`components/microapps/vps_admin/vps-admin-app.tsx`** — Dashboard nach UI-Baum (Abschnitt A): **StatusBanner** (Gut/Achtung/Kritisch, Farbe + Punkt aus `overall_status`), **GaugeGrid** (CPU/RAM/Disk/Load — SVG-Donut, %-Wert + Sparkline + absolute Werte: „x / y Cores“, „x / y GB“, Load „Ø load1 · Niedrig/Erhöht/Hoch“), **Info-Kacheln** (Uptime „3 T 4 h 12 min“, Netz-I/O rx/tx mit Byte-Skalierung, Swap inkl. „Kein Swap“-Fall), **Top-Prozesse**-Tabelle (Name/PID/CPU%/RAM%), **Service-Health**-Liste (Badge aktiv/inaktiv/fehlerhaft/unbekannt, farbcodiert). Alle Texte deutsch, deutsche Dezimalkomma-Formatierung via `toLocaleString("de-DE")`.
+- **Polling**: `GET /metrics/current` alle 5 s, stiller Refresh (kein Spinner-Flackern). Explizite Zustände: Initial-Loading, Error (letzter Stand bleibt sichtbar + „veraltet“-Hinweis im Banner statt Crash), Empty (z. B. keine Prozessdaten/keine Dienste). **Hintergrund-Tab gedrosselt** (`document.hidden` → Tick übersprungen), **`visibilitychange` → sofort frischer Wert** beim Zurückkehren (Edge Case erfüllt).
+- **Sparklines**: feste 0..max(100, peak)-Skala → kein „springender“ Graph bei frisch gebootetem VPS / kurzer Historie; < 2 Punkte → leerer, ruhiger Anfangszustand.
+- **Sidebar-Ampel** (generisch, nicht auf VPS-Admin verdrahtet):
+  - `lib/microapp-status.ts` — Registry `appKey → Status-Fetcher` (Ampelfarbe). Einzige Zeile für VPS-Admin: `vps_admin → GET /metrics/status`. Künftige Apps melden hier eine Zeile an.
+  - `components/cockpit/use-microapp-status.tsx` — Hook pollt nur Keys mit registriertem Fetcher (15 s, niederfrequent), unabhängig davon ob die App offen ist; nicht erreichbar → „grau“ (unbekannt) statt veraltet grün.
+  - `session-rail.tsx` — rendert `<Ampel size="sm" />` (wiederverwendet, kein neues Widget) rechts am Micro-App-Eintrag, wenn ein Status vorliegt; `microAppEngineKey()` löst `micro:<key>` → `<key>` auf.
+- **Registry/Metadaten**: `lib/microapps-registry.ts` (`vps_admin → lazy(...)`), `backend/config/engines.yaml` (`vps_admin`, `kind: native`, `group: micro`, `icon: server`), `server`-Icon in `sidebar-config.ts` ergänzt. Render über den bestehenden native-Zweig in `app/(cockpit)/apps/[key]/page.tsx` (`NativeMicroAppHost`) — Direkt-URL `/apps/vps_admin` funktioniert auch bei ausgeblendeter Sektion (kein verwaister Zustand).
+- **Typen/Client**: `lib/types.ts` (`MetricsSnapshot`/`MetricsStatus` + Gauge-/Service-Typen, `MetricStatus ⊂ Ampel`), `lib/api.ts` (`getMetricsCurrent`/`getMetricsStatus`).
+
+**Smoke verifiziert** (Backend-TestClient): `vps_admin` erscheint in `GET /engines`; `/metrics/current` → 200 mit den 4 erwarteten Diensten; `/metrics/status` → 200 Ampel.
+
+**Abweichungen:** keine. Bewertung/Schwellen bleiben vollständig im Backend (eine Quelle der Wahrheit; Banner und Sidebar-Ampel können nicht driften).
+
 ## QA Test Results
 _To be added by /abc-qa_
 

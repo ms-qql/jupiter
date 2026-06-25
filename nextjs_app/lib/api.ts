@@ -44,6 +44,8 @@ import type {
   VideoSummaryQueue,
   VideoSummaryAddResult,
   VideoSummarySettings,
+  MetricsSnapshot,
+  MetricsStatus,
 } from "./types";
 
 export const API_BASE =
@@ -720,4 +722,23 @@ export function patchVideoSummarySettings(
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+// --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------
+
+/** Vollständiger Host-Metrik-Snapshot inkl. Verlauf (für die geöffnete App,
+ *  Polling). Liest den serverseitig gecachten Worker-Stand — kein Messen pro
+ *  Request. */
+export function getMetricsCurrent(
+  signal?: AbortSignal,
+): Promise<MetricsSnapshot> {
+  return request<MetricsSnapshot>("/metrics/current", { signal });
+}
+
+/** Leichtgewichtige Gesamt-Ampel (green/amber/red) für das Sidebar-Status-Icon —
+ *  läuft unabhängig davon, ob die App geöffnet ist. */
+export function getMetricsStatus(
+  signal?: AbortSignal,
+): Promise<MetricsStatus> {
+  return request<MetricsStatus>("/metrics/status", { signal });
 }
