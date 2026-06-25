@@ -12,6 +12,7 @@ import {
   gaugeColor,
   isTerminalStatus,
   livenessMeta,
+  displayName,
   modelLabel,
   phaseIndex,
   projectName,
@@ -175,6 +176,44 @@ describe("projectName", () => {
   it("nimmt das letzte Pfadsegment", () => {
     expect(projectName("/home/dev/projects/jupiter")).toBe("jupiter");
     expect(projectName("/home/dev/projects/jupiter/")).toBe("jupiter");
+  });
+});
+
+describe("displayName — PROJ-35 (Session-Titel = eingegebener Projektname)", () => {
+  const sess = (project_name: string | null, project_path = "/home/dev/projects/jupiter") =>
+    ({ project_name, project_path });
+
+  it("AC: zeigt project_name, wenn gesetzt (statt Pfad-Basename)", () => {
+    expect(displayName(sess("PROJ-35"))).toBe("PROJ-35");
+  });
+
+  it("AC/Edge: Fallback auf Pfad-Basename, wenn project_name null (Bestandssession)", () => {
+    expect(displayName(sess(null))).toBe("jupiter");
+  });
+
+  it("Edge: leerer/Whitespace-Titel wird wie nicht gesetzt behandelt (trim → Basename)", () => {
+    expect(displayName(sess(""))).toBe("jupiter");
+    expect(displayName(sess("   "))).toBe("jupiter");
+    expect(displayName(sess("\t\n"))).toBe("jupiter");
+  });
+
+  it("AC: zwei Sessions im selben Ordner mit verschiedenem Titel sind unterscheidbar", () => {
+    const path = "/home/dev/projects/jupiter";
+    expect(displayName(sess("Feature 35", path))).not.toBe(
+      displayName(sess("Feature 36", path)),
+    );
+  });
+
+  it("Edge: Titel == Ordnername → schlicht derselbe Text (unproblematisch)", () => {
+    expect(displayName(sess("jupiter"))).toBe("jupiter");
+  });
+
+  it("Edge: getrimmt — führende/folgende Whitespace im Titel entfernt", () => {
+    expect(displayName(sess("  PROJ-35  "))).toBe("PROJ-35");
+  });
+
+  it("Sonderzeichen bleiben unverändert (Escaping macht React beim Rendern, nicht der Helper)", () => {
+    expect(displayName(sess("<b>x</b> & ‚Test'"))).toBe("<b>x</b> & ‚Test'");
   });
 });
 
