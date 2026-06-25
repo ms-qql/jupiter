@@ -1,6 +1,6 @@
 # PROJ-43: VPS-Admin — Terminal (Shell-Zugriff)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -171,7 +171,60 @@ Dünne Read-Route gemäß Tech-Design D/E, kein DB-/RLS-Bedarf:
 **Offen für `/abc-deploy`:** ttyd+tmux als systemd-Dienst (Bind `127.0.0.1:7681`, `tmux new -A -s jupiter`), Caddy-Route (gleich-origin, WebSocket-Upgrade), `JUPITER_TERMINAL_URL` setzen. **Sicherheit:** ttyd-Port von außen nicht erreichbar (in `/abc-qa` prüfen).
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-25 · **Branch:** dev · **Stack:** Next.js 16 + FastAPI (kein Flutter)
+
+### Test-Läufe (automatisiert)
+- **Backend pytest (gesamt):** **710 passed** (19,5 s) — keine Regression durch die neue Route.
+- **PROJ-43-Backend** `test_proj43_terminal.py`: **9 passed** (Endpoint-Matrix, URL-Trim, Whitespace=aus, Probe real/refused/port-0/timeout).
+- **Frontend vitest (gesamt):** **169 passed** (19 Dateien) — keine Regression.
+- **Frontend `tsc --noEmit`:** sauber (einziger Fehler in vorbestehender `lib/md-tree.test.ts`, nicht Teil dieses Features).
+- **Frontend `eslint`** (terminal-tab.tsx, vps-admin-app.tsx): sauber.
+- App-Smoke: `create_app()` registriert `/terminal/info`; Default `enabled=false` (terminal_url leer).
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis |
+|---|-----------|----------|
+| 1 | Terminal-Bereich (Tab „Terminal" neben „Dashboard") in VPS-Admin | ✅ Pass — `Tabs`/`TabsList` mit zwei Triggern in `vps-admin-app.tsx` |
+| 2 | Funktionierende interaktive Shell (htop/tail -f) | ⏳ Deploy-gated — iFrame-Einbettung korrekt; lebende Shell braucht ttyd+tmux (Default `enabled=false`, live in Post-Deploy-QA zu prüfen) |
+| 3 | Konfigurationsbefehle ausführbar (kein read-only) | ⏳ Deploy-gated — `ttyd --writable` (Deploy); Sandbox erlaubt scripts+same-origin |
+| 4 | B1: ttyd systemd + iFrame, nicht öffentlich | ✅/⏳ — Frontend bettet per iFrame ein, Backend-Probe zielt auf `127.0.0.1`; systemd-Bind = Deploy |
+| 5 | Einbettung verweigert → „In neuem Tab öffnen"-Fallback | ✅ Pass — `EmbedTab` `onError`→Fallback + `LaunchButton` (wiederverwendet) |
+| 6 | Dienst nicht erreichbar → Hinweis + Retry, kein Crash | ✅ Pass — `TerminalTab`: `reachable=false` UND Abruf-Fehler → `TerminalNotice` + „Erneut versuchen" |
+| 7 | Vollbild-Hauptfläche; Wechsel ohne Reload | ✅ Pass — `fullHeight`-EmbedTab; Tab-Wechsel = React-State, `terminalOpened` hält montiert (CSS `hidden`) |
+| 8 | UI-Texte deutsch (Shell-Ausgabe unverändert) | ✅ Pass — alle Hinweise/Labels deutsch |
+
+**Summe:** 6 ✅ Pass · 2 ⏳ Deploy-gated (kein Bug — Architektur-Entscheidung „Feature aus bis Deploy", Spec G/J). 0 Fail.
+
+### Edge Cases
+| Edge Case | Ergebnis |
+|-----------|----------|
+| ttyd gestoppt → Hinweis+Retry, Dashboard bleibt nutzbar | ✅ Beide Tabs unabhängig; Dashboard immer montiert/pollt weiter |
+| WebSocket bricht ab → Reconnect | ✅ Manueller „Erneut versuchen" (Remount); serverseitig `tmux new -A` für Auto-Wiederanschluss (Deploy) |
+| Mehrere Tabs/Fenster | ⏳ `tmux new -A -s jupiter` → gemeinsame Session (Deploy) |
+| Lange Ausgabe / `tail -f`, Scrollback | ⏳ ttyd/xterm.js (Deploy) |
+| Browser-Reload während laufendem Befehl | ⏳ tmux-Persistenz (Deploy); Tab-Wechsel selbst löst keinen Page-Reload aus |
+| Sektion „Micro-Apps" ausgeblendet → Direkt-URL | ✅ Native-Micro-App-Route `/apps/vps_admin` unabhängig von Sidebar-Sichtbarkeit (PROJ-42-Host) |
+
+### Security-Audit (Red-Team, Code-Ebene)
+- **URL-Herkunft:** `url` kommt **ausschließlich** aus `settings.terminal_url` — kein Request-Body/Query-Param, kein Client-Einfluss. ✅
+- **Probe-Ziel:** Host/Port fest aus der Config; `asyncio.open_connection` (kein `subprocess`, keine Shell-Interpolation) → keine Command-/SSRF-Injection-Fläche. ✅
+- **Endpoint-Surface:** `GET /terminal/info` ohne Parameter; Antwort enthält nur `{enabled,url,reachable}` — kein Secret-Leak. ✅
+- **Robustheit:** jeder Probe-Fehler/Timeout → `reachable=false`, nie 500 (DoS-Resistenz gegen langsamen/down ttyd via Timeout `1.5 s`). ✅
+- **Sandbox-Hinweis (Low/Info):** `allow-same-origin allow-scripts` ist nötig (xterm.js + WebSocket) und laut Design unbedenklich, **weil** ttyd selbst betrieben + gleich-origin wird. Konsequenz: die eingebettete ttyd-Seite kann theoretisch das Jupiter-DOM scripten — akzeptabel im Trust-Modell (single-user hinter Tailscale, eigener ttyd). Kein Handlungsbedarf, dokumentiert.
+
+### ⚠️ Deploy-gated Verifikation (MUSS in/nach `/abc-deploy` erfolgen)
+Diese Punkte sind im aktuellen Stand (`enabled=false`, kein laufender ttyd) **nicht** live prüfbar und sind **Pflicht-Checks**, sobald der Dienst steht:
+1. **SICHERHEIT (kritisch):** ttyd-Port **von außen NICHT erreichbar** — Bind nur `127.0.0.1`, niemals `0.0.0.0`/Tailscale-IP. Von einem anderen Host gegen die öffentliche/Tailscale-Adresse auf `7681` prüfen → muss refused/timeout sein. Zugang ausschließlich über die Caddy-Route auf der (Tailscale-geschützten) Jupiter-Origin.
+2. Interaktive Shell live: Eingabe/Ausgabe, `htop`/`tail -f`, Scrollback (AC 2/3).
+3. Persistenz: laufender Befehl überlebt Browser-Reload + Tab-Wechsel (tmux).
+4. Einbettung lädt ohne Mixed-Content/`frame-ancestors`-Reibung (gleiche Origin via Caddy).
+
+### Bugs
+Keine Critical/High/Medium/Low-Bugs im gelieferten Code gefunden.
+
+### Production-Ready-Entscheidung
+**Code: READY** — keine Critical/High-Bugs; alle statisch/automatisiert prüfbaren AC + Edge-Cases bestanden, volle Backend- und Frontend-Regression grün. Die offenen ⏳-Punkte sind **bewusst** deploy-gated (Architektur: Feature aus bis `JUPITER_TERMINAL_URL` gesetzt) und kein Mangel der Implementierung.
+**Freigabe an Deploy mit Auflage:** Der Sicherheits-Check „ttyd-Port nicht öffentlich" (Punkt 1 oben) ist beim Deploy zwingend zu verifizieren, bevor das Feature live geht.
 
 ## Deployment
 _To be added by /abc-deploy_
