@@ -261,7 +261,60 @@ Decision-Card-Flow bereit.
 **Verifiziert:** `pytest backend/tests/` → **697 passed** (15 neu, 0 Regression).
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-25 · **Branch:** dev · **Tester:** QA Engineer
+**Automatisierte Tests:** Backend `pytest` **701 passed** (19 für PROJ-22), Frontend `vitest` **169 passed**, 0 Regression.
+**Stack-Kontext:** Single-User-MVP — kein JWT/RLS/Mandanten (bewusst, kommt mit PROJ-25). Red-Team daher auf
+Pfad-Scope, Fremd-Steuerung, Injection in INDEX-Parsing/Vault-Pfade, Input-Limits statt Tenant-Isolation.
+
+### Acceptance Criteria
+| # | Kriterium | Ergebnis | Beleg |
+|---|-----------|----------|-------|
+| 1 | Koordinator-Modus liest INDEX.md, offene Tickets (≠ Deployed/Approved) | ✅ Pass | `test_plan_excludes_deployed_and_approved`, `build_plan` |
+| 2 | Verteilungsplan vor Start (Ticket→Rolle/Skill/Engine + Reihenfolge), HITL-Freigabe | ✅ Pass | `POST /coordinator/plan` (dispatcht nicht); Frontend `DispatchPlanDialog` startet erst auf Klick |
+| 3 | Startet Spezialisten-Sessions, je Kind `ticket_id` + `parent_coordinator_id` | ✅ Pass | `test_dispatch_creates_fleet` |
+| 4 | Cockpit zeigt Koordinator + Kinder als zusammengehörige Gruppe | ✅ Pass (Logik/Typen) · ⚠ visueller Smoke offen | `FleetView` + `groupFleets` aus `/sessions`; Browser-Smoke empfohlen (hier nicht ausführbar) |
+| 5 | API-Vertrag als Vault-Artefakt + Pointer (kein Volltext) | ✅ Pass | `test_contract_writes_pointer_to_fleet` (Pointer an Koordinator + allen Kindern) |
+| 6 | Konflikt → erst Auto-Vermittlung, sonst Decision Card | 🟡 Teilweise (by design) | Gerüst + `contract_conflict`-Card-Typ vorhanden (FE+BE); die *Vermittlung selbst* ist Laufzeit-Verhalten der Koordinator-Session (Prompt/Konstitution), nicht deterministisch im Backend |
+| 7 | Pausieren · manuell umverteilen · Kind übernehmen | ✅ Pass | `test_pause`, `test_reassign_replaces_child`; „übernehmen" = FE-Link auf die Detailroute |
+| 8 | Koordinator-Aktionen unter Trust-Policy (PROJ-10) | 🟡 Teilweise | Jede **Kind-Session** läuft mit dem Policy-Hook (alle Tool-Calls gegated). Der REST-Akt „dispatchen" selbst ist **HITL-gegatet** (Plan-Freigabe), läuft aber **nicht** durch die Policy-Engine — konsistent mit `POST /sessions` (M1) |
+| 9 | Abhängigkeits-Reihenfolge respektiert (kein Dispatch bei offenem Requires) | ✅ Pass | `test_plan_topo_order_und_blocking`, `test_dispatch_skips_blocked_items` |
+| 10 | Alle Texte deutsch | ✅ Pass | UI + Fehlermeldungen durchgängig deutsch |
+
+### Edge Cases
+| Fall | Ergebnis | Beleg/Notiz |
+|------|----------|-------------|
+| Zirkuläre/fehlende Abhängigkeit → Warnung + nur auflösbarer Teilgraph | ✅ Pass | `test_plan_circular_dependency_warns`, `test_plan_missing_dependency_warns_but_not_blocks` |
+| Spezialist stirbt/hängt → Watchdog/Liveness | ✅ Pass (geerbt) · 🟡 Card-Automatik agenten-seitig | Jedes Kind erbt Watchdog (PROJ-16) + Liveness (PROJ-27); das deterministische „Ticket=blockiert + Card" ist Koordinator-Laufzeit (M2) |
+| Zwei Sessions ändern dasselbe Artefakt → Vertrag entscheidet | 🟡 by design | Agenten-Verhalten gegen den Vertrag (M2) |
+| Vertrag ändert sich mitten im Lauf → Update-Signal an Kinder | ✅ Pass (Pointer-Propagation) | `set_contract` setzt Pointer an Koordinator + allen Kindern; „veraltet-Markierung" offener Arbeit ist agenten-seitig |
+| Koordinator läuft Amok → eigene Limits/Watchdog | ✅ Pass (geerbt) | Koordinator ist eine normale Session → Watchdog/Limit greifen |
+| Kein freier Engine-Slot (PROJ-14) | 🟡 Teilweise | Dispatch bricht beim ersten erschöpften Slot **sauber** ab (Rest nicht verloren, Nutzer dispatcht erneut). Echte **Warteschlange** („einreihen") ist NICHT implementiert (M3) |
+| Nutzer übersteuert während Dispatch → manuelle Aktion gewinnt | ✅ Pass | `reassign` ersetzt Kind live; FE rechnet Flotte aus `/sessions` neu |
+| Ticket ohne klare Rolle/Skill → Default + erst nach Bestätigung | ✅ Pass | `role/skill=None` im Plan, Dispatch nur nach Plan-Freigabe |
+
+### Red-Team / Security-Audit
+| Vektor | Ergebnis | Beleg |
+|--------|----------|-------|
+| Pfad-Traversal in `plan`/`dispatch` (project_path außerhalb Roots) | ✅ Abgewehrt (400) | `validate_project_path`; `test_plan_path_outside_roots_raises`, `test_dispatch_path_outside_roots_400` |
+| Fremd-Steuerung: pause/reassign/contract auf Nicht-Koordinator-Session | ✅ Abgewehrt (404) | `test_mutations_reject_non_coordinator_session` |
+| Injection über INDEX-`Abhängigkeiten`-Zelle | ✅ Sicher | nur `PROJ-\d+`-Regex-Matches werden übernommen; Feature-Spalten-ID wird nicht als Dep fehlinterpretiert |
+| Vault-Pfad-Injection über Contract-`title`/`session_id` | ✅ Sicher | `slugify(title)` + `safe_id_segment(session_id)` (keine `../`) |
+| Input-Limits (Contract-Body, leerer Plan) | ✅ 422 | `test_contract_body_too_long_422`, `test_dispatch_requires_items` |
+| Modell-Whitelist umgehen (Reassign reuste volle Modell-ID) | ✅ Gefixt im Backend-Schritt | jetzt `model=None`→Engine-Default; `test_reassign_replaces_child` |
+
+### Offene Punkte (alle Medium — keine Critical/High)
+- **M1 (AC8):** „Session starten/Ticket verteilen" läuft nicht durch die Policy-Engine, nur HITL-Plan-Freigabe. Tool-Aktionen der Kinder sind voll policy-gegatet. Konsistent mit `POST /sessions`. → Entscheidung nötig, ob AC8 wörtlich erfüllt werden muss (kleine Erweiterung: Policy-Check vor `dispatch`).
+- **M2 (AC6 + Edges):** Auto-Vermittlung von Vertrags-Konflikten + „Ticket=blockiert+Card bei totem Kind" sind **agenten-seitig** (Koordinator-Prompt/Konstitution), nicht deterministisch im Backend. Gerüst (Card-Typ, Flow) steht. → Verhaltens-Spike + Konstitution für die Koordinator-Rolle als Folge-Ticket.
+- **M3 (Edge Slot-Limit):** „einreihen" ist als „sauberer Abbruch + Re-Dispatch" umgesetzt, keine echte Queue.
+
+### Regression
+- Backend 701/701, Frontend 169/169 grün. Geänderte Shared-Flächen (`SessionState`/`SessionRead`/`launcher`) ohne Bruch; parallele PROJ-43-`terminal`-Route auf `dev` koexistiert konfliktfrei.
+
+### Production-Ready-Empfehlung
+**READY mit Vorbehalt** — keine Critical/High-Bugs; das deterministische Gerüst ist solide getestet und sicher.
+Die drei Medium-Punkte (M1–M3) sind bewusste Scope-Grenzen zwischen *deterministischem Gerüst* und
+*Agenten-Laufzeit*. Empfehlung vor Deploy: (a) kurzer Browser-Smoke der Cockpit-Flotten-Gruppierung (AC4),
+(b) Nutzer-Entscheidung zu M1 (AC8 wörtlich?). M2/M3 als Folge-Tickets der Phase-2-Ausbaustufe vertretbar.
 
 ## Deployment
 _To be added by /abc-deploy_

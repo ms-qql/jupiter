@@ -221,6 +221,50 @@ def test_reassign_unknown_ticket_404(client: TestClient):
     assert r.status_code == 404
 
 
+# --- Red-Team / Härtung ----------------------------------------------------
+
+def test_mutations_reject_non_coordinator_session(client: TestClient):
+    """pause/reassign/contract dürfen NUR auf einer Koordinator-Session greifen —
+    eine normale Session (oder eine fremde ID) → 404 (keine Fremd-Steuerung)."""
+    sid = client.post(
+        "/sessions", json={"project_path": PROJECT, "initial_prompt": "hi", "model": "haiku"}
+    ).json()["session_id"]
+    assert client.post(f"/coordinator/{sid}/pause", json={"paused": True}).status_code == 404
+    assert client.post(
+        f"/coordinator/{sid}/reassign", json={"ticket_id": "PROJ-1"}
+    ).status_code == 404
+    assert client.post(
+        f"/coordinator/{sid}/contract", json={"body": "x"}
+    ).status_code == 404
+    # Komplett unbekannte ID ebenso.
+    assert client.get("/coordinator/nope/fleet").status_code == 404
+
+
+def test_dispatch_path_outside_roots_400(client: TestClient):
+    items = [{"ticket_id": "PROJ-1", "title": "A", "status": "Planned", "role": "backend",
+              "skill": "abc-backend", "engine": "claude", "model": "sonnet", "order": 1,
+              "dependencies": [], "blocked": False}]
+    r = client.post("/coordinator/dispatch", json={"project_path": "/etc", "items": items})
+    assert r.status_code == 400
+
+
+def test_contract_body_too_long_422(client: TestClient):
+    from app.config import MAX_INPUT_CHARS
+
+    cid = _dispatch(client)["coordinator"]["session_id"]
+    r = client.post(
+        f"/coordinator/{cid}/contract",
+        json={"body": "x" * (MAX_INPUT_CHARS + 1)},
+    )
+    assert r.status_code == 422
+
+
+def test_dispatch_requires_items(client: TestClient):
+    """Leerer Plan → 422 (kein Dispatch ohne mindestens ein Ticket)."""
+    r = client.post("/coordinator/dispatch", json={"project_path": PROJECT, "items": []})
+    assert r.status_code == 422
+
+
 def test_contract_writes_pointer_to_fleet(client: TestClient):
     fleet = _dispatch(client)
     cid = fleet["coordinator"]["session_id"]
