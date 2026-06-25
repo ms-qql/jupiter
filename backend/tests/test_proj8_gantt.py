@@ -274,6 +274,57 @@ async def test_bypass_qa_deploy_recognized_even_while_gate_blocks(tmp_path, monk
     await task
 
 
+@pytest.mark.asyncio
+async def test_mode_switch_default_to_bypass_keeps_reached(tmp_path, monkeypatch):
+    """PROJ-30 Edge-Case: Moduswechsel default→bypass mitten in der Session — keine
+    erkannte Phase geht verloren, abc_phase_reached bleibt monoton, spätere Phasen
+    (qa/deploy) werden nach dem Wechsel weiter erkannt."""
+    p = tmp_path / "policy.yaml"
+    # Skill auto-allow → keine operative Card (auch in default), isoliert die Phasenlogik.
+    p.write_text(
+        "phase_gate:\n  enabled: false\n  transitions: []\n"
+        "rules:\n  - tool: Skill\n    level: auto-allow\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(policy, "policy_store", PolicyStore(str(p)))
+
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku",
+                          permission_mode="default")
+    # In default erkannte Phasen.
+    for i, skill in enumerate(["abc-architecture", "abc-frontend", "abc-backend"]):
+        await mgr.request_decision(rt.state.session_id, f"d{i}", "Skill", {"skill": skill, "args": "30"})
+    assert rt.state.abc_phase == "backend" and rt.state.abc_phase_reached == "backend"
+
+    # Mitten in der Session auf Bypass wechseln.
+    rt.state.permission_mode = "bypassPermissions"
+
+    # qa/deploy werden auch nach dem Wechsel erkannt; reached bleibt monoton.
+    for i, skill in enumerate(["abc-qa", "abc-deploy"]):
+        await mgr.request_decision(rt.state.session_id, f"b{i}", "Skill", {"skill": skill, "args": "30"})
+    assert rt.state.abc_phase == "deploy"
+    assert rt.state.abc_phase_reached == "deploy"
+
+
+@pytest.mark.asyncio
+async def test_non_phase_skill_in_bypass_keeps_phase(tmp_path, monkeypatch):
+    """PROJ-30 Edge-Case: Ein Skill ohne Phase (abc-refactor) ändert im Bypass die Phase
+    NICHT (verhaltenswahrend zu PROJ-8)."""
+    p = tmp_path / "policy.yaml"
+    p.write_text("phase_gate:\n  enabled: false\n  transitions: []\n", encoding="utf-8")
+    monkeypatch.setattr(policy, "policy_store", PolicyStore(str(p)))
+
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku",
+                          permission_mode="bypassPermissions")
+    await mgr.request_decision(rt.state.session_id, "t0", "Skill", {"skill": "abc-qa", "args": "30"})
+    assert rt.state.abc_phase == "qa"
+    # Nicht-Phasen-Skill ohne Phasenwirkung.
+    out = await mgr.request_decision(rt.state.session_id, "t1", "Skill", {"skill": "abc-refactor"})
+    assert out.behavior == "allow"
+    assert rt.state.abc_phase == "qa" and rt.state.abc_phase_reached == "qa"
+
+
 # --- project_name -----------------------------------------------------------
 
 @pytest.mark.asyncio

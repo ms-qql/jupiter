@@ -1,6 +1,6 @@
 # PROJ-30: Kanban-Phasenerkennung im Bypass-Mode (QA/Deploy)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -104,3 +104,35 @@ Die **Phasen-Erkennung** wird zu einem reinen, modus-unabhängigen Seiteneffekt,
 - [x] PROJ-16-Interaktion: max. ein Call Nachlauf (Watchdog-Pause gibt den *nächsten* Call frei; unverändert).
 - [x] `abc_phase_reached` monoton, auch über Bypass-Wechsel.
 - [x] PROJ-8-Tests grün; neuer Regressionstest deckt Bypass explizit ab (alle 8 Phasen, Schwerpunkt QA/Deploy).
+
+## QA Test Results — 2026-06-25
+**Tester:** QA Engineer · **Branch:** dev · **Build:** Backend-Suite
+
+### Akzeptanzkriterien (6/6 bestanden)
+| AC | Ergebnis | Nachweis (Test) |
+|----|----------|-----------------|
+| Erkennung modus-unabhängig (default/acceptEdits/bypass) | ✅ Pass | `test_bypass_recognizes_all_phases_without_cards`, `test_mode_switch_default_to_bypass_keeps_reached` |
+| QA bei `abc-qa`/`-e2e`, Deploy bei `abc-deploy` im Bypass (Hervorhebung + Bar) | ✅ Pass | `test_bypass_qa_deploy_recognized_even_while_gate_blocks`; `abc-qa-e2e→qa` via `SKILL_TO_PHASE` (`test_phase_for_workflow_skills`) |
+| Detektor nicht durch auto-allow umgangen (Erkennung ohne Card) | ✅ Pass | `test_bypass_recognizes_all_phases_without_cards` (`rt.pending == {}`) |
+| PROJ-16-Interaktion: max. ein Call Nachlauf | ✅ Pass (Inspektion) | `watchdog.evaluate` Early-Return (`manager.py:537`) liegt **unverändert vor** `_apply_phase` → identisches Nachlauf-Verhalten wie PROJ-8; kein Regress |
+| `abc_phase_reached` monoton, auch über Bypass-Wechsel | ✅ Pass | `test_mode_switch_default_to_bypass_keeps_reached`; `_revert_phase` lässt `reached` unangetastet (`test_denied_phase_gate_keeps_old_phase`) |
+| PROJ-8-Tests grün + neuer Bypass-Regressionstest (alle 8 Phasen) | ✅ Pass | gesamte Suite grün |
+
+### Edge Cases (dokumentiert)
+- Moduswechsel default→bypass: ✅ `test_mode_switch_default_to_bypass_keeps_reached`
+- Reine Bypass-Session ab Start: ✅ `test_bypass_recognizes_all_phases_without_cards`
+- Skill ohne Phase (`abc-refactor`) im Bypass: ✅ `test_non_phase_skill_in_bypass_keeps_phase`
+- Watchdog-Pause vor `abc-qa`/`abc-deploy`: ✅ Inspektion (Nachlauf max. ein Call, s. o.)
+- QA/Deploy-Skill ohne Argument: ✅ `phase_for_skill` unabhängig von `args` (`test_detect_skill_without_arg_keeps_known_feature`)
+
+### Regression
+- Gesamte Backend-Suite: **594 passed** (vorher 592 + 2 neue Edge-Case-Tests), inkl. PROJ-8/10/16/27/32/33.
+- PROJ-10: 2 Assertions bewusst an die neue „sofortige Erkennung + Revert-bei-Ablehnung"-Semantik angepasst (keine ungewollte Regression — dokumentierte Verhaltensänderung).
+
+### Security / Red-Team
+- Keine neue Angriffsfläche: rein interne Logik im `request_decision`-Seam; `/internal/permission` bleibt localhost + Hook-Token (unverändert). Keine DB/Tenancy/Auth-Berührung (Jupiter-MVP). Kein neuer Input-Pfad.
+
+### Bugs
+- Keine (0 Critical / 0 High / 0 Medium / 0 Low).
+
+### Production-Ready: **JA** — keine Critical/High-Bugs.
