@@ -15,6 +15,7 @@ import type {
   MdIndexResult,
   MdSaveResult,
   MdSource,
+  BranchStatus,
   PhaseGateConfig,
   PolicyPreview,
   PolicyRule,
@@ -517,6 +518,77 @@ export function setClipboardDir(path: string): Promise<ClipboardDir> {
   return request<ClipboardDir>("/settings/clipboard-dir", {
     method: "PATCH",
     body: JSON.stringify({ path }),
+  });
+}
+
+// --- PROJ-13: Git-Branch-Handling ------------------------------------------
+
+/** Branch-Status eines Projekts (read-only, pollbar). project_path = aktueller
+ *  Pfad im Explorer; das Backend härtet ihn gegen die erlaubten Roots. */
+export function getBranchStatus(
+  projectPath: string,
+  signal?: AbortSignal,
+): Promise<BranchStatus> {
+  return request<BranchStatus>(
+    `/git/status?project_path=${encodeURIComponent(projectPath)}`,
+    { signal },
+  );
+}
+
+/** Branch wechseln. Wirft ApiError(409) bei dirty Working Tree (kein Zwang). */
+export function switchBranch(
+  projectPath: string,
+  branch: string,
+): Promise<BranchStatus> {
+  return request<BranchStatus>("/git/switch", {
+    method: "POST",
+    body: JSON.stringify({ project_path: projectPath, branch }),
+  });
+}
+
+/** Feature-Branch `specs/PROJ-<id>-<slug>` anlegen (oder auschecken, falls vorhanden). */
+export function createFeatureBranch(
+  projectPath: string,
+  featureId: number,
+  slug: string,
+  base = "main",
+): Promise<BranchStatus> {
+  return request<BranchStatus>("/git/feature-branch", {
+    method: "POST",
+    body: JSON.stringify({
+      project_path: projectPath,
+      feature_id: featureId,
+      slug,
+      base,
+    }),
+  });
+}
+
+/** `source` nach `target` mergen (--no-ff). Vorab-Check + Konflikt → ApiError(409). */
+export function promoteBranch(
+  projectPath: string,
+  source: string,
+  target: string,
+): Promise<BranchStatus> {
+  return request<BranchStatus>("/git/promote", {
+    method: "POST",
+    body: JSON.stringify({ project_path: projectPath, source, target }),
+  });
+}
+
+/** Expliziter Stash (inkl. untracked) vor einem Wechsel — nie automatisch. */
+export function stashChanges(projectPath: string): Promise<BranchStatus> {
+  return request<BranchStatus>("/git/stash", {
+    method: "POST",
+    body: JSON.stringify({ project_path: projectPath }),
+  });
+}
+
+/** `git init` für ein Nicht-Repo innerhalb der Roots. */
+export function gitInit(projectPath: string): Promise<BranchStatus> {
+  return request<BranchStatus>("/git/init", {
+    method: "POST",
+    body: JSON.stringify({ project_path: projectPath }),
   });
 }
 

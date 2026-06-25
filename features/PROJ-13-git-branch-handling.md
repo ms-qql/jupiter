@@ -122,6 +122,22 @@ Alle Schreib-Endpunkte validieren `project_path` gegen `allowed_roots` (bestehen
 - Detached HEAD wird erkannt (`detached=true`, `branch` = Kurz-Hash). Force/Push/Pull bewusst **nicht** Teil dieses Stands (kein Ein-Klick-Force lt. Spec).
 - Protokoll via `logging.info` je schreibender Operation (keine eigene Audit-Tabelle im MVP — Git ist die Wahrheit).
 
+### Frontend-Implementierung (2026-06-25, Next.js, Branch `dev`)
+**Neu:**
+- `nextjs_app/components/cockpit/branch-panel.tsx` — `BranchBadge` (Header-Badge, pollt `/git/status` für den aktuellen Pfad) + `BranchPanel` (shadcn/base-ui Dialog): Status-Kopf (Branch/clean-dirty/ahead-behind), Branch-Wechsel-Buttons, Dirty-Warnung mit explizitem Stash, Feature-Branch-Formular (`specs/PROJ-<id>-<slug>` + Basis main/dev), Promote `dev → main` (und `<feature> → dev`). Reine Darstellungs-Logik als exportierte `describeBranch()` (separat getestet).
+- `nextjs_app/components/cockpit/branch-panel.test.tsx` — 6 Vitest-Tests für alle Badge-Varianten (lädt/kein-Repo/clean/dirty/ahead-behind/detached).
+
+**Geändert:**
+- `nextjs_app/lib/types.ts` — `BranchStatus`-Interface.
+- `nextjs_app/lib/api.ts` — `getBranchStatus/switchBranch/createFeatureBranch/promoteBranch/stashChanges/gitInit`.
+- `nextjs_app/components/cockpit/file-explorer.tsx` — `BranchBadge` im Header (pfad-/projekt-scoped, neben ThemeToggle).
+
+**UI-Verhalten:**
+- Kein-Repo → Aktionen aus, Button „git init ausführen". Dirty → Wechsel/Promote blockiert (Backend-409 als deutscher Toast) + Stash-Option. Detached HEAD → destructive Badge; Rückkehr via Branch-Wechsel.
+- States: lädt/leer/Fehler explizit; alle Texte deutsch; Erfolg/Fehler via Sonner-Toast; Status nach jeder Mutation aus der Antwort gespiegelt.
+
+**Tests gesamt:** Backend 29 (pytest) + Frontend 6 (vitest, `describeBranch`); volle FE-Suite 109 grün, Lint clean, keine Regression.
+
 ## QA Test Results
 **Getestet:** 2026-06-25 · **Branch:** dev · **Ergebnis:** ✅ Production-Ready (keine Critical/High-Bugs)
 

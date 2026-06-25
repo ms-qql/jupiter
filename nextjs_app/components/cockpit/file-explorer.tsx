@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { FilePreview } from "@/components/cockpit/file-preview";
+import { BranchBadge } from "@/components/cockpit/branch-panel";
 import {
   ApiError,
   deleteFiles,
@@ -241,7 +242,9 @@ export function FileExplorer() {
             {path}
           </button>
         )}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {/* PROJ-13: Branch-Status + Verwaltung für den aktuellen Projektpfad. */}
+          <BranchBadge path={path} />
           <ThemeToggle />
         </div>
       </header>
