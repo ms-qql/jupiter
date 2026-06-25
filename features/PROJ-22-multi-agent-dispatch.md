@@ -1,8 +1,8 @@
 # PROJ-22: Multi-Agent-Dispatch-Schicht + Vertrag-zuerst/Koordinator
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-23
-**Last Updated:** 2026-06-23
+**Last Updated:** 2026-06-25
 **Baustein:** #17, #18
 **Prio:** P2 (Phase 2 — Skalierung)
 
@@ -65,7 +65,126 @@ Zwei Bausteine in einem Feature, weil sie nur zusammen funktionieren:
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-25 · **Stack:** Next.js (Cockpit) + FastAPI (Engine) + Vault (MD) · **Branch:** dev
+
+### 0. Codebasis-Abgleich (warum dieses Design ggü. der Spec angepasst ist)
+Die Spec wurde am 2026-06-23 geschrieben; die Codebasis hat sich seither weiterentwickelt.
+Re-Validierung gegen den heutigen Stand (CodeGraph + Explore) ergibt **drei Korrekturen**,
+die das Feature **vereinfachen** statt erschweren:
+
+1. **Live-Index ist rein in-memory, nicht „Postgres/in-memory".** Sessions (`SessionManager`-
+   Registry) und Decision Cards (`decisions.py`) leben im Speicher; Wahrheit/Recovery laufen
+   über den Vault (PROJ-17). → **Kein neues DB-Schema.** Die Fleet-Beziehung wird als Feld am
+   bestehenden `SessionState` geführt, Recovery wie gehabt über den Vault.
+2. **Eltern-Kind existiert bereits (1:1).** Der „Staffelstab" aus PROJ-5 nutzt
+   `parent_session_id` / `child_session_id`. → Neu ist nur die **1:N-Flotte**
+   (ein Koordinator → viele Spezialisten): ein zusätzliches `child_session_ids`-Listenfeld
+   + ein `ticket_id` je Kind. Kein Parallel-Stack.
+3. **INDEX.md-Parsing + Rollen-Mapping existieren bereits.** `launcher.parse_index_features()`
+   liest Status/Prio, `launcher.suggest()` mappt Ticket-Status → abc-Phase → Skill/Engine.
+   → Wiederverwenden; **neu** ist nur das Auslesen der **`Abhängigkeiten`-Spalte** für die
+   topologische Dispatch-Reihenfolge.
+
+**Fazit:** Architektur bleibt wie in der Spec skizziert (Koordinator = spezielle Session mit
+Kind-Referenzen). Die einzige inhaltliche Anpassung ggü. der Spec ist Punkt 1 (kein Postgres
+für den Live-Index — das `**Live-Index (Postgres/in-memory)**` der Technical Requirements ist
+heute „in-memory + Vault-Recovery").
+
+### A) Komponenten-Struktur (Cockpit)
+```
+CockpitScreen
+├── KoordinatorBar (neuer Modus-Einstieg)
+│   ├── "Koordinator starten"-Button  → liest INDEX.md
+│   └── VerteilungsplanDialog (Human-in-the-Loop, Freigabe vor Dispatch)
+│       ├── PlanTabelle (Ticket → Rolle/Skill/Engine → Reihenfolge)
+│       ├── AbhängigkeitsWarnung (zirkulär/fehlend → nur auflösbarer Teilgraph)
+│       └── [Freigeben] / [Abbrechen]
+├── KanbanBoard (bestehend, components/cockpit/kanban-board.tsx)
+│   └── FleetGroup (NEU: Koordinator-Kachel + eingerückte Kind-Kacheln / Swimlane)
+│       ├── KoordinatorTile (Eltern, Aggregat-Status)
+│       └── SpezialistTile[] (je Kind: ticket_id-Badge + abc-Phase + Ampel)
+├── KoordinatorControls (pro Fleet)
+│   ├── Pausieren
+│   ├── TicketUmverteilenMenu (manuell Rolle/Engine wechseln)
+│   └── "Kind übernehmen" (Direktzugriff auf Kind-Session)
+└── DecisionCardPanel (bestehend) — zeigt Konflikt-Cards des Koordinators
+```
+
+### B) Datenmodell (Klartext, kein Schema)
+Erweiterung des **bestehenden** `SessionState` (in-memory), keine neue Tabelle:
+```
+Koordinator-Session (= normale Session mit role="coordinator"):
+- child_session_ids: Liste der dispatchten Kind-Sessions      (NEU, 1:N-Flotte)
+- contract_pointer:  Vault-Pointer auf das API-Vertrag-Artefakt (NEU)
+- dispatch_plan:     freigegebener Plan (Ticket → Rolle/Engine/Reihenfolge)
+
+Kind-Session (Spezialist):
+- parent_coordinator_id: Rück-Referenz auf den Koordinator       (NEU; nutzt parent_session_id-Muster)
+- ticket_id:             "PROJ-X" das diese Session bearbeitet   (NEU)
+- contract_pointer:      derselbe Pointer wie der Koordinator     (Pointer, kein Volltext)
+
+API-Vertrag (Vault-Artefakt, MD):
+- Pfad-Konvention: <vault>/Agentic OS/Jupiter/Knowledge/contracts/PROJ-X-contract.md
+- Inhalt: Endpunkte/Felder/Datenformen, vom Architect zuerst festgelegt
+- wird von allen Spezialisten per Pointer referenziert (RAG-Fenster, kein Duplikat)
+
+Konflikt → Decision Card (bestehendes in-memory PendingDecision):
+- card_type = "contract_conflict" (NEU)
+- context: welche zwei Sessions, welches Feld/Artefakt, relevanter Vertrags-Ausschnitt (Pointer)
+```
+Speicherort: in-memory `SessionManager`; **Wahrheit/Recovery über den Vault** (PROJ-17) —
+konsistent mit dem heutigen Stand.
+
+### C) API-Shape (nur Endpunkte, kein Code)
+Aufgesetzt auf den bestehenden `routes/sessions.py`:
+```
+- POST /coordinator/plan            → liest INDEX.md, gibt Verteilungsplan zurück (dispatcht NICHT)
+- POST /coordinator/dispatch        → startet freigegebenen Plan: Kind-Sessions je Ticket (policy-gegatet)
+- GET  /coordinator/{id}/fleet      → Koordinator + Kinder + je Ticket/Phase/Ampel (Cockpit-Gruppe)
+- POST /coordinator/{id}/pause      → Dispatch pausieren
+- POST /coordinator/{id}/reassign   → Ticket manuell umverteilen (Rolle/Engine)  → Plan-Neuberechnung
+- POST /coordinator/{id}/contract   → API-Vertrag im Vault ablegen/aktualisieren  → Update-Signal an Kinder
+- (bestehend) POST /sessions/{id}/decisions/{decision_id} → Konflikt-Card auflösen
+```
+Single-User-MVP: kein JWT/RLS (kommt mit PROJ-25); `owner` wird mitgeführt.
+
+### D) Tech-Entscheidungen (WARUM, PM-lesbar)
+- **Koordinator = spezielle Session, kein neuer Dienst.** Wir hängen die Flotten-Logik an das
+  bestehende Session-/Treiber-Modell (PROJ-1/PROJ-14) statt einen Parallel-Stack zu bauen —
+  Recovery, Limits, Watchdog und Liveness gelten dann automatisch auch für Koordinator + Kinder.
+- **Das Dokument ist der Schiedsrichter, nicht der Agent.** Der API-Vertrag liegt als Vault-MD;
+  Spezialisten bauen nachweislich dagegen (Pointer im Prompt). Bei Widerspruch verweist der
+  Koordinator beide Seiten auf den Vertrag; nur das objektiv Unentscheidbare wird Decision Card.
+  So bleibt der Mensch an den Schaltstellen, nicht im Klein-Klein.
+- **Pointer statt Volltext.** Der Vertrag wird referenziert (RAG-Fenster wie in `vault.py`),
+  nicht in jeden Spezialisten-Prompt kopiert — spart Tokens und hält eine einzige Quelle.
+- **Plan vor Dispatch (Human-in-the-Loop).** `/coordinator/plan` zeigt erst den Verteilungsplan;
+  gestartet wird erst nach Freigabe — und „Session starten"/„Ticket verteilen" sind
+  Trust-Policy-gegatete Aktionen (PROJ-10).
+- **Abhängigkeits-Reihenfolge per Topo-Sort.** Die `Abhängigkeiten`-Spalte aus INDEX.md wird
+  ausgelesen; ein Ticket wird erst dispatcht, wenn seine `Requires` im Zielzustand sind.
+  Zirkulär/fehlend → Warnung + nur auflösbarer Teilgraph (statt blockieren/raten).
+- **Kein freier Slot / Amok.** Bei vollem Engine-Limit (PROJ-14) reiht der Koordinator Tickets
+  ein statt sie fallen zu lassen; läuft er selbst Amok, greift derselbe Watchdog (PROJ-16).
+
+### E) Wiederverwendung (was schon da ist) vs. NEU
+| Baustein | Status | Quelle |
+|---|---|---|
+| Session-Modell + Treiber-Launch | **da** | `backend/app/engine/manager.py`, `engine/base.py` |
+| Eltern-Kind (1:1 Staffelstab) | **da** | `manager.py` (`parent_session_id`/`child_session_id`) |
+| Decision Cards (in-memory) | **da** | `engine/decisions.py`, `routes/sessions.py` |
+| Vault read/write + Pointer/RAG | **da** | `engine/vault.py` |
+| INDEX.md-Parsing + Skill/Engine-Mapping | **da** | `engine/launcher.py` (`parse_index_features`, `suggest`) |
+| Trust-Policy- + Watchdog-Gates | **da** | `engine/policy.py`, `engine/watchdog.py` |
+| **1:N-Flotte (`child_session_ids`, `ticket_id`)** | **NEU** | Felder an `SessionState` |
+| **Koordinator-Logik (plan/dispatch/pause/reassign)** | **NEU** | neuer `engine/coordinator.py` + `routes/coordinator.py` |
+| **`Abhängigkeiten`-Spalte parsen + Topo-Sort** | **NEU** | Erweiterung in `launcher.parse_index_features` |
+| **API-Vertrag-Artefakt + `contract_conflict`-Card-Typ** | **NEU** | Vault-Konvention + `decisions.py`-Erweiterung |
+| **Fleet-Gruppierung im Kanban** | **NEU** | `nextjs_app/components/cockpit/kanban-board.tsx` |
+
+### F) Dependencies (Pakete)
+- Backend: **keine neuen** — alles (Treiber, Vault, Policy, Watchdog, INDEX-Parsing) existiert.
+- Frontend: **keine neuen** — Fleet-Gruppierung ist eine Komposition bestehender Cockpit-Komponenten.
 
 ## QA Test Results
 _To be added by /abc-qa_
