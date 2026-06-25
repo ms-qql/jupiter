@@ -1,6 +1,6 @@
 # PROJ-38: Sidebar-Sektionen + Konfigurations-Panel (Sichtbarkeit, Reihenfolge, RESET)
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -53,7 +53,78 @@ Dieses Feature liefert das **strukturelle Gerüst** (benannte, konfigurierbare S
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+**Erstellt:** 2026-06-25 · **Stack:** Next.js 16 (App Router) + Tailwind + shadcn/ui — **Frontend-only**, kein Backend · **Branch:** dev
+
+### Grundsatz
+Reine UI-Präferenz, exakt wie das Theme: ein client-seitiger Provider hält Sichtbarkeit + Reihenfolge, spiegelt sie nach `localStorage` und füttert die Sidebar. Kein API-, kein DB-Anteil. Das Feature liefert das **Gerüst**, auf das PROJ-39/40 nur noch ihre Einträge in die zentrale Definition eintragen.
+
+### A) Component Structure (Visual Tree)
+```
+SidebarPrefsProvider               (neu · Context, wraps Cockpit-Layout — analog ThemeProvider)
+└── SessionRail                    (umgebaut: rendert Sektionen aus zentraler Definition)
+    ├── Header: 🛰️ Jupiter + „+ Neu"        (unverändert; Mission Control bleibt im Header)
+    ├── Sektion „WORKSPACE"                  (neue Überschrift, Stil wie „Aktive Sessions")
+    │   ├── SettingsIcon-Button  → öffnet Konfig-Panel   (Tooltip „Sidebar anpassen")
+    │   ├── Doku-Eintrag      (togglebar / sortierbar)
+    │   └── Dateien-Eintrag   (togglebar / sortierbar)
+    ├── Sektion „AKTIVE SESSIONS"            (als Ganzes togglebar; Sessions NICHT einzeln gelistet)
+    │   └── Session-Liste + Archiv           (PROJ-3 unverändert)
+    └── Footer: „Zum Board →"                (unverändert)
+
+SidebarConfigPanel                 (neu · sidebar-config-panel.tsx, im Popover/Sheet)
+├── Hilfezeile „Ziehen zum Sortieren · Auge zum Ausblenden"
+├── Liste konfigurierbarer Einträge
+│   └── ConfigRow: [Drag-Griff] Label  [▲/▼ Mobile-Fallback]  [👁 Auge-Toggle]
+└── RESET-Button
+```
+
+### B) Daten- / Konfig-Modell (plain language, kein Code)
+Zwei Bausteine, beide rein im Frontend:
+
+**1. Zentrale Definition** (`lib/sidebar-config.ts`) — die „Wahrheit", was es überhaupt gibt:
+```
+Jeder Sidebar-Eintrag hat:
+- key            (stabile ID, z. B. "doku", "dateien", "sessions")
+- label          (Anzeigename, deutsch)
+- icon           (lucide-Icon)
+- section        ("workspace" | "sessions" | später "orchestration"/"micro-apps")
+- defaultVisible (true/false)
+- defaultOrder   (Default-Position)
+```
+PROJ-39/40 fügen hier künftig nur Zeilen hinzu — sonst nichts.
+
+**2. Nutzer-Präferenz** (im `SidebarPrefsProvider`, persistiert):
+```
+Pro key:  { visible: bool, order: zahl }
+Gespeichert in localStorage unter dem versionierten Key  "jupiter.sidebar.v1"
+```
+**Merge-Regel (wichtig):** Beim Laden wird die gespeicherte Prefs-Map über die Definition *gemerged*, nicht ersetzt:
+- key in Def **und** Prefs → Pref gewinnt (Nutzerwunsch bleibt).
+- key nur in Def (neu per Update, z. B. PROJ-39) → erscheint sichtbar an `defaultOrder`.
+- key nur in Prefs (veraltet/entfernt) → ignoriert.
+So gehen weder bestehende Einstellungen verloren noch sperrt eine alte Konfig neue Features aus.
+
+### C) API Shape
+**Keine.** Frontend-only, kein Endpoint, keine Schema-/DB-Änderung.
+
+### D) Tech Decisions (WHY)
+- **localStorage statt Backend:** Es ist eine persönliche Ansichts-Präferenz ohne Mehrtenant-/Sicherheitsrelevanz — genau wie das Theme, das bereits über `next-themes` in `localStorage` lebt. Ein Server-Roundtrip wäre Overkill.
+- **Versionierter Key `jupiter.sidebar.v1`:** erlaubt spätere strukturelle Migrationen, ohne alte Daten „erben" zu müssen.
+- **Definition getrennt von Prefs:** Die Trennung „was existiert" (Code) vs. „wie der Nutzer es will" (Storage) ist die Voraussetzung dafür, dass PROJ-39/40 ohne Storage-Bruch andocken (siehe Merge-Regel).
+- **Settings-Icon an der „Workspace"-Überschrift statt globalem Menü:** Anpassung sitzt dort, wo sie wirkt (Spec-Wunsch, Bild 8/9). Der Panel-Zugang ist **nie ausblendbar** → kein Aussperren.
+- **Drag ohne schweres Paket:** Reorder per **nativer HTML5-Drag-and-Drop** (dasselbe Mittel, das PROJ-11 Fileexplorer schon nutzt) — kein `@dnd-kit`/`react-dnd` nötig. Für Touch/Mobile zusätzlich **▲/▼-Buttons** je Zeile als gleichwertiger, immer funktionierender Fallback (Spec-Edge-Case Mobile).
+- **Hydration-sicher:** Der Prefs-Hook übernimmt das `mounted`-Flag-Muster des bestehenden `theme-toggle`, damit Server- und Client-Render nicht divergieren; bei blockiertem localStorage (Privatmodus) → stiller Fallback auf Defaults, kein Crash (Edge-Case).
+- **Auge = Sichtbarkeit sofort:** Toggle schreibt in den Provider-State → Sidebar re-rendert unmittelbar; Persistenz passiert nebenher.
+
+### E) Dependencies (Pakete)
+Bestehende shadcn/ui-Bausteine vorhanden: Button, ScrollArea, Dialog, Separator, Label. **Neu via `shadcn add` zu generieren** (copy-paste-Komponenten, keine schwere Lib): **Popover** (Desktop-Panel), **Switch** (Auge/Sichtbarkeit), **Tooltip** (Icon-Hinweis); für Mobile-Drawer optional **Sheet**. **Keine** neue Drag-Bibliothek (native HTML5 DnD). **Keine** Backend-Pakete.
+
+### Betroffene Dateien (Orientierung, kein Auftrag an Code)
+- umbauen: `nextjs_app/components/cockpit/session-rail.tsx` (Sektions-Rendering aus Definition, Workspace-Überschrift + Settings-Icon)
+- neu: `nextjs_app/lib/sidebar-config.ts` (zentrale Item-Definition)
+- neu: `nextjs_app/components/cockpit/sidebar-prefs-provider.tsx` (Context + `useSidebarPrefs`-Hook + localStorage-Merge/Reset) — eingehängt im Cockpit-Layout neben `SessionsProvider`
+- neu: `nextjs_app/components/cockpit/sidebar-config-panel.tsx` (Panel-UI: Auge, Reorder, RESET, Hilfezeile)
+- ggf. neu: `nextjs_app/components/ui/{popover,switch,tooltip,sheet}.tsx` (shadcn-generiert)
 
 ## QA Test Results
 _To be added by /qa_
