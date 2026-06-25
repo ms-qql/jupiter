@@ -1,6 +1,6 @@
 # PROJ-22: Multi-Agent-Dispatch-Schicht + Vertrag-zuerst/Koordinator
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-25
 **Baustein:** #17, #18
@@ -262,7 +262,7 @@ Decision-Card-Flow bereit.
 
 ## QA Test Results
 **Getestet:** 2026-06-25 · **Branch:** dev · **Tester:** QA Engineer
-**Automatisierte Tests:** Backend `pytest` **701 passed** (19 für PROJ-22), Frontend `vitest` **169 passed**, 0 Regression.
+**Automatisierte Tests:** Backend `pytest` **713 passed** (24 für PROJ-22, inkl. M1/M3-Fixes), Frontend `vitest` **169 passed**, 0 Regression.
 **Stack-Kontext:** Single-User-MVP — kein JWT/RLS/Mandanten (bewusst, kommt mit PROJ-25). Red-Team daher auf
 Pfad-Scope, Fremd-Steuerung, Injection in INDEX-Parsing/Vault-Pfade, Input-Limits statt Tenant-Isolation.
 
@@ -274,9 +274,9 @@ Pfad-Scope, Fremd-Steuerung, Injection in INDEX-Parsing/Vault-Pfade, Input-Limit
 | 3 | Startet Spezialisten-Sessions, je Kind `ticket_id` + `parent_coordinator_id` | ✅ Pass | `test_dispatch_creates_fleet` |
 | 4 | Cockpit zeigt Koordinator + Kinder als zusammengehörige Gruppe | ✅ Pass (Logik/Typen) · ⚠ visueller Smoke offen | `FleetView` + `groupFleets` aus `/sessions`; Browser-Smoke empfohlen (hier nicht ausführbar) |
 | 5 | API-Vertrag als Vault-Artefakt + Pointer (kein Volltext) | ✅ Pass | `test_contract_writes_pointer_to_fleet` (Pointer an Koordinator + allen Kindern) |
-| 6 | Konflikt → erst Auto-Vermittlung, sonst Decision Card | 🟡 Teilweise (by design) | Gerüst + `contract_conflict`-Card-Typ vorhanden (FE+BE); die *Vermittlung selbst* ist Laufzeit-Verhalten der Koordinator-Session (Prompt/Konstitution), nicht deterministisch im Backend |
+| 6 | Konflikt → erst Auto-Vermittlung, sonst Decision Card | ✅ Pass (Verhalten verankert) | `contract_conflict`-Card-Typ (FE+BE) **+ Koordinator-Rollen-Konstitution** `backend/constitution/roles/coordinator.md` (Vertrag-zuerst → vermitteln → nur Unlösbares als Card). Die Vermittlung *läuft* zur Laufzeit der Koordinator-Session (per Konstitution), das Gerüst ist deterministisch getestet |
 | 7 | Pausieren · manuell umverteilen · Kind übernehmen | ✅ Pass | `test_pause`, `test_reassign_replaces_child`; „übernehmen" = FE-Link auf die Detailroute |
-| 8 | Koordinator-Aktionen unter Trust-Policy (PROJ-10) | 🟡 Teilweise | Jede **Kind-Session** läuft mit dem Policy-Hook (alle Tool-Calls gegated). Der REST-Akt „dispatchen" selbst ist **HITL-gegatet** (Plan-Freigabe), läuft aber **nicht** durch die Policy-Engine — konsistent mit `POST /sessions` (M1) |
+| 8 | Koordinator-Aktionen unter Trust-Policy (PROJ-10) | ✅ Pass (M1 gefixt) | Dispatch läuft jetzt durch `policy_store.evaluate("CoordinatorDispatch", role=coordinator)` → **deny-Regel ⇒ 403** (`test_dispatch_denied_by_policy_403`); `card`/`auto-allow` degradieren bewusst zur HITL-Plan-Freigabe. Jede Kind-Session ist zusätzlich voll policy-gegatet |
 | 9 | Abhängigkeits-Reihenfolge respektiert (kein Dispatch bei offenem Requires) | ✅ Pass | `test_plan_topo_order_und_blocking`, `test_dispatch_skips_blocked_items` |
 | 10 | Alle Texte deutsch | ✅ Pass | UI + Fehlermeldungen durchgängig deutsch |
 
@@ -288,7 +288,7 @@ Pfad-Scope, Fremd-Steuerung, Injection in INDEX-Parsing/Vault-Pfade, Input-Limit
 | Zwei Sessions ändern dasselbe Artefakt → Vertrag entscheidet | 🟡 by design | Agenten-Verhalten gegen den Vertrag (M2) |
 | Vertrag ändert sich mitten im Lauf → Update-Signal an Kinder | ✅ Pass (Pointer-Propagation) | `set_contract` setzt Pointer an Koordinator + allen Kindern; „veraltet-Markierung" offener Arbeit ist agenten-seitig |
 | Koordinator läuft Amok → eigene Limits/Watchdog | ✅ Pass (geerbt) | Koordinator ist eine normale Session → Watchdog/Limit greifen |
-| Kein freier Engine-Slot (PROJ-14) | 🟡 Teilweise | Dispatch bricht beim ersten erschöpften Slot **sauber** ab (Rest nicht verloren, Nutzer dispatcht erneut). Echte **Warteschlange** („einreihen") ist NICHT implementiert (M3) |
+| Kein freier Engine-Slot (PROJ-14) | ✅ Pass (M3 gefixt) | Resttickets werden **eingereiht** (`queued_tickets`) und vom Hintergrund-Drain (`drain_all`, 5-s-Tick) + nach `reassign` automatisch nachgerückt, sobald ein Slot frei wird; pausierte Flotten rücken nicht nach. `test_queue_and_drain`, `test_drain_skips_paused`. Sichtbar als „N eingereiht"-Badge |
 | Nutzer übersteuert während Dispatch → manuelle Aktion gewinnt | ✅ Pass | `reassign` ersetzt Kind live; FE rechnet Flotte aus `/sessions` neu |
 | Ticket ohne klare Rolle/Skill → Default + erst nach Bestätigung | ✅ Pass | `role/skill=None` im Plan, Dispatch nur nach Plan-Freigabe |
 
@@ -302,19 +302,31 @@ Pfad-Scope, Fremd-Steuerung, Injection in INDEX-Parsing/Vault-Pfade, Input-Limit
 | Input-Limits (Contract-Body, leerer Plan) | ✅ 422 | `test_contract_body_too_long_422`, `test_dispatch_requires_items` |
 | Modell-Whitelist umgehen (Reassign reuste volle Modell-ID) | ✅ Gefixt im Backend-Schritt | jetzt `model=None`→Engine-Default; `test_reassign_replaces_child` |
 
-### Offene Punkte (alle Medium — keine Critical/High)
-- **M1 (AC8):** „Session starten/Ticket verteilen" läuft nicht durch die Policy-Engine, nur HITL-Plan-Freigabe. Tool-Aktionen der Kinder sind voll policy-gegatet. Konsistent mit `POST /sessions`. → Entscheidung nötig, ob AC8 wörtlich erfüllt werden muss (kleine Erweiterung: Policy-Check vor `dispatch`).
-- **M2 (AC6 + Edges):** Auto-Vermittlung von Vertrags-Konflikten + „Ticket=blockiert+Card bei totem Kind" sind **agenten-seitig** (Koordinator-Prompt/Konstitution), nicht deterministisch im Backend. Gerüst (Card-Typ, Flow) steht. → Verhaltens-Spike + Konstitution für die Koordinator-Rolle als Folge-Ticket.
-- **M3 (Edge Slot-Limit):** „einreihen" ist als „sauberer Abbruch + Re-Dispatch" umgesetzt, keine echte Queue.
+### Fix-Runde (2026-06-25) — M1–M3 geschlossen
+- **M1 (AC8) ✅ gefixt:** `dispatch` läuft durch die Trust-Policy (`DISPATCH_ACTION="CoordinatorDispatch"`,
+  `role=coordinator`); eine `deny`-Regel ⇒ **403** (`DispatchDeniedError`). `card`/`auto-allow` ⇒ bewusst
+  die bereits vorgeschaltete HITL-Plan-Freigabe (kein zweites Gate ohne laufende Session).
+  Test: `test_dispatch_denied_by_policy_403`.
+- **M2 (AC6) ✅ verankert:** Rollen-Konstitution `backend/constitution/roles/coordinator.md` macht
+  „Vertrag-zuerst → vermitteln → nur Unlösbares als `contract_conflict`-Card" zum tatsächlichen
+  Laufzeit-Verhalten der Koordinator-Session. Card-Typ + Flow + Konstitution sind deterministisch da;
+  die *Korrektheit der Vermittlung* ist LLM-Verhalten (Live-Beobachtung statt Unit-Test).
+- **M3 (Slot-Limit) ✅ gefixt:** echte Warteschlange (`queued_tickets`) + Hintergrund-Drain (`drain_all`,
+  `coordinator_drain_interval_seconds=5 s`) + Nachrücken nach `reassign`; pausierte Flotten rücken nicht
+  nach; „N eingereiht"-Badge im Cockpit. Tests: `test_queue_and_drain`, `test_drain_skips_paused`.
+
+### Verbleibend (Low, nicht blockierend)
+- AC4 (visuelle Flotten-Gruppierung): Logik/Typen/Badge getestet; kurzer Browser-Smoke empfohlen.
+- Korrektheit der KI-Konfliktvermittlung: verhaltensbasiert → Live-Beobachtung.
 
 ### Regression
-- Backend 701/701, Frontend 169/169 grün. Geänderte Shared-Flächen (`SessionState`/`SessionRead`/`launcher`) ohne Bruch; parallele PROJ-43-`terminal`-Route auf `dev` koexistiert konfliktfrei.
+- Backend **713/713**, Frontend **169/169** grün (24 PROJ-22-Tests). Geänderte Shared-Flächen
+  (`SessionState`/`SessionRead`/`launcher`/`main`/`config`) ohne Bruch; parallele PROJ-23-`challenge`-
+  und PROJ-43-`terminal`-Routen auf `dev` koexistieren konfliktfrei.
 
 ### Production-Ready-Empfehlung
-**READY mit Vorbehalt** — keine Critical/High-Bugs; das deterministische Gerüst ist solide getestet und sicher.
-Die drei Medium-Punkte (M1–M3) sind bewusste Scope-Grenzen zwischen *deterministischem Gerüst* und
-*Agenten-Laufzeit*. Empfehlung vor Deploy: (a) kurzer Browser-Smoke der Cockpit-Flotten-Gruppierung (AC4),
-(b) Nutzer-Entscheidung zu M1 (AC8 wörtlich?). M2/M3 als Folge-Tickets der Phase-2-Ausbaustufe vertretbar.
+**READY** — keine Critical/High/Medium offen; alle 10 AC erfüllt (M1–M3 geschlossen), Security-Audit sauber,
+0 Regression. Vor Deploy nur noch ein kurzer Browser-Smoke der Cockpit-Flotten-Gruppierung (AC4) empfohlen.
 
 ## Deployment
 _To be added by /abc-deploy_

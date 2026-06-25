@@ -61,6 +61,7 @@ export function FleetView({
   }
 
   const meta = statusMeta(coordinator.status);
+  const queued = coordinator.queued_ticket_ids ?? [];
   const openCards = childSessions.reduce(
     (n, c) => n + (c.pending_decisions?.length ?? 0),
     coordinator.pending_decisions?.length ?? 0,
@@ -90,6 +91,15 @@ export function FleetView({
             className="border-amber-500/50 text-[10px] text-amber-600 dark:text-amber-400"
           >
             pausiert
+          </Badge>
+        )}
+        {queued.length > 0 && (
+          <Badge
+            variant="outline"
+            className="border-sky-500/50 text-[10px] text-sky-600 dark:text-sky-400"
+            title={`Eingereiht (rücken nach, sobald ein Slot frei wird): ${queued.join(", ")}`}
+          >
+            {queued.length} eingereiht
           </Badge>
         )}
         {openCards > 0 && (

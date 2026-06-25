@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from ..engine.coordinator import (
     CoordinatorNotFoundError,
     CoordinatorService,
+    DispatchDeniedError,
     TicketNotFoundError,
 )
 from ..engine.manager import EngineUnavailableError, SessionLimitError
@@ -49,6 +50,8 @@ async def coordinator_dispatch(payload: DispatchRequest, request: Request) -> di
     items = [it.model_dump() for it in payload.items]
     try:
         return await _service(request).dispatch(payload.project_path, items)
+    except DispatchDeniedError as exc:  # M1/AC8: Trust-Policy untersagt das Verteilen
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except SessionLimitError as exc:  # PROJ-14: schon der Koordinator bekommt keinen Slot
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except EngineUnavailableError as exc:

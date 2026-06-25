@@ -61,7 +61,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 
 | ID | Feature | Prio | Status | Abhängigkeiten | Spec |
 |----|---------|------|--------|----------------|------|
-| PROJ-22 | Multi-Agent-Dispatch-Schicht + Vertrag-zuerst/Koordinator | P2 | In Progress | PROJ-1, PROJ-3, PROJ-4, PROJ-2, PROJ-9 | [Spec](PROJ-22-multi-agent-dispatch.md) |
+| PROJ-22 | Multi-Agent-Dispatch-Schicht + Vertrag-zuerst/Koordinator | P2 | Approved | PROJ-1, PROJ-3, PROJ-4, PROJ-2, PROJ-9 | [Spec](PROJ-22-multi-agent-dispatch.md) |
 | PROJ-23 | Cross-Agent-Review / Challenge (engine-übergreifend) | P2 | Architected | PROJ-18, PROJ-22, PROJ-4, PROJ-2 | [Spec](PROJ-23-cross-agent-review.md) |
 | PROJ-24 | Vault als geteilter Dienst (auch für eingebettete Apps) | P2 | Planned | PROJ-2, PROJ-15, PROJ-18 | [Spec](PROJ-24-vault-geteilter-dienst.md) |
 | PROJ-25 | Echtes Auth (JWT) + Scope/RLS auf `owner` | P2 | Planned | PROJ-2, PROJ-24 | [Spec](PROJ-25-auth-jwt-scope-rls.md) |

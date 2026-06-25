@@ -23,6 +23,7 @@ from .db import (
 )
 from .engine import liveness
 from .engine.base import EngineDriver
+from .engine.challenge import ChallengeService
 from .engine.coordinator import CoordinatorService
 from .engine.files import FileService
 from .engine.git_service import GitService
@@ -38,6 +39,7 @@ from .engine.vault import VaultService
 from .engine.video_summary import VideoSummaryWorker
 from .routes import (
     agents,
+    challenge,
     constitution,
     coordinator,
     engines,
@@ -93,6 +95,21 @@ async def _video_summary_loop(app: FastAPI) -> None:
             break
         except Exception:  # noqa: BLE001 — Worker-Tick nie fatal (Loop überlebt).
             logger.warning("Video-Summary-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
+
+
+async def _coordinator_loop(app: FastAPI) -> None:
+    """PROJ-22 (M3): niederfrequenter Tick, der eingereihte Flotten-Tickets nachrückt,
+    sobald ein Engine-Slot frei wird. Defensiv — ein Fehler je Tick wird geloggt, der
+    Loop lebt weiter."""
+    interval = settings.coordinator_drain_interval_seconds
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            await app.state.coordinator.drain_all()
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001 — Drain-Tick nie fatal (Loop überlebt).
+            logger.warning("Koordinator-Drain-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
 
 
 async def _metrics_loop(app: FastAPI) -> None:
@@ -151,10 +168,12 @@ def create_app(
         video_summary_task = asyncio.create_task(_video_summary_loop(app))
         # PROJ-42: periodischer Host-Metrik-Tick (VPS-Admin).
         metrics_task = asyncio.create_task(_metrics_loop(app))
+        # PROJ-22 (M3): Flotten-Warteschlange nachrücken, sobald Slots frei werden.
+        coordinator_task = asyncio.create_task(_coordinator_loop(app))
         try:
             yield
         finally:
-            for task in (liveness_task, video_summary_task, metrics_task):
+            for task in (liveness_task, video_summary_task, metrics_task, coordinator_task):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
@@ -206,6 +225,8 @@ def create_app(
     app.state.video_summary = VideoSummaryWorker(app.state.manager, vs_repo)
     # PROJ-22: Multi-Agent-Dispatch — Koordinator über dem Session-Treiber + Vault-Vertrag.
     app.state.coordinator = CoordinatorService(app.state.manager, vault_service)
+    # PROJ-23: Cross-Agent-Review — Challenge eines Artefakts durch eine andere Engine.
+    app.state.challenge = ChallengeService(app.state.manager, vault_service)
     app.include_router(sessions.router)
     app.include_router(constitution.router)
     app.include_router(vault.router)
@@ -223,6 +244,7 @@ def create_app(
     app.include_router(transcription.router)
     app.include_router(video_summary.router)
     app.include_router(coordinator.router)
+    app.include_router(challenge.router)
     app.include_router(terminal.router)
 
     @app.get("/health", tags=["meta"])

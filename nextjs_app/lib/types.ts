@@ -116,6 +116,9 @@ export interface Session {
   child_session_ids: string[];
   /** PROJ-22: Vault-Pointer auf das API-Vertrag-Artefakt (kein Volltext-Duplikat). */
   contract_pointer: string | null;
+  /** PROJ-22 (M3): am Koordinator eingereihte, noch nicht gestartete Tickets (IDs) —
+   *  rücken automatisch nach, sobald ein Engine-Slot frei wird. Optional (additiv). */
+  queued_ticket_ids?: string[];
   /** PROJ-8: sprechendes Projekt-Label (Fallback Basename) — Gantt-Zeilen-Titel. */
   project_name: string | null;
   /** PROJ-8: AKTUELLE ABC-Phase (hervorgehoben). null = keine Phase. */
@@ -805,6 +808,8 @@ export interface CoordinatorFleet {
   paused: boolean;
   /** Vault-Pointer auf den API-Vertrag (von allen Kindern geteilt). */
   contract_pointer: string | null;
+  /** M3: bei vollem Engine-Slot eingereihte Tickets (IDs) — rücken automatisch nach. */
+  queued: string[];
 }
 
 // --- PROJ-43: VPS-Admin Terminal (ttyd-iFrame) -----------------------------

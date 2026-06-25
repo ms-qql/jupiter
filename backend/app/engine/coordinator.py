@@ -22,7 +22,12 @@ import os
 from . import abc_phases
 from .launcher import parse_index_features
 from .manager import SessionLimitError, SessionManager, SessionRuntime, validate_project_path
+from .policy import DENY, policy_store
 from .vault import VaultService
+
+# Synthetischer „Tool"-Name, unter dem die Trust-Policy (PROJ-10) den Dispatch-Akt
+# bewertet — so kann eine deny-Regel „Ticket verteilen" hart untersagen (AC8/M1).
+DISPATCH_ACTION = "CoordinatorDispatch"
 
 # Phase → Spezialisten-Rolle (spiegelt rules/agents/*). Bestimmt die Konstitution
 # der Kind-Session (resolve_constitution); fehlt eine Rollendatei, gilt die globale.
@@ -166,6 +171,10 @@ class TicketNotFoundError(Exception):
     """Kein Kind dieser Flotte bearbeitet das angefragte Ticket."""
 
 
+class DispatchDeniedError(Exception):
+    """Eine Trust-Policy-Regel (PROJ-10) untersagt den Dispatch (AC8/M1)."""
+
+
 class CoordinatorService:
     """Dispatch-Schicht über dem SessionManager — startet/aggregiert eine Flotte."""
 
@@ -192,6 +201,16 @@ class CoordinatorService:
         Koordinator selbst keinen Slot mehr bekommt.
         """
         real = validate_project_path(project_path)
+        # M1/AC8: „Ticket verteilen" durch die Trust-Policy (PROJ-10) führen. Eine
+        # explizite deny-Regel untersagt den Dispatch hart; „card"/„auto-allow"
+        # degradieren bewusst zur bereits vorgeschalteten Human-in-the-Loop-Freigabe
+        # (der Nutzer hat den Plan freigegeben) — kein zweites Gate ohne laufende Session.
+        decision = policy_store.evaluate(DISPATCH_ACTION, role=self.ROLE, project=real)
+        if decision.level == DENY:
+            raise DispatchDeniedError(
+                decision.reason or "Dispatch ist durch die Trust-Policy untersagt."
+            )
+
         label = os.path.basename(real) or real
         coordinator = await self._manager.create(
             project_path=real,
@@ -205,28 +224,63 @@ class CoordinatorService:
             project_name=f"{label} · Koordinator",
             engine="claude",
         )
-        cid = coordinator.state.session_id
 
         dispatchable = [it for it in items if not it.get("blocked")]
-        for it in dispatchable:
+        for i, it in enumerate(dispatchable):
             try:
-                child = await self._manager.create(
-                    project_path=real,
-                    initial_prompt=_initial_prompt(it.get("skill"), it["ticket_id"], it.get("title", "")),
-                    model=it.get("model") or "sonnet",
-                    role=it.get("role"),
-                    project_name=f"{label} · {it['ticket_id']}",
-                    engine=it.get("engine") or "claude",
-                    parent_coordinator_id=cid,
-                    ticket_id=it["ticket_id"],
-                    contract_pointer=coordinator.state.contract_pointer,
-                )
+                await self._start_child(coordinator, real, label, it)
             except SessionLimitError:
-                # Kein freier Slot mehr → restliche Tickets nicht fallen lassen, nur
-                # nicht jetzt starten (der Nutzer kann nach dem Freiwerden erneut dispatchen).
+                # M3: kein freier Slot mehr → Resttickets EINREIHEN (nicht fallen lassen);
+                # der Hintergrund-Drain (drain_all) rückt sie nach, sobald ein Slot frei wird.
+                coordinator.state.queued_tickets.extend(dispatchable[i:])
                 break
-            coordinator.state.child_session_ids.append(child.state.session_id)
         return self._fleet_dict(coordinator)
+
+    async def _start_child(
+        self, coordinator: SessionRuntime, real: str, label: str, it: dict
+    ) -> SessionRuntime:
+        """Eine Spezialisten-Session für ein Ticket starten + in die Flotte hängen."""
+        child = await self._manager.create(
+            project_path=real,
+            initial_prompt=_initial_prompt(it.get("skill"), it["ticket_id"], it.get("title", "")),
+            model=it.get("model") or "sonnet",
+            role=it.get("role"),
+            project_name=f"{label} · {it['ticket_id']}",
+            engine=it.get("engine") or "claude",
+            parent_coordinator_id=coordinator.state.session_id,
+            ticket_id=it["ticket_id"],
+            contract_pointer=coordinator.state.contract_pointer,
+        )
+        coordinator.state.child_session_ids.append(child.state.session_id)
+        return child
+
+    # --- Warteschlange nachrücken (M3) -------------------------------------
+
+    async def drain_all(self) -> None:
+        """Hintergrund-Tick: für jede Flotte eingereihte Tickets starten, solange ein
+        Engine-Slot frei ist. Pausierte Koordinatoren werden übersprungen. Defensiv:
+        ein Fehler je Ticket bricht nur diesen Drain ab, nie den Loop."""
+        for runtime in self._manager.list():
+            if runtime.state.role != self.ROLE:
+                continue
+            if runtime.state.queued_tickets and not runtime.state.coordinator_paused:
+                await self._drain(runtime)
+
+    async def _drain(self, coordinator: SessionRuntime) -> None:
+        real = coordinator.state.project_path
+        label = os.path.basename(real) or real
+        while coordinator.state.queued_tickets:
+            if self._manager.active_count() >= self._manager.max_parallel_sessions:
+                break  # kein Slot frei → später erneut versuchen
+            it = coordinator.state.queued_tickets[0]
+            try:
+                await self._start_child(coordinator, real, label, it)
+            except SessionLimitError:
+                break
+            except Exception:  # noqa: BLE001 — Engine/Pfad-Fehler verwirft nur dieses Ticket
+                coordinator.state.queued_tickets.pop(0)
+                continue
+            coordinator.state.queued_tickets.pop(0)
 
     # --- Live-Sicht --------------------------------------------------------
 
@@ -283,6 +337,8 @@ class CoordinatorService:
         if old.state.session_id in ids:
             ids.remove(old.state.session_id)
         ids.append(new.state.session_id)
+        # Das Stoppen hat ggf. einen Slot frei gemacht → eingereihte Tickets nachrücken.
+        await self._drain(coordinator)
         return self._fleet_dict(coordinator)
 
     # --- Vertrag -----------------------------------------------------------
@@ -330,4 +386,5 @@ class CoordinatorService:
             "children": [c.to_read() for c in children],
             "paused": coordinator.state.coordinator_paused,
             "contract_pointer": coordinator.state.contract_pointer,
+            "queued": [t.get("ticket_id") for t in coordinator.state.queued_tickets],
         }

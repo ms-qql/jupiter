@@ -54,6 +54,8 @@ class CoordinatorFleet(BaseModel):
     children: list[SessionRead] = []
     paused: bool = False
     contract_pointer: str | None = None
+    # M3: bei vollem Slot eingereihte Tickets (IDs) — rücken automatisch nach.
+    queued: list[str] = []
 
 
 class PauseRequest(BaseModel):

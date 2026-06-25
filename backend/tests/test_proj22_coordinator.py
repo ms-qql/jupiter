@@ -15,7 +15,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
-from app.engine.coordinator import build_plan
+from app.engine.coordinator import CoordinatorService, build_plan
+from app.engine.manager import SessionManager
+from app.engine.policy import DENY, PolicyDecision, policy_store
+from app.engine.vault import VaultService
 from app.main import create_app
 
 from .fakes import FakeDriver
@@ -280,3 +283,71 @@ def test_contract_writes_pointer_to_fleet(client: TestClient):
     assert refreshed["contract_pointer"] == pointer
     assert refreshed["coordinator"]["contract_pointer"] == pointer
     assert all(c["contract_pointer"] == pointer for c in refreshed["children"])
+
+
+# --- M1: Dispatch unter der Trust-Policy (PROJ-10) -------------------------
+
+def test_dispatch_denied_by_policy_403(client: TestClient, monkeypatch):
+    """Eine deny-Regel auf „Ticket verteilen" untersagt den Dispatch hart (403)."""
+    monkeypatch.setattr(
+        policy_store,
+        "evaluate",
+        lambda *a, **k: PolicyDecision(level=DENY, rule="test", reason="verboten"),
+    )
+    items = [{"ticket_id": "PROJ-1", "title": "A", "status": "Planned", "role": "backend",
+              "skill": "abc-backend", "engine": "claude", "model": "sonnet", "order": 1,
+              "dependencies": [], "blocked": False}]
+    r = client.post("/coordinator/dispatch", json={"project_path": PROJECT, "items": items})
+    assert r.status_code == 403
+    assert "verboten" in r.json()["detail"]
+    # Es darf KEINE Session entstanden sein.
+    assert all(s["role"] != "coordinator" for s in client.get("/sessions").json())
+
+
+# --- M3: Slot-Limit → einreihen + automatisch nachrücken -------------------
+
+@pytest.mark.asyncio
+async def test_queue_and_drain(monkeypatch):
+    """Bei vollem Engine-Slot werden Resttickets eingereiht (nicht verloren) und vom
+    Drain nachgerückt, sobald ein Slot frei wird."""
+    monkeypatch.setattr(settings, "max_parallel_sessions", 2)
+    mgr = SessionManager(driver_factory=lambda: FakeDriver())
+    svc = CoordinatorService(mgr, VaultService())
+    items = [
+        {"ticket_id": f"PROJ-{n}", "title": f"T{n}", "status": "Planned", "role": "backend",
+         "skill": "abc-backend", "engine": "claude", "model": "sonnet", "order": n,
+         "dependencies": [], "blocked": False}
+        for n in (1, 2, 3)
+    ]
+    fleet = await svc.dispatch(PROJECT, items)
+    cid = fleet["coordinator"]["session_id"]
+    # Koordinator (1 Slot) + 1 Kind (2 Slots) = Limit → 2 Tickets eingereiht.
+    assert len(fleet["children"]) == 1
+    assert fleet["queued"] == ["PROJ-2", "PROJ-3"]
+    # Eingereihte IDs reisen auch im Koordinator-Session-Snapshot mit (Cockpit).
+    assert fleet["coordinator"]["queued_ticket_ids"] == ["PROJ-2", "PROJ-3"]
+
+    # Einen Slot frei machen → Drain rückt genau EIN Ticket nach.
+    await mgr.stop(fleet["children"][0]["session_id"])
+    await svc.drain_all()
+    assert svc.fleet(cid)["queued"] == ["PROJ-3"]
+
+
+@pytest.mark.asyncio
+async def test_drain_skips_paused(monkeypatch):
+    """Ein pausierter Koordinator rückt NICHTS nach (Pause hält den Dispatch an)."""
+    monkeypatch.setattr(settings, "max_parallel_sessions", 2)
+    mgr = SessionManager(driver_factory=lambda: FakeDriver())
+    svc = CoordinatorService(mgr, VaultService())
+    items = [
+        {"ticket_id": f"PROJ-{n}", "title": f"T{n}", "status": "Planned", "role": "backend",
+         "skill": "abc-backend", "engine": "claude", "model": "sonnet", "order": n,
+         "dependencies": [], "blocked": False}
+        for n in (1, 2, 3)
+    ]
+    fleet = await svc.dispatch(PROJECT, items)
+    cid = fleet["coordinator"]["session_id"]
+    svc.set_paused(cid, True)
+    await mgr.stop(fleet["children"][0]["session_id"])  # Slot frei
+    await svc.drain_all()
+    assert svc.fleet(cid)["queued"] == ["PROJ-2", "PROJ-3"]  # nichts nachgerückt

@@ -214,6 +214,9 @@ class SessionState:
     child_session_ids: list[str] = field(default_factory=list)  # nur am Koordinator gesetzt.
     contract_pointer: str | None = None  # Vault-Pointer auf das API-Vertrag-Artefakt.
     coordinator_paused: bool = False  # nur am Koordinator: Dispatch pausiert (keine neuen Tickets).
+    # PROJ-22 (M3): bei vollem Engine-Slot eingereihte Tickets (Plan-Posten als dict);
+    # ein Hintergrund-Tick rückt sie automatisch nach, sobald ein Slot frei wird.
+    queued_tickets: list[dict] = field(default_factory=list)
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -263,6 +266,8 @@ class SessionState:
             "ticket_id": self.ticket_id,
             "child_session_ids": list(self.child_session_ids),
             "contract_pointer": self.contract_pointer,
+            # M3: eingereihte (noch nicht gestartete) Tickets — nur IDs fürs Cockpit.
+            "queued_ticket_ids": [t.get("ticket_id") for t in self.queued_tickets],
         }
 
 

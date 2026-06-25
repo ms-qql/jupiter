@@ -136,6 +136,8 @@ class SessionRead(BaseModel):
     ticket_id: str | None = None
     child_session_ids: list[str] = []
     contract_pointer: str | None = None
+    # M3: am Koordinator eingereihte, noch nicht gestartete Tickets (IDs).
+    queued_ticket_ids: list[str] = []
     # PROJ-8 — ABC-Workflow-Gantt.
     project_name: str | None = None
     abc_phase: str | None = None

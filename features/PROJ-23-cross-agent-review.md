@@ -85,7 +85,7 @@ Cockpit Session-Detail / Kanban-Spalte „Review"
 └── DecisionCard (card_type="review_finding")   ← bestehende Komponente, neue Variante
     ├── Kopf: Autor-Engine/-Modell  →  Reviewer-Engine/-Modell  + Artefakt-Version
     └── Befund-Liste, je Befund:
-        ├── Schweregrad-Badge (kritisch / hoch / mittel / niedrig / info)
+        ├── Schweregrad-Badge (hoch / mittel / niedrig)
         ├── Fundstelle (Pointer-Link ins Artefakt)
         ├── Gegenvorschlag (Text)
         └── Aktionen: Übernehmen · Verwerfen · Mit Kommentar zurück
@@ -105,7 +105,7 @@ Review (eine Challenge):
 
 Befund (0..n je Review):
 - befund_id
-- schweregrad   (kritisch | hoch | mittel | niedrig | info)
+- schweregrad   (hoch | mittel | niedrig)   ← 3-stufig (Design-Entscheid 2026-06-25)
 - fundstelle    (Pointer/Bezug ins Artefakt)
 - beschreibung + gegenvorschlag
 - entscheidung: offen | übernommen | verworfen | zurück-an-autor (+ kommentar)
@@ -136,7 +136,8 @@ Single-User-MVP: kein JWT/RLS (konsistent mit Jupiter-Stack-Overrides); `owner` 
 - **`card_type="review_finding"` statt eigenem Review-Stack:** nutzt die fertige Karten-/Kanban-/WebSocket-Mechanik; visuell abgesetzt (eigene Farbe) von Freigabe-Karten, damit „Review-Befund" nicht mit „Berechtigungs-Gate" verwechselt wird.
 - **Diversität als Default, nicht als Pflicht:** ist nur eine Engine verfügbar, läuft die Challenge mit deutlichem Hinweis „eingeschränkte Diversität (gleiche Engine)" statt zu blockieren.
 - **Versions-Anker:** Jeder Review merkt sich den Artefakt-Stand; ändert sich das Artefakt danach, warnt die UI vor Versions-Drift, statt veraltete Befunde als aktuell zu zeigen.
-- **Rundenlimit gegen Endlos-Challenge:** Autor↔Reviewer-Pingpong ist begrenzt; danach Eskalation als normale Decision Card an den Menschen.
+- **Rundenlimit gegen Endlos-Challenge:** Autor↔Reviewer-Pingpong ist auf **2 Runden** begrenzt; danach Eskalation als normale Decision Card an den Menschen.
+- **„Übernehmen"-Semantik (Design-Entscheid):** „Übernehmen" erzeugt einen **Vorschlags-Diff** an die Autor-Session (menschliche Freigabe nötig) — kein stiller Schreibvorgang ins Artefakt.
 
 ### E) Abhängigkeiten / Pakete
 - **Backend:** keine neuen Pakete — nutzt bestehende `engine/registry.py`, `engine/manager.py`, `engine/decisions.py`, `engine/vault.py`.

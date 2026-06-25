@@ -269,6 +269,9 @@ class Settings(BaseSettings):
     # Länge des rollierenden Verlaufs je Kennzahl (Sparklines). 60 Punkte ≈ 5 min
     # bei 5 s Takt.
     metrics_history_points: int = 60
+    # PROJ-22 (M3): Takt, in dem eingereihte Flotten-Tickets nachrücken, sobald ein
+    # Engine-Slot frei wird (Hintergrund-Drain).
+    coordinator_drain_interval_seconds: float = 5.0
     # Anzahl der Top-Prozesse (nach CPU, dann RAM) im Snapshot.
     metrics_top_processes: int = 5
     # Erwartete systemd-Dienste der Service-Health-Liste (Anzeigereihenfolge).
