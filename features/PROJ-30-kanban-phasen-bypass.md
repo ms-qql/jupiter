@@ -1,6 +1,6 @@
 # PROJ-30: Kanban-Phasenerkennung im Bypass-Mode (QA/Deploy)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-24
 **Last Updated:** 2026-06-24
 
@@ -136,3 +136,9 @@ Die **Phasen-Erkennung** wird zu einem reinen, modus-unabhängigen Seiteneffekt,
 - Keine (0 Critical / 0 High / 0 Medium / 0 Low).
 
 ### Production-Ready: **JA** — keine Critical/High-Bugs.
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech (Prod = `main`, Webhook-Auto-Deploy)
+- **Deployed:** 2026-06-25 · **Version:** 0.10.0 · **Tag:** v0.10.0
+- **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend`), Caddy TLS
+- **Was ausgeliefert wurde:** Phasen-Erkennung im Bypass von der Card-Freigabe entkoppelt — QA/Deploy leuchten im Gantt jetzt auch im `bypassPermissions`-Modus auf (rein Backend; `manager.py`). Smoke-Test der Bypass-Phasenerkennung erfolgt live im laufenden Betrieb (Verhalten nur mit echter Claude-Session beobachtbar).
