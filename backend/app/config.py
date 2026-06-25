@@ -55,6 +55,12 @@ def clamp_threshold(value: int) -> int:
     return max(THRESHOLD_MIN_PCT, min(THRESHOLD_MAX_PCT, int(value)))
 
 
+# PROJ-42 — VPS-Admin Ampel-Schwellen (Auslastung in %): < WARN grün,
+# WARN..CRIT gelb, > CRIT rot. Gilt für CPU/RAM/Disk und (Load1/Cores)*100.
+METRIC_WARN_PCT: int = 75
+METRIC_CRIT_PCT: int = 90
+
+
 # PROJ-14 — Limit paralleler Sessions: Untergrenze. Eine Fehlkonfiguration
 # (0/negativ) würde jede Session-Erstellung blockieren → auf mind. 1 klemmen.
 SESSION_LIMIT_MIN: int = 1
@@ -230,6 +236,52 @@ class Settings(BaseSettings):
     max_audio_seconds: int = 120
     # Harte Obergrenze der Audio-Größe (Bytes) als zweite Verteidigungslinie.
     max_audio_bytes: int = 25 * 1024 * 1024  # 25 MB
+
+    # --- Video Summary (PROJ-41) -----------------------------------------
+    # Native Micro-App: reiht Video-URLs ein und lässt sie von einer headless
+    # Claude-Session über den `hal-video-summary`-Skill in Notiz+PDF (Hal-Vault)
+    # umwandeln. Warteschlange + Einstellungen leben in einer eigenen SQLite-Datei
+    # (überlebt Neustart, Akzeptanzkriterium). Wird inkl. Elternverzeichnis bei
+    # Bedarf automatisch angelegt.
+    video_summary_db_path: str = str(Path.home() / "jupiter-data" / "video_summary.db")
+    # Poll-Frequenz des Hintergrund-Workers (Sek.). Niedrigfrequent — die Skill-Läufe
+    # dauern Minuten, der Tick muss nur Zustandswechsel einsammeln und nachstarten.
+    video_summary_poll_interval_seconds: float = 5.0
+    # Drossel gegen YouTube-Blocking: nach `batch_size` Videos in Folge eine
+    # Cooldown-Pause; Default-Werte (pro App-Einstellungen überschreibbar/persistiert).
+    video_summary_default_cooldown_minutes: int = 30
+    video_summary_batch_size: int = 4
+    # Modell + Permission-Mode der Verarbeitungs-Sessions. bypassPermissions, weil
+    # headless KEIN interaktives Decision-Card-Gate bedient werden kann (sonst hinge
+    # jeder yt-dlp-/ffmpeg-Aufruf ewig auf einer Freigabe).
+    video_summary_model: str = "sonnet"
+    video_summary_permission_mode: str = "bypassPermissions"
+    # Arbeitsverzeichnis (cwd/Scope) der Verarbeitungs-Sessions. Default = Hal-Vault,
+    # in dem der Skill ohnehin schreibt. MUSS innerhalb allowed_roots liegen + existieren.
+    video_summary_project_path: str = "/home/dev/tools/Hal"
+
+    # --- VPS-Admin Metriken (PROJ-42) ------------------------------------
+    # Read-only Host-Metriken (CPU/RAM/Disk/Load/Swap/Netz/Uptime/Prozesse) +
+    # systemd-Service-Health. Ein Hintergrund-Worker misst periodisch und cached
+    # Snapshot + rollierenden Verlauf IM SPEICHER (flüchtige Live-Daten, bewusst
+    # KEINE DB — passt zur Live-Index-Haltung; Verlust nach Neustart ist ok).
+    metrics_poll_interval_seconds: float = 5.0
+    # Länge des rollierenden Verlaufs je Kennzahl (Sparklines). 60 Punkte ≈ 5 min
+    # bei 5 s Takt.
+    metrics_history_points: int = 60
+    # Anzahl der Top-Prozesse (nach CPU, dann RAM) im Snapshot.
+    metrics_top_processes: int = 5
+    # Erwartete systemd-Dienste der Service-Health-Liste (Anzeigereihenfolge).
+    # Nicht gefundene Dienste → Status "unknown" (kein Crash, zählt nicht zur Ampel).
+    metrics_services: list[str] = [
+        "jupiter-backend",
+        "jupiter-frontend",
+        "jupiter-webhook",
+        "caddy",
+    ]
+    # Hartes Zeitlimit je `systemctl is-active`-Aufruf (Sek.) — Status muss schnell
+    # bleiben (pollbar), nie unbegrenzt hängen.
+    metrics_systemctl_timeout_seconds: float = 5.0
 
 
 settings = Settings()

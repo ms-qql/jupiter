@@ -18,7 +18,7 @@ import {
 } from "@/lib/status";
 import type { Session } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
-import { sectionLabel } from "@/lib/sidebar-config";
+import { microAppEngineKey, sectionLabel } from "@/lib/sidebar-config";
 import { Ampel } from "./ampel";
 import { DeleteSessionButton } from "./delete-session-button";
 import { NewSessionDialog } from "./new-session-dialog";
@@ -26,6 +26,7 @@ import { SidebarConfigButton } from "./sidebar-config-panel";
 import { useSidebarPrefs } from "./sidebar-prefs-provider";
 import { useOrchestrationApps } from "./use-orchestration-apps";
 import { useMicroApps } from "./use-microapps";
+import { useMicroAppStatuses } from "./use-microapp-status";
 import { useNow, useSessions } from "./sessions-provider";
 
 const RAIL_LIMIT = 10;
@@ -59,6 +60,11 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
   const orchestrationItems = visibleItems("orchestration");
   // PROJ-40: sichtbare Micro-App-Einträge (group=micro aus der Registry).
   const microAppItems = visibleItems("micro");
+  // PROJ-42: Gesamtstatus-Ampel je Micro-App (nur Apps mit Status-Endpoint, z. B.
+  // VPS-Admin) — pollt unabhängig davon, ob die App geöffnet ist.
+  const microAppStatuses = useMicroAppStatuses(
+    microAppItems.map((item) => microAppEngineKey(item.key)),
+  );
 
   // Aktive Sessions in der Rail; beendete (done) wandern ins ausklappbare Archiv.
   const activeSorted = sortForRail(sessions.filter((s) => s.status !== "done"));
@@ -165,6 +171,8 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
             {microAppItems.map((item) => {
               const Icon = item.icon;
               const href = item.href ?? "/";
+              // PROJ-42: Status-Ampel, falls die App einen Status-Endpoint hat.
+              const statusColor = microAppStatuses[microAppEngineKey(item.key)];
               return (
                 <Link
                   key={item.key}
@@ -178,7 +186,14 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
                   )}
                 >
                   <Icon className="size-4 shrink-0 text-muted-foreground" />
-                  {item.label}
+                  <span className="truncate">{item.label}</span>
+                  {statusColor && (
+                    <Ampel
+                      color={statusColor}
+                      size="sm"
+                      className="ml-auto shrink-0"
+                    />
+                  )}
                 </Link>
               );
             })}

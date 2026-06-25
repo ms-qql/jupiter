@@ -41,6 +41,11 @@ import type {
   VaultWriteResult,
   WatchdogLimits,
   WatchdogSetting,
+  VideoSummaryQueue,
+  VideoSummaryAddResult,
+  VideoSummarySettings,
+  MetricsSnapshot,
+  MetricsStatus,
 } from "./types";
 
 export const API_BASE =
@@ -662,4 +667,78 @@ export function setTranscriptionSettings(useGroq: boolean): Promise<Transcriptio
     method: "PATCH",
     body: JSON.stringify({ use_groq: useGroq }),
   });
+}
+
+// --- PROJ-41: Video Summary (native Micro-App) -----------------------------
+
+/** Warteschlange + Worker-Zustand (für das Polling). */
+export function getVideoSummaryQueue(
+  signal?: AbortSignal,
+): Promise<VideoSummaryQueue> {
+  return request<VideoSummaryQueue>("/video-summary/queue", { signal });
+}
+
+/** Eine/mehrere URLs einreihen (Paste-Block erlaubt; Server zerlegt + dedupliziert). */
+export function addVideoSummaryUrls(
+  urls: string,
+): Promise<VideoSummaryAddResult> {
+  return request<VideoSummaryAddResult>("/video-summary/queue", {
+    method: "POST",
+    body: JSON.stringify({ urls }),
+  });
+}
+
+/** Einen Eintrag entfernen. */
+export function deleteVideoSummaryItem(id: number): Promise<void> {
+  return request<void>(`/video-summary/queue/${id}`, { method: "DELETE" });
+}
+
+/** Fehlgeschlagenen Eintrag erneut versuchen (→ pending + Drain). */
+export function retryVideoSummaryItem(id: number): Promise<VideoSummaryQueue> {
+  return request<VideoSummaryQueue>(`/video-summary/queue/${id}/retry`, {
+    method: "POST",
+  });
+}
+
+/** „Jetzt ausführen": Abarbeitung sofort starten (idempotent). */
+export function runVideoSummaryNow(): Promise<VideoSummaryQueue> {
+  return request<VideoSummaryQueue>("/video-summary/run-now", {
+    method: "POST",
+  });
+}
+
+/** Einstellungen (Cooldown / Batch / Zeitplan) lesen. */
+export function getVideoSummarySettings(
+  signal?: AbortSignal,
+): Promise<VideoSummarySettings> {
+  return request<VideoSummarySettings>("/video-summary/settings", { signal });
+}
+
+/** Einstellungen ändern (Teil-Update). */
+export function patchVideoSummarySettings(
+  patch: Partial<VideoSummarySettings>,
+): Promise<VideoSummarySettings> {
+  return request<VideoSummarySettings>("/video-summary/settings", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+// --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------
+
+/** Vollständiger Host-Metrik-Snapshot inkl. Verlauf (für die geöffnete App,
+ *  Polling). Liest den serverseitig gecachten Worker-Stand — kein Messen pro
+ *  Request. */
+export function getMetricsCurrent(
+  signal?: AbortSignal,
+): Promise<MetricsSnapshot> {
+  return request<MetricsSnapshot>("/metrics/current", { signal });
+}
+
+/** Leichtgewichtige Gesamt-Ampel (green/amber/red) für das Sidebar-Status-Icon —
+ *  läuft unabhängig davon, ob die App geöffnet ist. */
+export function getMetricsStatus(
+  signal?: AbortSignal,
+): Promise<MetricsStatus> {
+  return request<MetricsStatus>("/metrics/status", { signal });
 }
