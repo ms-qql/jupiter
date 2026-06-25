@@ -1,6 +1,6 @@
 # PROJ-43: VPS-Admin — Terminal (Shell-Zugriff)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -143,6 +143,19 @@ GET /terminal/info → { enabled: bool, url: string|null, reachable: bool }
 - Config-Muster (Prefix `JUPITER_`): [`config.py`](backend/app/config.py)
 - Caddy-Framing-Vorbild (cross-origin Alternative): `engines.yaml` Wayland-/Orchestration-Block
 - VPS-Admin-Host-Komponente: PROJ-42 `components/microapps/vps_admin/` (Tab-Träger)
+
+## Implementation Notes (Frontend — 2026-06-25)
+Branch `dev`. Frontend gemäß Tech-Design (B1, iFrame + EmbedTab-Reuse) umgesetzt:
+
+- **Tab-Leiste in `VpsAdminApp`** (`nextjs_app/components/microapps/vps_admin/vps-admin-app.tsx`): shadcn/ui-`Tabs` (`variant="line"`) „Dashboard · Terminal". Wechsel = reiner React-State, **kein** Seiten-Reload. Der bisherige Dashboard-Inhalt wurde in eine interne `DashboardView`-Komponente extrahiert; der Default-Export ist jetzt die Tab-Hülle.
+- **iFrame bleibt montiert:** Terminal-Tab wird **lazy beim ersten Öffnen** gemountet (`terminalOpened`-Flag) und danach nur per CSS aus-/eingeblendet (`hidden`) statt unmountet → die ttyd-WebSocket reißt beim kurzen Wegklicken nicht ab (User-Story). Dashboard bleibt ebenfalls montiert (Polling läuft, drosselt im Hintergrund-Tab).
+- **`TerminalTab`** (`.../vps_admin/terminal-tab.tsx`): Erreichbarkeits-Gate über `GET /terminal/info` (AbortController). Vier Zustände: Laden („Terminal wird geprüft …") · **nicht konfiguriert** (`enabled=false`) · **nicht erreichbar** (`reachable=false` oder Abruf-Fehler/404) mit „Erneut versuchen" · **bereit** → `EmbedTab`. „Erneut versuchen" = `reloadKey++` → erneuter `/terminal/info`-Abruf **und** iFrame-Remount.
+- **EmbedTab-Reuse:** minimales engine-förmiges Objekt `{ key: "vps_terminal", kind: "iframe", url, sandbox, … }` mit `fullHeight` → erbt Sandbox, „Erneut laden", „In neuem Tab öffnen"-Fallback und die X-Frame-Hinweiszeile ohne Duplizierung. Sandbox: `allow-scripts allow-same-origin allow-clipboard-read allow-clipboard-write`.
+- **API/Typen:** `getTerminalInfo()` in `lib/api.ts`, `TerminalInfo { enabled, url, reachable }` in `lib/types.ts`. URL kommt ausschließlich vom Backend.
+- **Kein** neuer `microapps-registry.ts`-/`engines.yaml`-Eintrag (Terminal ist Unterbereich von `vps_admin`).
+- Alle UI-Texte **deutsch**. `tsc --noEmit` (nur vorbestehender Fehler in `lib/md-tree.test.ts`) + `eslint` der geänderten Dateien sauber.
+
+**Offene Abhängigkeit (Handoff):** Backend-Route `GET /terminal/info` (`/abc-backend`) + ttyd/Caddy/`JUPITER_TERMINAL_URL` (`/abc-deploy`) fehlen noch. Bis dahin zeigt der Tab sauber „nicht konfiguriert/erreichbar" (kein Crash) — das Frontend ist mergebar.
 
 ## QA Test Results
 _To be added by /abc-qa_

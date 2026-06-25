@@ -28,8 +28,10 @@ export function TerminalTab() {
   // Erhöhen → erneuter /terminal/info-Abruf + frischer iFrame-Mount (Retry).
   const [reloadKey, setReloadKey] = useState(0);
 
+  // `loading` startet true; danach genügt das Setzen in finally(). Kein
+  // synchrones setState im Effect (sonst Kaskaden-Render). Beim Retry bleibt der
+  // letzte Zustand stehen, bis das neue /terminal/info eintrifft (kein Flackern).
   const probe = useCallback((signal?: AbortSignal) => {
-    setLoading(true);
     getTerminalInfo(signal)
       .then((i) => {
         setInfo(i);
