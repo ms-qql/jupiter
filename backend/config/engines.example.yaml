@@ -77,11 +77,27 @@ engines:
   # --- Tiefe 2: iFrame -----------------------------------------------------
   # Eine fremde Web-App eingebettet. Verweigert sie die Einbettung (X-Frame-Options),
   # zeigt das Frontend einen Hinweis + Fallback auf einen Launch-Button.
+  #
+  # PROJ-40: `group: micro` hebt einen iFrame-Eintrag aus dem „Werkzeuge"-Tab in die
+  # Sidebar-Sektion „Micro-Apps" (Vollbild-Route /apps/[key]). `group: orchestration`
+  # täte dasselbe für die Orchestration-Sektion (PROJ-39). Ohne `group` bleibt der
+  # Eintrag im Werkzeuge-Tab. `icon` = lucide-Name für die Sidebar.
   - key: excalidraw
     label: "Excalidraw (Whiteboard)"
     kind: iframe
+    group: micro
+    icon: pentool
     url: https://excalidraw.com
     sandbox: "allow-scripts allow-same-origin allow-forms"
+
+  # PROJ-40: NATIVE Micro-App — direkt in Jupiter programmiert (kein iFrame). Code
+  # liegt im Frontend unter components/microapps/<key>/ und wird per `key` in
+  # lib/microapps-registry.ts registriert; hier stehen nur die Metadaten. Beispiel:
+  # - key: rechner
+  #   label: "Rechner"
+  #   kind: native
+  #   group: micro
+  #   icon: pentool
 
   # --- Tiefe 3: Launch-Button ---------------------------------------------
   # Für nicht integrierbare Tools: öffnet/startet extern.
