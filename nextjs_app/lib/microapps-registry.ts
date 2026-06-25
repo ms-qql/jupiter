@@ -28,12 +28,15 @@ type MicroAppComponent = LazyExoticComponent<
 /**
  * key (aus engines.yaml, kind=native) → Lazy-geladene React-Komponente.
  *
- * Noch leer: Es existiert derzeit keine native Micro-App (Excalidraw ist iframe).
- * Beispiel für eine künftige native App:
- *
- *   rechner: lazy(() => import("@/components/microapps/rechner/rechner-app")),
+ * Neue native App ⇒ Ordner unter components/microapps/<key>/ anlegen, hier eine
+ * Zeile ergänzen und einen `kind: native`-Eintrag in engines.yaml pflegen.
  */
-export const MICROAPP_REGISTRY: Record<string, MicroAppComponent> = {};
+export const MICROAPP_REGISTRY: Record<string, MicroAppComponent> = {
+  // PROJ-41: Video Summary — erste echte native Micro-App.
+  video_summary: lazy(
+    () => import("@/components/microapps/video_summary/video-summary-app"),
+  ),
+};
 
 /** Liefert die native Komponente zu einem key — oder null, wenn nicht registriert
  *  (die Route zeigt dann einen sauberen „App nicht verfügbar"-Hinweis). */

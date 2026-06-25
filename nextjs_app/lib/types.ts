@@ -609,3 +609,55 @@ export interface RecoveryCandidate {
 export interface RecoveryListResult {
   candidates: RecoveryCandidate[];
 }
+
+// --- PROJ-41: Video Summary (native Micro-App) -----------------------------
+
+/** Status eines Warteschlangen-Eintrags (= UI-Badges). */
+export type VideoSummaryStatus = "pending" | "running" | "done" | "error";
+
+/** Laufzeit-Zustand des Backend-Workers. */
+export type VideoSummaryWorkerStatus = "idle" | "running" | "paused";
+
+/** Ein Eintrag der Video-Summary-Warteschlange (eine Zeile pro Video). */
+export interface VideoSummaryItem {
+  id: number;
+  url: string;
+  owner: string | null;
+  status: VideoSummaryStatus;
+  result_note_path: string | null;
+  result_pdf_path: string | null;
+  error_message: string | null;
+  session_id: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** Worker-Zustand für die UI (Leerlauf · Läuft · Pausiert bis …). */
+export interface VideoSummaryWorkerState {
+  status: VideoSummaryWorkerStatus;
+  draining: boolean;
+  paused_until: string | null;
+  next_scheduled_run: string | null;
+}
+
+/** Antwort von GET /video-summary/queue (+ run-now/retry). */
+export interface VideoSummaryQueue {
+  items: VideoSummaryItem[];
+  state: VideoSummaryWorkerState;
+}
+
+/** Ergebnis von POST /video-summary/queue. */
+export interface VideoSummaryAddResult {
+  added: VideoSummaryItem[];
+  rejected: string[];
+  duplicates: string[];
+  queue: VideoSummaryItem[];
+}
+
+/** Worker-Einstellungen (persistiert). */
+export interface VideoSummarySettings {
+  cooldown_minutes: number;
+  batch_size: number;
+  schedule: string;
+}

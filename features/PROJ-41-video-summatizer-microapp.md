@@ -207,6 +207,24 @@ QueueItem: `{id, url, owner, status, result_note_path, result_pdf_path, error_me
 - `engines.yaml`-Eintrag `video_summary` (`kind: native`, `group: micro`, Label „Video Summary", Icon z. B. `film`/`play`).
 - Eintrag in `nextjs_app/lib/microapps-registry.ts` (`video_summary → lazy(import …)`) + Komponente `components/microapps/video_summary/` (Eingabe-Textarea/Paste, Queue-Liste mit Polling auf `GET /queue`, Steuerleiste „Jetzt ausführen"/Status-Badge, Einstellungs-Dialog). Render über native-Zweig in `app/(cockpit)/apps/[key]/page.tsx`.
 
+## Implementation Notes (Frontend — /abc-frontend, 2026-06-25)
+
+**Branch:** `dev`. Stack: **Next.js** (native Micro-App, PROJ-40-Muster) — kein iFrame.
+
+### Neue/geänderte Dateien
+- `nextjs_app/components/microapps/video_summary/video-summary-app.tsx` — die native Komponente (Default-Export, Props `{appKey}`). Enthält: **EingabeKarte** (Textarea + „Zur Warteschlange hinzufügen", Paste-Hinweis), **SteuerLeiste** („Jetzt ausführen", Worker-Badge Leerlauf/Läuft/Pausiert-bis-HH:MM, nächster Plan-Lauf, „Einstellungen"-Dialog), **WarteschlangenListe** (URL · Status-Badge Wartend/Läuft/Fertig/Fehler · bei Fertig Download-Links „Notiz öffnen"/„PDF" · bei Fehler Ursache + „Erneut versuchen" · „Entfernen"), **EmptyState**, **Lade-/Fehlerzustand**. Polling alle 3 s auf `GET /video-summary/queue`.
+- `nextjs_app/lib/microapps-registry.ts` — `video_summary: lazy(() => import(…))`.
+- `nextjs_app/lib/api.ts` — Client-Funktionen `getVideoSummaryQueue`, `addVideoSummaryUrls`, `deleteVideoSummaryItem`, `retryVideoSummaryItem`, `runVideoSummaryNow`, `getVideoSummarySettings`, `patchVideoSummarySettings`.
+- `nextjs_app/lib/types.ts` — Typen `VideoSummaryItem/WorkerState/Queue/AddResult/Settings`.
+- `backend/config/engines.yaml` (prod, gitignored) **und** `backend/config/engines.example.yaml` (getrackt) — neuer Eintrag `video_summary` (`kind: native`, `group: micro`, `icon: film`).
+
+### Entscheidungen
+- **Ergebnis-Links** via `fileDownloadUrl(absoluter Vault-Pfad)` (Vault liegt unter `/home/dev/tools` = allowed root) — kein Vault-Root-Wissen im Client nötig, robust auch wenn nur einer der Pfade ermittelt wurde.
+- **shadcn/ui** durchgängig (Dialog/Button/Badge/Input/Textarea/Label); deutsche Texte; Loading/Error/Empty/Success explizit.
+- Verifiziert: `eslint` (0 Fehler), `tsc --noEmit` (keine Fehler in den neuen Dateien), Backend `test_proj40_microapps`/`test_proj18_engines` grün (geänderte example.yaml).
+
+> Render läuft über den bestehenden native-Zweig in `app/(cockpit)/apps/[key]/page.tsx` (`NativeMicroAppHost` → `resolveMicroApp`) — keine Routen-Änderung nötig. Die Sidebar-Sektion „Micro-Apps" listet den Eintrag über `GET /engines` (group=micro); Direkt-URL `/apps/video_summary` bleibt auch bei ausgeblendeter Sektion erreichbar.
+
 ## QA Test Results
 _To be added by /abc-qa_
 

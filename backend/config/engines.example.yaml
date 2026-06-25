@@ -90,14 +90,16 @@ engines:
     url: https://excalidraw.com
     sandbox: "allow-scripts allow-same-origin allow-forms"
 
-  # PROJ-40: NATIVE Micro-App — direkt in Jupiter programmiert (kein iFrame). Code
-  # liegt im Frontend unter components/microapps/<key>/ und wird per `key` in
-  # lib/microapps-registry.ts registriert; hier stehen nur die Metadaten. Beispiel:
-  # - key: rechner
-  #   label: "Rechner"
-  #   kind: native
-  #   group: micro
-  #   icon: pentool
+  # PROJ-40/PROJ-41: NATIVE Micro-App — direkt in Jupiter programmiert (kein iFrame).
+  # Code liegt im Frontend unter components/microapps/<key>/ und wird per `key` in
+  # lib/microapps-registry.ts registriert; hier stehen nur die Metadaten. Erste echte
+  # native App: „Video Summary" (PROJ-41) — eine URL-Queue, die der
+  # `hal-video-summary`-Skill je Video in Notiz+PDF (Hal-Vault) umwandelt.
+  - key: video_summary
+    label: "Video Summary"
+    kind: native
+    group: micro
+    icon: film
 
   # --- Tiefe 3: Launch-Button ---------------------------------------------
   # Für nicht integrierbare Tools: öffnet/startet extern.
