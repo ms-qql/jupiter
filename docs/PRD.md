@@ -61,6 +61,9 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-24 | Vault als geteilter Dienst (auch für eingebettete Apps) | P2 | #14 | Planned |
 | PROJ-25 | Echtes Auth (JWT) + Scope/RLS auf `owner` | P2 | #21 | Planned |
 | PROJ-26 | Marktplatz/Registry für Rollen/Skills/Agenten | P2 | — | Planned |
+| PROJ-38 | Sidebar-Sektionen + Konfig-Panel (Sichtbarkeit · Reorder · RESET) | P1 | Sidebar-Ausbau | Planned |
+| PROJ-39 | Sidebar-Sektion „Orchestration" — Fremd-Apps per iFrame (Paperclip, Wayland) | P1 | Sidebar-Ausbau | Planned |
+| PROJ-40 | Sidebar-Sektion „Micro-Apps" + Excalidraw-Migration | P1 | Sidebar-Ausbau | Planned |
 
 ---
 
