@@ -5,6 +5,7 @@ pydantic>=2.9
 pydantic-settings>=2.5
 python-multipart>=0.0.9   # PROJ-11: Multipart-Uploads (UploadFile) für /files
 faster-whisper>=1.0      # PROJ-20: self-hosted Whisper (CPU/int8), Default-Transkription
+psutil>=5.9              # PROJ-42: VPS-Admin Host-Metriken (CPU/RAM/Disk/Swap/Netz/Prozesse)
 
 # Dev / Test
 pytest>=8

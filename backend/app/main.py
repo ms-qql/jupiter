@@ -28,6 +28,7 @@ from .engine.git_service import GitService
 from .engine.launcher import LauncherService
 from .engine.manager import SessionManager
 from .engine.md_reader import MdReaderService
+from .engine.metrics import MetricsService
 from .engine.recovery import RecoveryService
 from .engine.scout import ScoutService
 from .engine.transcription import TranscriptionService
@@ -41,6 +42,7 @@ from .routes import (
     files,
     git,
     md,
+    metrics,
     permission,
     projects,
     recovery,
@@ -90,6 +92,21 @@ async def _video_summary_loop(app: FastAPI) -> None:
             logger.warning("Video-Summary-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
 
 
+async def _metrics_loop(app: FastAPI) -> None:
+    """PROJ-42: periodischer Host-Metrik-Tick (VPS-Admin). Misst CPU/RAM/Disk/Load/…
+    + systemd-Status, cached Snapshot + rollierenden Verlauf in-memory. Defensiv —
+    ein Fehler je Tick wird geloggt, der Loop lebt weiter."""
+    interval = settings.metrics_poll_interval_seconds
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            await app.state.metrics.tick()
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001 — Metrik-Tick nie fatal (Loop überlebt).
+            logger.warning("Metrik-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
+
+
 def create_app(
     driver_factory: Callable[[], EngineDriver] | None = None,
     vault_service: VaultService | None = None,
@@ -120,14 +137,21 @@ def create_app(
             await app.state.video_summary.startup()
         except Exception:  # noqa: BLE001 — Queue-Persistenz ist best-effort.
             pass
+        # PROJ-42: ersten Metrik-Snapshot ziehen, damit /current sofort Daten liefert.
+        try:
+            await app.state.metrics.startup()
+        except Exception:  # noqa: BLE001 — Metriken sind best-effort, App startet trotzdem.
+            pass
         # PROJ-27: Hintergrund-Auswerter starten (erkennt Hänger ohne Tool-Gate).
         liveness_task = asyncio.create_task(_liveness_loop(app))
         # PROJ-41: Video-Summary-Worker-Loop (sequenzielle Queue-Abarbeitung).
         video_summary_task = asyncio.create_task(_video_summary_loop(app))
+        # PROJ-42: periodischer Host-Metrik-Tick (VPS-Admin).
+        metrics_task = asyncio.create_task(_metrics_loop(app))
         try:
             yield
         finally:
-            for task in (liveness_task, video_summary_task):
+            for task in (liveness_task, video_summary_task, metrics_task):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
@@ -153,6 +177,8 @@ def create_app(
     vault_service = vault_service or VaultService()
     app.state.vault = vault_service
     app.state.md_reader = MdReaderService()
+    # PROJ-42: VPS-Admin Host-Metriken (read-only, in-memory Snapshot + Verlauf).
+    app.state.metrics = MetricsService()
     app.state.launcher = LauncherService()
     app.state.files = FileService()
     # PROJ-13: in-App Git-Branch-Handling (Subprozess-Git innerhalb der Roots).
@@ -179,6 +205,7 @@ def create_app(
     app.include_router(constitution.router)
     app.include_router(vault.router)
     app.include_router(md.router)
+    app.include_router(metrics.router)
     app.include_router(permission.router)
     app.include_router(settings_routes.router)
     app.include_router(files.router)
