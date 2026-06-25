@@ -1,6 +1,6 @@
 # PROJ-40: Sidebar-Sektion „Micro-Apps" + Excalidraw-Migration aus „Werkzeuge"
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
 
@@ -216,7 +216,62 @@ Excalidraw vollbild, Werkzeuge-Tab ohne Excalidraw intakt), Konfig-Panel-Toggle/
 Direkt-URL bei ausgeblendeter Sektion, native-Pfad mit Dummy-Komponente.
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-06-25 · **Branch:** dev · **Verfahren:** automatisierte Tests
+(Vitest/pytest) + Production-Build + Code-Verifikation. Kein headless-Browser mit
+Login verfügbar → die rein visuellen Klick-Flows sind als „manuell offen" markiert.
+
+### Automatisierte Suiten
+- **Frontend (Vitest):** 167/167 grün (19 Dateien), davon **6 neu** in
+  `lib/microapps.test.ts` (Micro-Sektion/-Helfer + native Registry).
+- **Backend (pytest, Engine-Suiten):** 34/34 grün, davon **7 neu** in
+  `backend/tests/test_proj40_microapps.py` (kind=native, group/icon, native-Session-
+  Reject, Migrations-Guard via engines.example.yaml).
+- **`next build`:** erfolgreich; Route `ƒ /apps/[key]` registriert (kompiliert prod-seitig).
+- **tsc/ESLint:** sauber (0 Errors).
+
+### Akzeptanzkriterien
+| # | Kriterium | Status | Beleg |
+|---|-----------|--------|-------|
+| 1 | Sektion „Micro-Apps" unter Orchestration | ✅ Pass | `microapps.test`: micro-Sektion existiert, Index > orchestration; `session-rail.tsx` rendert Block darunter |
+| 2 | Excalidraw mit Label + Icon | ✅ Pass | engines.yaml `group: micro`/`icon: pentool`; example-Guard-Test; `use-microapps` filtert group=micro |
+| 3 | Klick öffnet Vollbild `/apps/[key]` (iFrame) | ✅ Pass* | `microAppItemDef.href=/apps/whiteboard`; Route kompiliert; EmbedTab `fullHeight`. *visueller Klick manuell offen |
+| 4 | Excalidraw NICHT mehr im Werkzeuge-Tab, Tab intakt | ✅ Pass | `tools-panel.tsx` Filter `group !== "micro"`; tools-panel-Tests weiter grün; Leerzustand vorhanden |
+| 5 | Fallback „In neuem Tab öffnen" bei verweigerter Einbettung | ✅ Pass | EmbedTab zeigt LaunchButton immer; `embed-tab.test` deckt ab |
+| 6 | Sektion + Einträge über Konfig-Panel (PROJ-38) toggel-/sortierbar | ✅ Pass* | dynamische Items via namespaced `registerDynamicItems("micro", …)`; Panel iteriert `SIDEBAR_SECTIONS` (inkl. micro). *Panel-Interaktion manuell offen |
+| 7 | Micro-Apps zentral konfiguriert (Registry-Gruppe) | ✅ Pass | `group: micro` in Registry (Backend akzeptiert; example.yaml). **Abweichung:** Wert ist `micro` (nicht `microapp` wie im AC-Text illustriert) — bewusst, analog `orchestration`. |
+| 8 | Texte/Labels deutsch | ✅ Pass | Sektionslabel „Micro-Apps", alle Hinweise/Fehlertexte deutsch |
+
+### Edge Cases
+| Fall | Status | Beleg |
+|------|--------|-------|
+| Werkzeuge-Tab nach Migration leer? | ✅ | übrige Engines/Launches bleiben; tools-panel hat Leer-/Hinweiszustand; Tab nicht ausgeblendet |
+| App verweigert Einbettung (CSP/XFO) | ✅ | EmbedTab-Fallback (immer sichtbarer Launch-Button) |
+| App nicht erreichbar | ✅ | Route: `error`/`notfound`-Zustand; iFrame-`onError` → Fallback; kein Crash |
+| Doppelregistrierung | ✅ | genau ein `group`-Wert entscheidet; tools-panel filtert micro heraus → keine Doppelanzeige |
+| Sektion ausgeblendet → Direkt-URL | ✅ | Route lädt unabhängig von der Sidebar-Sichtbarkeit (Lookup per key aus GET /engines) |
+| Mobile: Drawer schließt nach Auswahl | ✅ | `onItemClick` an die Micro-Links durchgereicht (wie Orchestration) |
+| **native-Pfad** (kind=native) | ✅ | Backend parst native ohne url; Route verzweigt auf Komponenten-Registry; unbekannter key → sauberer Hinweis (`resolveMicroApp`→null getestet) |
+
+### Security-Audit (Red-Team)
+- Kein Auth/RLS im MVP (Projekt-Entscheidung) — Feature fügt **keine** neuen Endpunkte hinzu; nutzt das bestehende, secret-freie `GET /engines`.
+- **iFrame-Sandbox:** Excalidraw mit `allow-scripts allow-same-origin allow-forms allow-popups allow-downloads`. `same-origin` gilt der **eingebetteten** Origin (excalidraw.com), nicht Jupiter — kein Zugriff auf Jupiters Origin. Vertretbar für ein vertrauenswürdiges Tool.
+- **Injection:** `key` wird gegen die Registry gematcht (kein SQL, keine Eval); Labels werden als Text gerendert (JSX-Autoescape) → kein XSS-Vektor.
+- **Mixed-Content-Guard** für künftige http-Micro-Apps vorhanden.
+- Keine Secrets in Responses/Build. **Keine Findings.**
+
+### Regression
+- Werkzeuge-Tab, Sidebar (PROJ-38), Orchestration (PROJ-39): alle Tests grün; `registerDynamicItems` auf Namespace umgestellt + PROJ-39-Caller mitangepasst → Orchestration koexistiert mit Micro (Pure-Logic-Parität; volle Provider-Koexistenz mangels jsdom manuell verifiziert).
+
+### Bugs
+Keine Critical/High/Medium. **Low/Notiz (kein Blocker):**
+- **L1 (Doku):** AC-Text nennt `group: microapp`, Implementierung nutzt `group: micro` — bewusste, dokumentierte Angleichung an `orchestration`. Keine Code-Änderung nötig.
+- **Deploy-Hinweis (kein Bug):** `engines.yaml` ist gitignored → die `group: micro`-Migration muss `/abc-deploy` auf dem Host setzen (Vorlage: getracktes `engines.example.yaml`). Auf dem Dev-Host bereits gesetzt.
+
+### Offen (manuell, nicht-blockierend)
+Visueller Klick-Flow im eingeloggten Browser: Sektion sichtbar · `/apps/whiteboard` lädt Excalidraw vollbild · Konfig-Panel Toggle/Sort · Mobile-Drawer. Empfohlen als Smoke vor/nach Deploy.
+
+### Production-Ready-Entscheidung: **READY** ✅
+Keine Critical/High-Bugs. Alle automatisierbaren ACs bestanden; rein visuelle Punkte als Deploy-Smoke notiert.
 
 ## Deployment
 _To be added by /deploy_
