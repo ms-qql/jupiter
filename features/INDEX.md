@@ -52,7 +52,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-37 | Fileexplorer: kein leeres Vorschau-Fenster — aktives Fenster (Session) bleibt | P1 | Deployed | PROJ-28, PROJ-11, PROJ-3 | [Spec](PROJ-37-fileexplorer-aktives-fenster-bleibt.md) |
 | PROJ-38 | Sidebar-Sektionen + Konfig-Panel (Sichtbarkeit · Reorder · RESET) | P1 | Deployed | PROJ-3 | [Spec](PROJ-38-sidebar-sektionen-konfig-panel.md) |
 | PROJ-39 | Sidebar-Sektion „Orchestration" — Fremd-Apps per iFrame (Paperclip, Wayland) | P1 | Architected | PROJ-38, PROJ-3, PROJ-18 | [Spec](PROJ-39-sidebar-orchestration-iframe-apps.md) |
-| PROJ-40 | Sidebar-Sektion „Micro-Apps" + Excalidraw-Migration aus „Werkzeuge" | P1 | Planned | PROJ-38, PROJ-3, PROJ-18 | [Spec](PROJ-40-sidebar-micro-apps-excalidraw-migration.md) |
+| PROJ-40 | Sidebar-Sektion „Micro-Apps" + Excalidraw-Migration aus „Werkzeuge" | P1 | Architected | PROJ-38, PROJ-3, PROJ-18 | [Spec](PROJ-40-sidebar-micro-apps-excalidraw-migration.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
