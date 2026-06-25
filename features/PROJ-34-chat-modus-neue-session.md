@@ -1,8 +1,20 @@
 # PROJ-34: Chat-Modus im Neue-Session-Dialog (freies Chatfenster ohne ABC-Bezug)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-25
 **Last Updated:** 2026-06-25
+
+## Implementation Notes (Frontend)
+**Datum:** 2026-06-25 · **Branch:** dev · **Datei:** `nextjs_app/components/cockpit/new-session-dialog.tsx` (einzige Änderung, kein Backend).
+
+- Neuer lokaler State `workflowMode: 'workflow' | 'chat'` (Default `'workflow'`), abgeleitetes `chatMode`. Kein Backend-Flag, kein neues Schema.
+- **Umschalter** als shadcn `Tabs`/`TabsList`/`TabsTrigger` (Segmented-Look, volle Breite) direkt unter dem Dialog-Header. Bei „Chat" zusätzlich ein deutscher Hinweistext.
+- **Moduswechsel** (`onModeChange`): Wechsel nach „Chat" verwirft `selectedId` + `role` (kein „Geister"-Feature). `resetForm` setzt `workflowMode` wieder auf `'workflow'`.
+- **Launcher-Fetch** (`useEffect`) bricht im Chat-Modus früh ab (`if (!open || chatMode) return`) + `chatMode` als Dependency → kein störender Request bei Pfadwechsel.
+- **ABC-Block** im Chat-Modus sichtbar, aber ausgegraut: Wrapper mit `pointer-events-none select-none opacity-50` + `aria-disabled`; `SuggestionCard` bekam ein `disabled`-Prop (deaktiviert die inneren Buttons/Chips). Ohne geladenen Vorschlag zeigt ein ausgegrauter Platzhalter, dass der Block bewusst deaktiviert ist.
+- **Rolle-Feld** im Chat-Modus `disabled` (zeigt leer + Platzhalter „Im Chat-Modus deaktiviert").
+- **Submit:** `role` wird im Chat-Modus als `undefined` gesendet → normale Session ohne abc-Verknüpfung (`POST /sessions`, sonst identischer Payload). Projekt/Pfad/Prompt/Engine/Modell/Berechtigung bleiben voll bedienbar; Pflichtfeld (Prompt) unverändert.
+- Verifikation: `eslint` sauber; `tsc --noEmit` ohne neuen Fehler (1 vorbestehender Fehler in `lib/md-tree.test.ts`, baseline-bestätigt).
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit / Neue-Session-Dialog) — der Modus-Umschalter und die ausgegraute Vorauswahl leben im `NewSessionDialog`.
