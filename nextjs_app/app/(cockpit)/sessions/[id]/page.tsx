@@ -17,6 +17,7 @@ import { ReanimateButton } from "@/components/cockpit/reanimate-button";
 import { ResetSessionButton } from "@/components/cockpit/reset-session-button";
 import { SessionThresholdControl } from "@/components/cockpit/threshold-control";
 import { SessionClipboardButton } from "@/components/cockpit/session-clipboard-button";
+import { PushToTalkButton } from "@/components/cockpit/push-to-talk-button";
 import { useFileUpload } from "@/components/cockpit/use-file-upload";
 import { useNow } from "@/components/cockpit/sessions-provider";
 import { useSessionStream } from "@/hooks/use-session-stream";
@@ -367,6 +368,16 @@ export default function SessionDetailPage({
             onPick={attachFiles}
             disabled={hasPending}
             uploading={uploading}
+          />
+          {/* PROJ-20: Nachricht an die Session diktieren statt tippen. */}
+          <PushToTalkButton
+            disabled={hasPending}
+            onTranscript={(t) =>
+              setInput((prev) => {
+                const base = prev.trimEnd();
+                return base ? `${base} ${t}` : t;
+              })
+            }
           />
           {!ended && (
             <Button type="button" variant="outline" onClick={handleStop}>

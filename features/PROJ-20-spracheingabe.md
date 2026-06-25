@@ -8,6 +8,7 @@
 ## Dependencies
 - Requires: PROJ-9 (Smart Launcher) — Diktat fürs Auftrag-/Prompt-Feld beim Session-Start.
 - Requires: PROJ-4 (Decision Cards) — Diktat für Card-Antworten/Kommentare.
+- Erweitert auf das Nachrichten-Eingabefeld der Session-Detailseite (Diktat für laufende/fortgesetzte Sessions).
 
 ## Beschreibung
 **Push-to-Talk-Diktat** statt Tippen — für das Auftrag-Feld im Smart Launcher (#12) und für Decision-Card-Antworten (#4). **Kein Monats-Abo** (kein WhisperFlow) und **DSGVO-konform**: Standard ist **self-hosted Whisper auf dem VPS** (`faster-whisper`/`whisper.cpp`, lokal, keine laufenden Kosten); optionaler Schnell-Fallback **Groq Whisper** (pay-per-use). Die **Browser Web Speech API ist verworfen** (sendet Audio an Google → kollidiert mit der DSGVO-Linie).
@@ -15,6 +16,7 @@
 ## User Stories
 - Als Nutzer möchte ich per Push-to-Talk meinen Auftrag ins Smart-Launcher-Feld diktieren, statt zu tippen.
 - Als Nutzer möchte ich Decision-Card-Kommentare/Antworten diktieren können.
+- Als Nutzer möchte ich auch normale Nachrichten an eine laufende Session per Mikrofon diktieren, statt zu tippen.
 - Als Nutzer möchte ich, dass die Transkription standardmäßig **lokal auf dem VPS** läuft, damit keine Audiodaten das System verlassen.
 - Als Nutzer möchte ich optional einen schnelleren Cloud-Fallback (Groq) aktivieren, wenn ich das bewusst will.
 - Als Nutzer möchte ich das Transkript vor dem Absenden sehen und korrigieren.
@@ -240,3 +242,16 @@ und inferiert ohne Crash (`tiny`-Modell gegen ffmpeg-Testaudio). faster-whisper 
 - **Geliefert:** Push-to-Talk-Diktat (Smart-Launcher + Decision-Card-Kommentar), self-hosted faster-whisper (`small`, Default) + optionaler Groq-Cloud-Fallback, „Sprache"-Tab in den Einstellungen, `POST /transcription` + `GET/PATCH /settings/transcription`.
 - **Host-Vorbereitung:** `faster-whisper` (+ ctranslate2/av) vor dem Deploy manuell in die `Dashboard`-Env installiert (`pip install -r backend/requirements.txt`); `ffmpeg` auf dem VPS vorhanden.
 - **Manueller Smoke nach Deploy (Browser-only):** echtes Diktat im „Neue Session"-Feld + in einer Decision-Card-Antwort testen (Mikrofon-Permission, Transkript editierbar, kein Auto-Submit). Erst-Diktat lädt das `small`-Modell (~470 MB) → spürbare Erst-Latenz, danach gecached.
+
+## Nachtrag — Diktat im Session-Nachrichtenfeld (2026-06-24)
+**Branch:** dev · Frontend-only, nutzt unveränderten Backend-Vertrag (`POST /transcription`).
+
+Dritter Einbauort der bestehenden `PushToTalkButton`-Komponente: die **normale Nachrichteneingabe der Session-Detailseite** (`app/(cockpit)/sessions/[id]/page.tsx`). Damit lassen sich nicht nur Initial-Prompt (PROJ-9) und Decision-Card-Kommentare (PROJ-4), sondern auch **laufende/fortsetzende Nachrichten an eine Session** diktieren.
+
+- Mic-Button in der Button-Spalte rechts neben dem Textfeld, unter „Senden"/„Fortsetzen" und dem `SessionClipboardButton`.
+- Transkript wird **angehängt** (durch Leerzeichen getrennt, kein Überschreiben), bleibt editierbar — **kein Auto-Submit**; der Nutzer drückt selbst „Senden".
+- `disabled={hasPending}` — gesperrt, solange eine offene Decision Card oben auf Entscheidung wartet (identische Sperre wie Textfeld und „Senden").
+- Keine neue Logik/kein neuer Endpunkt — wiederverwendete Komponente + Hook; gleiche Mic/Stopp/Spinner-Zustände wie an den anderen Stellen.
+
+Verifiziert: `npx tsc --noEmit` sauber (keine neuen Fehler).
+**Offen:** Browser-Smoke mit echtem Diktat in einer Session; noch nicht deployed (lebt auf `dev`).
