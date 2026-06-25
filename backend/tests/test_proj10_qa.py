@@ -125,11 +125,15 @@ async def test_denied_phase_gate_keeps_old_phase(tmp_path, monkeypatch):
 
     task, gated = await _gate(mgr, rt, "a", "abc-frontend")
     assert gated
-    # Während die Card offen ist, darf die Phase noch nicht umgesprungen sein.
-    assert rt.state.abc_phase == "architecture"
+    # PROJ-30: Erkennung ist von der Kontrolle entkoppelt — die Phase rückt im Gantt bereits
+    # vor (Beobachtung), während die Gate-Card nur die Tool-Ausführung pausiert.
+    assert rt.state.abc_phase == "frontend"
+    assert rt.state.abc_phase_reached == "frontend"
     mgr.resolve_decision(rt.state.session_id, "a", approve=False, comment="Noch nicht")
     await task
-    assert rt.state.abc_phase == "architecture"  # bleibt in der alten Phase
+    # QA-Bug B: aktive Ablehnung setzt die AKTUELLE Phase zurück; reached bleibt monoton.
+    assert rt.state.abc_phase == "architecture"
+    assert rt.state.abc_phase_reached == "frontend"
 
 
 @pytest.mark.asyncio
@@ -141,10 +145,12 @@ async def test_approved_phase_gate_advances_phase(tmp_path, monkeypatch):
                           permission_mode="bypassPermissions")
     rt.state.abc_phase = "architecture"
     task, gated = await _gate(mgr, rt, "a", "abc-frontend")
-    assert gated and rt.state.abc_phase == "architecture"  # noch nicht
+    # PROJ-30: Phase rückt bei Erkennung sofort vor (entkoppelt vom Gate); die Card pausiert
+    # nur die Tool-Ausführung.
+    assert gated and rt.state.abc_phase == "frontend"
     mgr.resolve_decision(rt.state.session_id, "a", approve=True)
     await task
-    assert rt.state.abc_phase == "frontend"  # erst NACH Freigabe
+    assert rt.state.abc_phase == "frontend"  # bei Freigabe bestätigt (kein Revert)
 
 
 @pytest.mark.asyncio

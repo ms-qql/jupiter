@@ -490,31 +490,6 @@ class SessionRuntime:
 
     # --- ABC-Workflow-Phase (PROJ-8) ---------------------------------------
 
-    def _detect_abc(self, tool_name: str, tool_input: dict | None) -> None:
-        """Leitet aus dem Tool-Aufruf die aktuelle ABC-Phase + Feature-Referenz ab.
-
-        Reiner Seiteneffekt für den Gantt (PROJ-8): ``Skill``-Aufrufe mit abc-Workflow-
-        Skill setzen Phase/erreichte-Phase/Feature; berührte ``features/PROJ-X-*.md``
-        liefern das Fallback-Feature. Ändert sich etwas, wird ein State-Snapshot
-        gestreamt (Live-Aktualisierung der Bars, gratis über ``to_read``).
-        """
-        s = self.state
-        # PROJ-10: zuletzt genutzten Skill mitführen (Policy-Kontext „skill").
-        if tool_name == "Skill":
-            skill = str((tool_input or {}).get("skill", "")).strip()
-            if skill:
-                s.current_skill = skill
-        before = (s.abc_phase, s.abc_phase_reached, s.abc_feature)
-        s.abc_phase, s.abc_phase_reached, s.abc_feature = abc_phases.detect_phase_signal(
-            tool_name,
-            tool_input,
-            phase=s.abc_phase,
-            reached=s.abc_phase_reached,
-            feature=s.abc_feature,
-        )
-        if before != (s.abc_phase, s.abc_phase_reached, s.abc_feature):
-            self._broadcast({"kind": "state", **self.to_read()})
-
     # --- Decision Cards / Freigabe (PROJ-4) --------------------------------
 
     async def request_decision(
@@ -560,9 +535,7 @@ class SessionRuntime:
                 action="Host-/Backend-Neustart — beendet laufende Sessions",
             )
 
-        # PROJ-8/PROJ-10: prospektive Phase/Feature OHNE Seiteneffekt berechnen — die
-        # Übernahme erfolgt erst NACH einem evtl. Phasen-Gate (QA-Bug B: ein abgelehnter
-        # Übergang darf die Phase NICHT vorrücken).
+        # PROJ-8/PROJ-10/PROJ-30: prospektive Phase/Feature OHNE Seiteneffekt berechnen.
         s = self.state
         old_phase = s.abc_phase
         prospective = abc_phases.detect_phase_signal(
@@ -571,7 +544,17 @@ class SessionRuntime:
         )
         new_phase = prospective[0]
 
-        # 1) Hartes, bypass-festes Phasen-Übergangs-Gate.
+        # PROJ-30: Phasen-ERKENNUNG ist Beobachtung, nicht Kontrolle — sie wird IMMER und
+        # modus-unabhängig angewandt (mutiert abc_phase/_reached/_feature + broadcastet den
+        # Gantt), BEVOR über ein Gate entschieden wird. So leuchten QA/Deploy auch im
+        # bypassPermissions-Modus auf, wo eine später nicht aufgelöste Card sonst die Phase
+        # einfror (AC: „auch dann erfasst, wenn keine Decision Card entsteht"). abc_phase_reached
+        # bleibt über max_phase monoton. Ersetzt den früheren _detect_abc-im-Nicht-Gate-Zweig.
+        self._apply_phase(tool_name, tool_input, prospective)
+
+        # 1) Hartes, bypass-festes Phasen-Übergangs-Gate — reine KONTROLLE: pausiert die
+        # Tool-Ausführung (Checkpoint bleibt auch im Bypass erhalten), ist aber nicht mehr
+        # der Pfad, über den die Phase im Gantt vorrückt.
         if self._should_gate_phase(old_phase, new_phase):
             outcome = await self._open_card(
                 decision_id, tool_name, tool_input,
@@ -579,12 +562,12 @@ class SessionRuntime:
                 triggering_rule=f"Phasen-Gate: {old_phase} → {new_phase}",
                 action=f"Phasenwechsel {old_phase} → {new_phase}",
             )
-            if outcome.behavior == "allow":
-                self._apply_phase(tool_name, tool_input, prospective)  # erst bei Freigabe
+            if outcome.behavior != "allow":
+                # QA-Bug B: ein AKTIV abgelehnter Übergang darf die aktuelle Phase nicht
+                # vorrücken → abc_phase zurück auf old_phase. abc_phase_reached bleibt
+                # monoton (die Phase wurde betreten) — kein Rückfall (PROJ-30-AC).
+                self._revert_phase(old_phase)
             return outcome
-
-        # Kein Gate → Phase/Skill/Feature regulär übernehmen (mutiert + broadcastet).
-        self._detect_abc(tool_name, tool_input)
 
         # 2) Operative Auswertung der abgestuften Trust-Policy.
         decision = policy.policy_store.evaluate(
@@ -671,10 +654,14 @@ class SessionRuntime:
         return await fut
 
     def _apply_phase(self, tool_name: str, tool_input: dict | None, prospective: tuple) -> None:
-        """Übernimmt die (zuvor seiteneffektfrei berechnete) Phase nach Gate-Freigabe.
+        """Übernimmt die (zuvor seiteneffektfrei berechnete) ABC-Phase — DER Recognizer.
 
         Spiegelt den Skill-Kontext (``current_skill``) und das ABC-Tripel und streamt bei
-        Änderung einen State-Snapshot (Live-Gantt). Wird NUR im Gate-Approve-Pfad genutzt.
+        Änderung einen State-Snapshot (Live-Gantt). PROJ-30: reiner, modus-unabhängiger
+        Seiteneffekt für den Gantt — läuft in ``request_decision`` IMMER vor dem Phasen-Gate,
+        damit die Erkennung nicht an einer (im Bypass evtl. nie aufgelösten) Card hängt.
+        ``Skill``-Aufrufe mit abc-Workflow-Skill setzen Phase/erreichte-Phase/Feature; berührte
+        ``features/PROJ-X-*.md`` liefern das Fallback-Feature.
         """
         s = self.state
         if tool_name == "Skill":
@@ -684,6 +671,18 @@ class SessionRuntime:
         before = (s.abc_phase, s.abc_phase_reached, s.abc_feature)
         s.abc_phase, s.abc_phase_reached, s.abc_feature = prospective
         if before != (s.abc_phase, s.abc_phase_reached, s.abc_feature):
+            self._broadcast({"kind": "state", **self.to_read()})
+
+    def _revert_phase(self, old_phase: str | None) -> None:
+        """Setzt die AKTUELLE Phase nach einem aktiv abgelehnten Übergang zurück (QA-Bug B).
+
+        Nur ``abc_phase`` (Hervorhebung) fällt auf ``old_phase`` zurück; ``abc_phase_reached``
+        bleibt monoton — die Phase wurde betreten, die Balkenfüllung darf nicht zurückspringen
+        (PROJ-30). Broadcastet bei Änderung einen State-Snapshot.
+        """
+        s = self.state
+        if s.abc_phase != old_phase:
+            s.abc_phase = old_phase
             self._broadcast({"kind": "state", **self.to_read()})
 
     def _register_deny_notice(
