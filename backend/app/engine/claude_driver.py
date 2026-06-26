@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 from ..config import settings
 from .base import EngineDriver, EventHandler, LaunchSpec, pid_alive
 from .events import StreamEvent, parse_line
+
+log = logging.getLogger(__name__)
 
 
 def build_argv(spec: LaunchSpec, claude_bin: str = "claude") -> list[str]:
@@ -98,8 +101,14 @@ class ClaudeCodeDriver(EngineDriver):
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # PROJ-47: großzügiges Zeilenlimit statt asyncio-Default (64 KiB) — eine
+            # einzelne große stream-json-Zeile darf den Reader nicht mehr sprengen.
+            limit=settings.claude_stream_limit_bytes,
         )
         self._reader_task = asyncio.create_task(self._read_stdout())
+        # PROJ-47: Reader beaufsichtigen — endet er unerwartet, wird das geloggt
+        # (kein stiller Tod / verwaister Subprozess).
+        self._reader_task.add_done_callback(self._on_reader_done)
         self._stderr_task = asyncio.create_task(self._read_stderr())
         # Erster Turn: Initial-Prompt über stdin (uniformer multi-turn-Pfad).
         if spec.initial_prompt:
@@ -154,16 +163,71 @@ class ClaudeCodeDriver(EngineDriver):
     async def _read_stdout(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None
         stream = self._proc.stdout
-        while True:
-            line = await stream.readline()
-            if not line:  # EOF → Prozess fertig
-                break
-            event = parse_line(line.decode("utf-8", errors="replace"))
-            if event is not None:
-                await self._emit(event)
+        try:
+            while True:
+                try:
+                    line = await stream.readline()
+                except (ValueError, asyncio.LimitOverrunError) as exc:
+                    # PROJ-47: Eine stream-json-Zeile sprengte das StreamReader-Limit
+                    # (großer Turn / großes Tool-Result). FRÜHER tötete diese Ausnahme
+                    # den Reader lautlos → verwaister Subprozess, eingefrorene Anzeige.
+                    # JETZT: loggen + überlange Zeile überspringen, der Reader liest
+                    # weiter — nachfolgende Events (inkl. `result`) kommen weiter an.
+                    log.warning(
+                        "Session-Reader übersprang eine überlange stdout-Zeile "
+                        "(Limit %d Bytes überschritten): %s",
+                        settings.claude_stream_limit_bytes,
+                        exc,
+                    )
+                    continue
+                if not line:  # EOF → Prozess fertig
+                    break
+                event = parse_line(line.decode("utf-8", errors="replace"))
+                if event is not None:
+                    await self._emit(event)
+        except asyncio.CancelledError:
+            raise  # von stop() gewollt — kein Fehler.
+        except Exception:
+            # PROJ-47: Kein stiller Tod. Jede unerwartete Reader-Ausnahme wird mit
+            # vollem Traceback geloggt UND als Fehler-Event nach oben gereicht, damit
+            # die Session als ERROR sichtbar wird statt verwaist „läuft" anzuzeigen.
+            log.exception("Session-Reader (stdout) ist unerwartet abgestürzt.")
+            await self._emit(
+                StreamEvent(
+                    type="system",
+                    subtype="error",
+                    raw={
+                        "message": "Interner Lesefehler des Session-Streams — "
+                        "bitte Stop + Fortsetzen."
+                    },
+                )
+            )
+            return
         # Prozess-Ende klassifizieren (von uns gestoppt ≠ Fehler).
         rc = await self._proc.wait()
         await self._emit(classify_exit(rc, self._stopping, "".join(self._stderr_buf)))
+
+    def _on_reader_done(self, task: asyncio.Task) -> None:
+        """PROJ-47: Aufsicht über den stdout-Reader.
+
+        Endet der Reader-Task unerwartet, darf das nicht im Stillen geschehen:
+        - mit Ausnahme beendet  → Traceback ins Log,
+        - regulär beendet, obwohl der Subprozess noch lebt und kein Stop läuft
+          → Reader-Stall: diagnostisch klar loggen (Session per Stop + Fortsetzen
+          re-synchronisierbar), statt den Subprozess unbemerkt verwaisen zu lassen.
+        """
+        if task.cancelled():
+            return  # von stop() gewollt.
+        exc = task.exception()
+        if exc is not None:
+            log.error("stdout-Reader-Task endete mit Ausnahme.", exc_info=exc)
+        elif not self._stopping and self.is_alive:
+            log.error(
+                "Reader-Stall: stdout-Reader endete, obwohl der Subprozess (pid=%s) "
+                "noch lebt und kein Stop läuft — Session re-synchronisieren "
+                "(Stop + Fortsetzen).",
+                self.pid,
+            )
 
     async def _read_stderr(self) -> None:
         assert self._proc is not None and self._proc.stderr is not None

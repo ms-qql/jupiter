@@ -141,3 +141,27 @@ SessionRuntime    (backend/app/engine/manager.py)
 3. **WS-Flapping (Zweitbefund):** **getrennt** als **PROJ-48** (Delivery-Layer ≠ Subprozess-Pump). Empfehlung: nach PROJ-47 als eigene Spec via `/abc-requirements`.
 
 > **Hinweis an Backend-Dev:** Beim Bau zusätzlich kurz prüfen, ob `send_input` ([manager.py:1366](backend/app/engine/manager.py#L1366)) den Status mitten im Turn fälschlich auf `RUNNING` zurücksetzt (Edge „Input exakt im Moment des `result`") — falls ja, minimal absichern. Kernfix bleibt der Reader.
+
+## Implementierung (Backend-Dev · 2026-06-26)
+**Branch:** dev · Reiner Treiber-/Config-Fix, keine DB/Route/Schema.
+
+**Geändert:**
+- [`backend/app/config.py`](backend/app/config.py) — neue Einstellung `claude_stream_limit_bytes` (Default **8 MiB**, via `JUPITER_CLAUDE_STREAM_LIMIT_BYTES`). Ersetzt den asyncio-Default von 64 KiB.
+- [`backend/app/engine/claude_driver.py`](backend/app/engine/claude_driver.py):
+  1. `create_subprocess_exec(..., limit=settings.claude_stream_limit_bytes)` → große stream-json-Zeilen sprengen den Reader nicht mehr.
+  2. `_read_stdout` umschließt die Leseschleife mit `try/except`: `ValueError`/`LimitOverrunError` (überlange Zeile) → **loggen + überspringen**, Reader liest weiter; jede sonstige Ausnahme → `log.exception` (Traceback) **+** `system/error`-Event nach oben → Session wird `ERROR` statt verwaist „läuft". `CancelledError` wird sauber durchgereicht (Stop ≠ Fehler).
+  3. Neuer `_on_reader_done`-Callback (via `add_done_callback`): Reader-Task endet mit Ausnahme → Log; endet regulär, obwohl der Subprozess noch lebt und kein Stop läuft → **diagnostischer „Reader-Stall"-Log** (kein stilles Verwaisen).
+- [`backend/tests/test_proj47_reader_stall.py`](backend/tests/test_proj47_reader_stall.py) — 6 neue Tests (Stream-Stub).
+
+**Befund-Bestätigung:** Die stdin/stdout-Entkopplung war bereits sauber (getrennte Tasks, kein geteilter Lock) — die Spec-Hypothese „Write blockiert Read" trug nicht. Der echte Defekt war der ungeschützte, unbeaufsichtigte Reader + 64-KiB-Limit. Der `send_input`→`RUNNING`-Edge wurde geprüft: unkritisch, da der Reader nun verlässlich weiterläuft und das `result` den Status korrekt nach `WAITING` führt — keine zusätzliche Absicherung nötig.
+
+**AC-Status (Eigenprüfung, finale QA via /abc-qa):**
+- [x] Input/große Zeile mitten im Turn killt den Reader nicht (`test_reader_skips_overlong_line_and_keeps_result`).
+- [x] `result` → `running→wartet`, Turns/Kosten > 0 (`test_result_event_sets_wartet_with_turns_and_cost`).
+- [x] Kein falsches „hängt" bei Idle: unveränderte Watchdog-Uhr; `derive_liveness` führt `WAITING`→`LIVENESS_ACTIVE` (Regression PROJ-27 grün).
+- [x] Reader-Stall-Erkennung (`test_done_callback_flags_stall_while_process_alive`).
+- [x] Sauberes Recovery: `--resume`-Pfad unverändert (Regression PROJ-33 grün).
+- [x] Kein stiller Tod (`test_reader_crash_emits_error_event_not_silent`, `test_done_callback_logs_reader_exception`).
+- [x] Deutsche Logs/Texte; volle Suite grün (**859 passed**); keine Regression PROJ-1/14/27.
+
+**Offen / Folgeticket:** WS-Flapping (Zweitbefund) bleibt separat → **PROJ-48** via `/abc-requirements`.

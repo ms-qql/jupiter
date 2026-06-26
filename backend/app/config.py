@@ -139,6 +139,13 @@ class Settings(BaseSettings):
     # Sekunden Kulanz zwischen SIGTERM und SIGKILL beim Stoppen.
     process_stop_grace_seconds: float = 5.0
 
+    # PROJ-47: Zeilen-/Puffer-Limit (Bytes) des stdout-StreamReaders der Claude-
+    # Subprozesse. Der asyncio-Default ist nur 64 KiB — eine einzelne stream-json-
+    # Zeile (großer Assistenten-Turn / großes Tool-Result) sprengt das und ließ
+    # `readline()` früher mit ValueError den Reader LAUTLOS sterben (verwaister
+    # Subprozess, eingefrorene Anzeige). Großzügig (8 MiB), via Env anpassbar.
+    claude_stream_limit_bytes: int = 8 * 1024 * 1024
+
     # --- PROJ-14: Härtung (Limit + Persistenz) ---------------------------
     # Obergrenze gleichzeitig AKTIVER Sessions (starting/running/waiting/
     # awaiting_approval). Schützt den Single-Worker-VPS vor Ressourcen-Überlast
