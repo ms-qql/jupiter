@@ -34,6 +34,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 # Nur die abc-Workflow-Skills portieren (alle, gemäß Design-Entscheidung 2 der Spec).
 SKILL_GLOB = "abc-*"
 
@@ -65,18 +67,70 @@ PREAMBLE = """\
 
 """
 
-# Regelwerk: (Pattern, Ersatz, Flags). Reihenfolge zählt (spezifisch vor generisch).
+# Regelwerk: (Pattern, Ersatz). Reihenfolge zählt (spezifisch vor generisch).
+# WICHTIG: Die CodeGraph-CLI (`codegraph init -i`, `codegraph index`) bleibt UNANGETASTET —
+# sie ist ein Shell-Binary und in Codex nutzbar. Nur die MCP-Tools (`codegraph_*`,
+# Unterstrich-Form) und Explore-/Sub-Agenten sind in Codex nicht verfügbar.
 RULES: list[tuple[str, str]] = [
     # Absolute Claude-Skill-Pfade → Skill-Benennung (kein toter Pfad).
     (r"/home/dev/\.claude/skills/(abc-[a-z0-9-]+)/SKILL\.md", r"die Skill »\1«"),
     # Übrige absolute .claude-Pfade neutralisieren.
     (r"/home/dev/\.claude/[A-Za-z0-9_./-]+", "(Claude-spezifischer Pfad — in Codex irrelevant)"),
-    # Claude-Tool-Namen in Fließtext markieren (Wortgrenzen, nicht in Codeblöcken kritisch).
+    # Inline-„Run CodeGraph exploration (MANDATORY…)" (engl., z. B. in „Before Starting").
+    # Ersatztext bewusst OHNE Tokens, die spätere Regeln erneut matchen (kein „Explore-Agent").
+    (r"\*\*Run CodeGraph exploration[^*]*\*\*[^\n]*", "**Code zuerst per Shell erkunden** (`rg`/`grep`/Dateien lesen — in Codex weder CodeGraph-MCP noch Sub-Agenten)."),
+    # Englische Explore-/Sub-Agent-Phrasen (vom dt. Regelwerk nicht erfasst).
+    (r"(?:[Dd]elegate exploration to|go through|spawn|launch|use) an Explore agent",
+     "nutze direkte Shell-/Suchbefehle (`rg`/`grep`) selbst — in Codex gibt es keine Sub-Agenten"),
+    (r"\ban?\s+Explore\s+agent\b", "direkte Shell-/Suchbefehle (keine Sub-Agenten in Codex)"),
+    (r"\bExplore agent(s)?\b", "direkte Shell-/Suchbefehle (keine Sub-Agenten in Codex)"),
+    # CodeGraph-MCP-Tools (Unterstrich-Form) — existieren in Codex nicht. CLI bleibt!
+    (r"`codegraph_[a-z_]+`(\s*/\s*`codegraph_[a-z_]+`)*",
+     "`rg`/`grep` (in Codex kein CodeGraph-MCP)"),
+    (r"\bcodegraph_[a-z_]+\b", "rg/grep (kein CodeGraph-MCP in Codex)"),
+    # Claude-Tool-Namen in Fließtext markieren.
     (r"\bAskUserQuestion\b", "eine Klartext-Rückfrage an den Nutzer (in Codex: kein AskUserQuestion-Tool)"),
     (r"\b(Explore|Agent|Task)-(Sub)?[Aa]gent(en)?\b", "direkte Shell-/Suchbefehle (in Codex: keine Sub-Agenten)"),
     (r"\bspawn(e|st)?\s+(einen|an)\s+(Explore|Agent)\b", "nutze direkte Shell-/Suchbefehle"),
 ]
 COMPILED = [(re.compile(p), r) for p, r in RULES]
+
+# Level-2-Abschnitte, deren GANZER Inhalt durch eine Codex-Notiz ersetzt wird (statt nur
+# einzelne Tool-Namen zu markieren) — weil sie eine Claude-spezifische MANDATORY-Prozedur
+# beschreiben (Explore-Agent + CodeGraph-MCP), die Codex sonst ins Leere laufen ließe.
+CODEGRAPH_SECTION_RE = re.compile(r"[Cc]ode[Gg]raph\s+Exploration")
+CODEGRAPH_SECTION_NOTE = """\
+> **Codex (PROJ-50):** In Codex gibt es **keine** Explore-/Sub-Agenten und i. d. R. **kein**
+> CodeGraph-MCP. Erkunde den Code stattdessen **direkt per Shell**: `rg`/`grep` für Symbole
+> und Referenzen, Dateien gezielt lesen, `ls`/`find` für die Struktur. Die CodeGraph-**CLI**
+> (`codegraph init -i`, `codegraph index`) ist dagegen nutzbar, falls vorhanden.
+>
+> Die fachliche Absicht bleibt unverändert: **erst den echten Code lesen, dann entwerfen** —
+> Annahmen vermeiden. Der frühere „CodeGraph (MANDATORY)"-Agenten-Schritt entfällt in Codex.
+"""
+
+
+def replace_level2_section(body: str, heading_match: re.Pattern, note: str) -> str:
+    """Ersetzt den Inhalt eines `## …`-Abschnitts (bis zur nächsten `## `-Überschrift)
+    durch ``note``; die Überschrift selbst bleibt erhalten. Greift nur, wenn vorhanden."""
+    lines = body.splitlines()
+    out: list[str] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        if line.startswith("## ") and heading_match.search(line):
+            out.append("## CodeGraph / Code-Erkundung (Codex)")
+            out.append("")
+            out.append(note.rstrip())
+            out.append("")
+            i += 1
+            while i < n and not lines[i].startswith("## "):
+                i += 1
+            continue
+        out.append(line)
+        i += 1
+    return "\n".join(out)
 
 
 def split_frontmatter(text: str) -> tuple[list[str], str]:
@@ -92,19 +146,39 @@ def split_frontmatter(text: str) -> tuple[list[str], str]:
 
 
 def transform_frontmatter(fm: list[str]) -> tuple[str, str]:
-    """Filtert Claude-only-Keys, liefert (name, description) für metadata/Anzeige."""
+    """Filtert Claude-only-Keys, liefert (frontmatter_out, name).
+
+    Bug #1-Fix (QA): die Frontmatter wird **YAML-bewusst** geparst (`yaml.safe_load`),
+    damit `name`/`description` auch bei Block-Scalars (`description: >-`, Text auf
+    Folgezeilen) korrekt sind — die frühere zeilenbasierte Extraktion griff sonst den
+    Scalar-Indikator `>-` als „Wert" ab → leere `short-description`.
+
+    Die ORIGINAL-Zeilen (gefiltert um Claude-only-Keys) bleiben erhalten, damit die
+    Description-Formatierung 1:1 übernommen wird; nur `metadata.short-description` wird
+    aus dem geparsten `description` abgeleitet.
+    """
+    parsed = yaml.safe_load("\n".join(fm)) or {}
+    name = str(parsed.get("name") or "").strip()
+    description = str(parsed.get("description") or "").strip()
+
+    # Original-Zeilen behalten, aber Claude-only-Keys (inkl. ihrer Block-Fortsetzungen)
+    # herausfiltern. Eine Fortsetzungant ist eine eingerückte Zeile ohne `key:` am Anfang.
     kept: list[str] = []
-    name = description = ""
+    skipping = False
     for line in fm:
+        stripped = line.strip()
+        is_continuation = line[:1] in (" ", "\t") and not re.match(r"^\s*[\w-]+:", line)
+        if skipping and is_continuation:
+            continue
+        skipping = False
         key = line.split(":", 1)[0].strip()
         if key in DROP_FRONTMATTER_KEYS:
+            skipping = True  # auch evtl. folgende Block-Zeilen dieses Keys überspringen
             continue
-        if key == "name":
-            name = line.split(":", 1)[1].strip()
-        if key == "description":
-            description = line.split(":", 1)[1].strip()
         kept.append(line)
+
     short = (description or name).strip().strip('"')
+    short = " ".join(short.split())  # Folded-Scalar-Umbrüche zu Leerzeichen glätten
     if len(short) > 80:
         short = short[:77].rstrip() + "…"
     fm_out = "---\n" + "\n".join(kept) + "\nmetadata:\n  short-description: " + short + "\n---\n"
@@ -123,6 +197,10 @@ def transform_body(body: str, name: str) -> str:
     head = "\n".join(lines[:insert_at])
     tail = "\n".join(lines[insert_at:])
     out = (head + "\n\n" + PREAMBLE + tail) if head else (PREAMBLE + tail)
+
+    # Claude-spezifische MANDATORY-Prozedur-Abschnitte komplett durch eine Codex-Notiz
+    # ersetzen (Bug #2), BEVOR die feineren Regeln laufen.
+    out = replace_level2_section(out, CODEGRAPH_SECTION_RE, CODEGRAPH_SECTION_NOTE)
 
     for rx, repl in COMPILED:
         out = rx.sub(repl, out)

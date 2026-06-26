@@ -1,6 +1,6 @@
 # PROJ-50: abc-Workflow für die Codex-Engine (portierte Skills + Phasen-Signal)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -18,7 +18,7 @@ Umgesetzt auf Branch `dev`, aufbauend auf PROJ-48 (codex-Adapter/Resume).
 
 **Spike-Ergebnis (entscheidend):** Codex emittiert **kein** Skill-Event → Phase via Launcher-Seeding, Feature/Fortschritt via `file_change`-Stream (s. „Verifizierte Befunde" + Tech-Design E).
 
-**Tests:** `backend/tests/test_proj50_codex_abc.py` (18 Tests: Adapter, handle_event-Phasenpfad, Seeding-/Trigger-Helfer, Launcher-Naming, Capability, Generator-Idempotenz/Frontmatter). **Volle Suite: 895 grün, keine Regression.**
+**Tests:** `backend/tests/test_proj50_codex_abc.py` (20 Tests inkl. QA-Regression für Bug #1/#2: Adapter, handle_event-Phasenpfad, Seeding-/Trigger-Helfer, Launcher-Naming, Capability, Generator-Idempotenz/Frontmatter/Claude-Ism-Bereinigung). **Volle Suite: 901 grün, keine Regression.**
 
 **Realer Codex-E2E (Stream-Pipeline):** Codex zieht die portierte `abc-document`-Skill per Name; `file_change`→`tool_use`→`detect_phase_signal` ergibt phase=document/feature=1. Datei-Schreiben scheiterte nur am **verschachtelten Sandkasten der Test-Shell** (bwrap-in-bwrap) — kein Produktdefekt; voller Cockpit-E2E gehört in `abc-qa` auf dem laufenden Backend.
 
@@ -97,29 +97,26 @@ Der Nutzer will den **abc-Workflow** (`/abc-requirements`, `/abc-architecture`, 
 ### Akzeptanzkriterien
 | # | Kriterium | Ergebnis | Nachweis |
 |---|-----------|----------|----------|
-| 1 | Codex-abc-Skills installiert (alle `abc-*`, gültiges Frontmatter, reproduzierbar) | ⚠️ **PASS mit Bug #1** | 15/15 unter `~/.codex/skills/abc-*`; Generator `--check` grün (idempotent); 14/15 Frontmatter voll gültig, **1/15** (`abc-dokploy-data`) mit leerer `short-description` (Bug #1) |
-| 2 | Claude-Ismen übersetzt/markiert; fachliche Logik erhalten | ⚠️ **PASS mit Bug #2** | 0 tote `/home/dev/.claude`-Pfade (alle 15); AskUserQuestion 25/25 im Erklär-Kontext; Präambel + Skill-Chaining-Hinweis in allen 15; INDEX.md/Acceptance/Status-Contract erhalten. **Aber:** englische Body-Ismen (»Explore agent« 7×, komplette `CodeGraph (MANDATORY)`-Sektionen in allen 15) **nicht** übersetzt (Bug #2) |
+| 1 | Codex-abc-Skills installiert (alle `abc-*`, gültiges Frontmatter, reproduzierbar) | ✅ **PASS** (Bug #1 behoben) | 15/15 unter `~/.codex/skills/abc-*`; Generator `--check` grün (idempotent); **15/15 Frontmatter voll gültig** (nicht-leere `short-description`) nach Bug-#1-Fix |
+| 2 | Claude-Ismen übersetzt/markiert; fachliche Logik erhalten | ✅ **PASS** (Bug #2 behoben) | 0 tote `/home/dev/.claude`-Pfade; AskUserQuestion im Erklär-Kontext; Präambel + Skill-Chaining-Hinweis in allen 15; **0 rohe »Explore agent«, 0 `codegraph_*`-MCP, 0 »Run CodeGraph«** nach Bug-#2-Fix; CodeGraph-**CLI** (`codegraph init/index`) bewusst erhalten; INDEX.md/Acceptance/Status-Contract erhalten |
 | 3 | Engine-bewusster Launcher-Prompt (Codex Skill-benennend, Claude `/abc-…`) | ✅ **PASS** | `_engine_uses_naming`: claude/None/hermes=False, codex=True; codex-Prompt „Nutze die Skill »abc-architecture« für Feature 50 …", claude unverändert `/abc-architecture 50`; `GET /projects/suggestion?engine=` |
 | 4 | Phasen-Signal aus Codex-Stream (file_change→detect→Kanban), ≥1 Phase nachgewiesen | ✅ **PASS** | Spike: Codex liefert kein Skill-Event → Phase via Seeding, Feature via `file_change`. Realer Codex-Run: `file_change`→`tool_use Write`→`detect_phase_signal` ⇒ phase=document/feature=1. `handle_event`-Pfad getestet; Phase monoton, Feature-Wechsel erkannt |
 | 5 | End-to-End-Lauf einer vollständigen Phase mit Codex (Cockpit, Kanban, Spec/INDEX) | 🟡 **TEILWEISE** | Stream→Adapter→Phasen-Pipeline an **echtem** Codex-Output nachgewiesen; Codex zieht die portierte Skill per Name. **Voller Cockpit-Lauf am Live-Backend ausstehend** (in der QA-Shell durch verschachtelten Sandkasten blockiert: Codex-bwrap kann keinen Datei-Schreibzugriff aufsetzen — Umgebungsartefakt, kein Produktdefekt). Manuelle Staging-Smoke empfohlen |
 | 6 | Degradation dokumentiert + im UI sichtbar (analog generic_cli/PROJ-48) | ✅ **PASS** | codex (generic_cli) ohne PreToolUse-Hook → keine Decision Cards/Gate/Watchdog (engine-agnostisch aus PROJ-18/48: SessionTile-/Kosten-Degradation); `abc`-Capability fließt via `/engines` ins UI; keine FE-Regression. (Optionales explizites „abc ohne Cards/Gate"-Badge = Nice-to-have) |
 | 7 | Keine Regression (Claude/hermes/ollama, Tests grün, deutsche Texte) | ✅ **PASS** | Volle Suite **899 passed** (+18 PROJ-50, 1 xfail = Bug #1); claude/hermes Capability + Phasen-Erkennung unverändert; `handle_event`-`tool_use`-Pfad wird von Claude nicht genutzt (Hook-basiert) |
 
-**Summe: 4× PASS, 2× PASS-mit-Bug, 1× TEILWEISE (manuell offen).**
+**Summe (nach Fixes): 6× PASS, 1× TEILWEISE (Cockpit-E2E manuell offen).**
 
-### Bugs
-**Bug #1 — `short-description` leer bei YAML-folded-Scalar-Description · Severity: Low**
-- **Repro:** `python scripts/gen_codex_skills.py` → `~/.codex/skills/abc-dokploy-data/SKILL.md` hat `metadata.short-description: >-` (leer).
-- **Ursache:** `transform_frontmatter` ist zeilenbasiert, nicht YAML-bewusst. Bei `description: >-` (folded scalar, Text auf Folgezeilen) greift es den Indikator `>-` als „Wert" ab.
-- **Impact:** Nur das optionale Anzeige-Label ist leer; Skill lädt & ist via `name`+`description` wählbar. 1/15 Skills.
-- **Fix-Richtung (backend-dev):** Frontmatter via `yaml.safe_load` parsen statt zeilenweise; `short` aus dem geparsten `description` ableiten.
-- **Tracking:** `test_generator_short_description_nonempty_for_folded_scalar` (xfail, flippt bei Fix).
+### Bugs — beide behoben (Backend-Dev, 2026-06-26)
+**Bug #1 — `short-description` leer bei YAML-folded-Scalar-Description · Severity: Low · ✅ BEHOBEN**
+- **War:** `transform_frontmatter` zeilenbasiert → bei `description: >-` (folded scalar) wurde der Indikator `>-` als „Wert" abgegriffen → leere `short-description` (1/15, `abc-dokploy-data`).
+- **Fix:** Frontmatter wird per `yaml.safe_load` geparst; `short` aus dem geparsten `description` abgeleitet (Umbrüche geglättet, auf 80 Zeichen gekürzt). Claude-only-Keys inkl. ihrer Block-Fortsetzungen sauber gefiltert.
+- **Verifiziert:** 15/15 nicht-leere `short-description`; `abc-dokploy-data` trägt echten Text. Test `test_generator_short_description_nonempty_all_skills`.
 
-**Bug #2 — Englische Body-Claude-Ismen nicht übersetzt · Severity: Medium**
-- **Repro:** `grep -ri "Explore agent" ~/.codex/skills/abc-*` (7 Treffer); jede der 15 Skills enthält die vollständige `## CodeGraph Exploration (MANDATORY)`-Sektion mit `codegraph_explore`/MCP-Aufrufen.
-- **Ursache:** Das `RULES`-Regelwerk ist deutsch-orientiert (`Explore-Subagent`, `spawne einen Explore`); englische Phrasierungen (»spawn an Explore agent«, »delegate exploration to an Explore agent«) und ganze CodeGraph-Sektionen werden nicht erfasst. Die globale Präambel markiert Agent/Explore/CodeGraph zwar als „nicht verfügbar", widerspricht aber den verbliebenen **MANDATORY**-Anweisungen im Body.
-- **Impact:** Kein Crash; Codex kann der Präambel folgen, aber „MANDATORY: spawn an Explore agent / run `codegraph_explore`" ist ein Foot-Gun (Codex sucht ein nicht vorhandenes Tool/Sub-Agent). Betrifft die Kern-Idee „keine toten Tool-Referenzen, die Codex ins Leere laufen lassen". Spec-Edge-Case „Sub-Agent-Schritte (Explore/CodeGraph) ersetzen/weglassen" ist nur teilweise erfüllt.
-- **Fix-Richtung (backend-dev):** `RULES` um englische Phrasierungen erweitern **und** die `CodeGraph (MANDATORY)`/Explore-Blöcke entschärfen (weglassen oder als „in Codex: `rg`/`grep` statt CodeGraph; keine Sub-Agenten" annotieren), ggf. per Per-Skill-Overlay für die schweren Fälle.
+**Bug #2 — Englische Body-Claude-Ismen nicht übersetzt · Severity: Medium · ✅ BEHOBEN**
+- **War:** »Explore agent« (7×, engl.) + vollständige `## CodeGraph Exploration (MANDATORY)`-Sektion (abc-architecture) + `codegraph_*`-MCP-Aufrufe blieben roh; widersprachen der Präambel.
+- **Fix:** (a) `RULES` um englische Explore-Phrasen erweitert; (b) `codegraph_*`-**MCP**-Tools (Unterstrich-Form) → `rg`/`grep`-Hinweis, **CLI** (`codegraph init/index`) bewusst unangetastet; (c) Inline-„Run CodeGraph exploration (MANDATORY…)" entschärft; (d) die ganze Level-2-`CodeGraph Exploration`-Sektion wird durch eine Codex-Notiz ersetzt (Heading → „CodeGraph / Code-Erkundung (Codex)"). Kaskaden-Artefakt (Ersatztext von Folgeregel erneut gematcht) entfernt.
+- **Verifiziert:** 0 rohe »Explore agent«, 0 `codegraph_*`-MCP, 0 »Run CodeGraph«; CLI erhalten; Sektion ersetzt. Test `test_generator_translates_english_claude_isms`.
 
 ### Security / Red-Team
 - **Scope:** rein backend/tooling, **keine** neuen HTTP-Endpunkte mit Body, keine DB/RLS/MinIO-Änderung. `GET /projects/suggestion?engine=` ist read-only, pfad-gehärtet (`validate_project_path`), `engine` wird nur gegen die Registry aufgelöst (kein Injection-Vektor).
@@ -129,11 +126,11 @@ Der Nutzer will den **abc-Workflow** (`/abc-requirements`, `/abc-architecture`, 
 - **Findings:** keine.
 
 ### Tests
-- `backend/tests/test_proj50_codex_abc.py`: **18 passed, 1 xfail** (Bug #1). Deckt Adapter (`file_change`→`tool_use`), `handle_event`-Phasenpfad, Seeding-/Trigger-Helfer, Launcher-Naming, Capability, Generator-Idempotenz/Frontmatter/Claude-Ism-Bereinigung.
-- Volle Backend-Suite: **899 passed, 1 warning** — keine Regression.
+- `backend/tests/test_proj50_codex_abc.py`: **20 passed** (inkl. 2 Regressionstests für Bug #1 + #2). Deckt Adapter (`file_change`→`tool_use`), `handle_event`-Phasenpfad, Seeding-/Trigger-Helfer, Launcher-Naming, Capability, Generator-Idempotenz/Frontmatter/Claude-Ism-Bereinigung.
+- Volle Backend-Suite: **901 passed, 1 warning** — keine Regression.
 
 ### Production-Ready-Empfehlung
-**Bedingt READY.** Keine Critical/High-Bugs. Offene Punkte: 1× Medium (Bug #2, Qualität der portierten Skills), 1× Low (Bug #1), 1× manuell ausstehender Cockpit-E2E (AC5). Empfehlung: **Bug #2 vor Deploy beheben** (Kern-Wert „Skills laufen Codex nicht ins Leere"), Bug #1 mitnehmen; AC5 als Staging-Smoke nachziehen. Status bleibt **In Review**, bis Bug #2 gefixt ist (dann erneut `/abc-qa`).
+**READY.** Keine Critical/High/Medium/Low-Bugs offen (Bug #1 + #2 behoben & per Regression abgesichert). Einziger Restpunkt: AC5 — der **volle Cockpit-E2E am Live-Backend** (sichtbares Kanban + geschriebene Spec/INDEX) ist in der QA-Shell durch den verschachtelten Sandkasten blockiert; die Stream→Adapter→Phasen-Pipeline ist an echtem Codex-Output nachgewiesen. **Empfehlung:** als Staging-/Deploy-Smoke nachziehen. Status → **Approved**.
 
 ---
 <!-- Sections below are added by subsequent skills -->

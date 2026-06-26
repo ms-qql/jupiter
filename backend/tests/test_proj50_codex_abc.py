@@ -175,25 +175,52 @@ def test_generator_check_passes_no_drift():
     assert res.returncode == 0, f"Drift/Fehler:\n{res.stdout}\n{res.stderr}"
 
 
-@pytest.mark.xfail(reason="QA-Bug #1 (Low): folded-scalar `description: >-` → leere short-description; Fix in backend-dev offen.", strict=False)
-def test_generator_short_description_nonempty_for_folded_scalar(tmp_path):
-    """QA-Regression: Skills mit YAML-folded-Scalar-Description (`>-`) müssen eine
-    nicht-leere `metadata.short-description` bekommen. Aktuell greift die zeilenbasierte
-    Extraktion den Indikator `>-` ab → leerer Wert. Flippt auf PASS, sobald der Generator
-    Frontmatter YAML-bewusst parst."""
+def _generate_all(tmp_path) -> Path:
+    """Generiert alle Skills in ein tmp-Ziel; skippt ohne ~/.claude-Quelle."""
     import os
-    import yaml
     src = Path(os.path.expanduser("~/.claude/skills"))
-    if not (src / "abc-dokploy-data" / "SKILL.md").is_file():
+    if not (src / "abc-architecture" / "SKILL.md").is_file():
         pytest.skip("Keine ~/.claude/skills-Quelle in dieser Umgebung.")
-    subprocess.run(
+    res = subprocess.run(
         [sys.executable, str(REPO / "scripts" / "gen_codex_skills.py"),
          "--src", str(src), "--dest", str(tmp_path)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True,
     )
-    out = (tmp_path / "abc-dokploy-data" / "SKILL.md").read_text(encoding="utf-8")
-    fm = yaml.safe_load(out[3:out.find("\n---", 3)])
-    assert (fm.get("metadata") or {}).get("short-description"), "short-description ist leer (folded scalar)"
+    assert res.returncode == 0, res.stderr
+    return tmp_path
+
+
+def test_generator_short_description_nonempty_all_skills(tmp_path):
+    """QA-Bug #1 (Fix): ALLE generierten Skills haben eine nicht-leere
+    `metadata.short-description` — auch bei YAML-folded-Scalar (`description: >-`)."""
+    import yaml
+    dest = _generate_all(tmp_path)
+    empties = []
+    for p in sorted(dest.glob("abc-*/SKILL.md")):
+        fm = yaml.safe_load(p.read_text(encoding="utf-8").split("\n---", 1)[0][3:])
+        if not (fm.get("metadata") or {}).get("short-description"):
+            empties.append(p.name)
+    assert not empties, f"leere short-description: {empties}"
+    # Folded-Scalar-Fall konkret: dokploy-data trägt echten Text, nicht den Indikator.
+    dok = yaml.safe_load((dest / "abc-dokploy-data" / "SKILL.md").read_text().split("\n---", 1)[0][3:])
+    assert "Dokploy" in dok["metadata"]["short-description"]
+
+
+def test_generator_translates_english_claude_isms(tmp_path):
+    """QA-Bug #2 (Fix): englische Explore-Agent-Phrasen + CodeGraph-MCP-Tools sind in
+    KEINER generierten Skill mehr roh enthalten; die CodeGraph-CLI bleibt erhalten."""
+    dest = _generate_all(tmp_path)
+    blob = "\n".join(p.read_text(encoding="utf-8") for p in dest.glob("abc-*/SKILL.md"))
+    assert "Explore agent" not in blob, "rohe englische Explore-Agent-Phrase übrig"
+    import re as _re
+    assert not _re.search(r"codegraph_[a-z_]+", blob), "rohes CodeGraph-MCP-Tool (codegraph_*) übrig"
+    assert "Run CodeGraph exploration" not in blob, "rohe MANDATORY-CodeGraph-Zeile übrig"
+    # CLI (Shell-Binary) MUSS erhalten bleiben — in Codex nutzbar.
+    assert "codegraph init" in blob and "codegraph index" in blob
+    # abc-architecture: die Claude-MANDATORY-Sektion ist durch die Codex-Notiz ersetzt.
+    arch = (dest / "abc-architecture" / "SKILL.md").read_text(encoding="utf-8")
+    assert "## CodeGraph / Code-Erkundung (Codex)" in arch
+    assert "CodeGraph Exploration (MANDATORY)" not in arch
 
 
 def test_generated_codex_skill_is_valid(tmp_path):
