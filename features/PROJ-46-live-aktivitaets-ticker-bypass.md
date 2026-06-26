@@ -1,6 +1,6 @@
 # PROJ-46: Live-Aktivitäts-Ticker — sehen, was der Agent gerade tut (v. a. Bypass-Mode)
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -73,4 +73,70 @@ Ein **transienter Aktivitäts-Ticker** pro Session: eine kurze, flüchtige Zeile
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-26 · **Stack:** Next.js (Cockpit) + FastAPI (Engine-Manager) · **Branch:** dev
+
+### A) Komponenten-Struktur
+```
+SessionDetailView  (nextjs_app/app/(cockpit)/sessions/[id]/page.tsx)
+├── HeartbeatDot            (unverändert — PROJ-27 „lebt/hängt/tot")
+├── ActivityTicker  ← NEU   (transiente Chip-Zeile neben/unter dem Heartbeat)
+│   ├── ToolChip            („Edit · main.py", „Bash · npm run build")
+│   ├── LastTextSnippet     (jüngster gekürzter Assistenten-Schnipsel)
+│   └── (optional) aufklappbare Kurz-Historie der letzten ~5 Aktionen
+└── LiveAssistantText       (unverändert — bestehendes „assistant · live")
+```
+
+### B) Datenmodell (flüchtig, NICHT persistiert)
+```
+Pro SessionRuntime (rein In-Memory, Lebensdauer = Session):
+- last_activity:  { tool, target, ts }              ← letzte Tool-Start-Aktion
+- activity_ring:  Ring der letzten N (~5) Aktionen   (optional, Aufklapp-Historie)
+
+NICHTS davon geht in transcript / Vault / _write_session_log.
+Wird bei Session-Ende (terminal/„tot") geleert.
+```
+
+### C) Event-/WS-Fluss (kein neuer Endpunkt, kein Polling)
+```
+Tool startet
+  → request_decision-Hook feuert (manager.py:513, Matcher "*", auch im Bypass)
+  → NACH _apply_phase (≈ Z. 571), VOR jeder Card/Gate:
+       target = sanitize_target(tool_name, tool_input)   # serverseitig ≤ 80 Zeichen
+       runtime.last_activity = {tool, target, ts}   (+ Ring-Push)
+       _broadcast({ kind: "activity", tool, target, ts })
+  → danach unverändert: Trust-Policy / Bypass-Auto-Allow / Card
+       (rein lesend/additiv — kein Eingriff in PROJ-4)
+
+Assistenten-Zwischentext:
+  → bestehender _broadcast({kind:"message", role:"assistant", ...}) (Z. 406)
+    bleibt; Frontend spiegelt den jüngsten Schnipsel zusätzlich in den Ticker.
+
+Frontend:
+  → useSessionStream (nextjs_app/hooks/use-session-stream.ts:51): neuer Zweig
+       else if (msg.kind === "activity") setLastActivity(...)
+  → ActivityTicker rendert last_activity; friert bei Stille ein (kein Flackern),
+    leert bei liveness === "tot".
+```
+
+### D) Tech-Entscheidungen (Begründung)
+- **Quelle = `request_decision`-Hook statt neuem Stream-Parser:** Der Hook feuert garantiert bei *jedem* Tool (Matcher `"*"`), **auch im Bypass-Zweig** ([manager.py:613](backend/app/engine/manager.py#L613)) — genau die heute fehlende Sichtbarkeit. Kein zusätzlicher `tool_use`-Event-Parser nötig → minimaler Aufwand, O(1) pro Event, kein Hot-Path-Regress.
+- **Broadcast VOR der Card** (direkt nach `_apply_phase`, [manager.py:571](backend/app/engine/manager.py#L571)): UI sieht die Aktion sofort, unabhängig davon, ob danach eine Card öffnet oder Bypass auto-allowt. Cards/Bypass bleiben funktional unverändert.
+- **Eigener `kind: "activity"`** statt Erweiterung von `"message"`/`"state"`: hält den Ticker entkoppelt; bestehende Handler/State-Snapshots ([manager.py:371](backend/app/engine/manager.py#L371)) unberührt.
+- **Serverseitige Sanitisierung** des Ziel-Hinweises (nur Tool-Name + Kopf des ersten sinnvollen Arguments, ≤ 80 Zeichen): keine Secrets/großen Payloads ins UI.
+- **Bewusst transient:** kein Schreiben in `transcript`/Vault (`_write_session_log` unberührt) → schlanke Logs, kein Reconnect-Nachladen (Spät-Verbinder sehen ab Verbindung live).
+
+### E) Abhängigkeiten
+- Keine neuen Backend- oder Frontend-Pakete. Reine Nutzung vorhandener Infra (`_broadcast`, WS, `SessionRuntime`, `useSessionStream`, `HeartbeatDot`).
+
+### Offene Design-Fragen — beantwortet
+1. **Anzeige-Umfang:** einzeiliger Ticker (Tool-Chip + Text-Schnipsel) **+ optional aufklappbare Historie der letzten ~5**. ✅
+2. **Lebensdauer:** letzte Aktion bleibt sichtbar bis neue Aktion **oder** `liveness === "tot"` (kein hartes Timeout) → „transient" = nicht persistiert, nicht selbst-verschwindend. ✅
+3. **Granularität:** Tool-Name + erstes sinnvolles Argument (Datei-/Kommando-Kopf), serverseitig ≤ 80 Zeichen. ✅
+
+### Betroffene Dateien (Implementierungs-Wegweiser)
+| Datei | Änderung |
+|---|---|
+| [backend/app/engine/manager.py](backend/app/engine/manager.py#L571) | `sanitize_target`-Helfer; `last_activity`/Ring am `SessionRuntime`; `_broadcast({kind:"activity"})` nach `_apply_phase` in `request_decision`. |
+| [nextjs_app/hooks/use-session-stream.ts](nextjs_app/hooks/use-session-stream.ts#L51) | `kind:"activity"`-Handler + `lastActivity`-State im `StreamResult`. |
+| nextjs_app/components/cockpit/activity-ticker.tsx (NEU) | Transiente Ticker-Komponente (Chip + Schnipsel + optional Historie). |
+| [nextjs_app/app/(cockpit)/sessions/[id]/page.tsx](nextjs_app/app/(cockpit)/sessions/[id]/page.tsx#L150) | Ticker neben/unter `HeartbeatDot` einhängen. |
