@@ -40,6 +40,18 @@ from . import policy
 # Paket-/Manifest-Schema. Kompatibel = gleicher MAJOR-Teil (1.x ↔ 1.y).
 SCHEMA_VERSION = "1.0"
 
+# BUG-26-1: Dekomprimierungs-Limits gegen Zip-Bomben. Der komprimierte Upload-Cap
+# (Route, 2 MB) sagt NICHTS über die entpackte Größe — ein wenige KB großes .jupkg
+# kann zig MB entpacken. Daher die ENTPACKTEN Bytes deckeln (gestreamt gelesen, damit
+# auch ein gefälschter Größen-Header im Zip nicht greift) + die Eintragszahl begrenzen.
+MAX_MANIFEST_BYTES = 64 * 1024
+MAX_DEFINITION_BYTES = 1 * 1024 * 1024
+MAX_PACKAGE_ENTRIES = 16
+
+# BUG-26-3: Staging-Pakete einer nicht bestätigten Vorschau sollen nicht ewig liegen
+# bleiben. Beim Stagen werden ältere Reste (mtime älter als TTL) opportunistisch entfernt.
+STAGING_TTL_SECONDS = 3600.0
+
 ROLE, SKILL, AGENT = "role", "skill", "agent"
 VALID_TYPES: frozenset[str] = frozenset({ROLE, SKILL, AGENT})
 
@@ -561,6 +573,15 @@ class RegistryStore:
                 self._place_resolver(man)
                 self._write_manifest(man)
         else:
+            # BUG-26-2: Resolver-Kollision (fremde Datei) VOR dem Anlegen prüfen → kein
+            # halber „installed"-Eintrag bleibt zurück, wenn die Aktivierung mit 409 scheitert.
+            target = self._resolver_path(man.typ, man.id)
+            if os.path.exists(target):
+                raise RegistryError(
+                    f"Eine gleichnamige Datei „{man.id}“ existiert bereits am Resolver-Pfad — "
+                    "Aktivierung würde sie überschreiben (z. B. eine von Hand gepflegte Rolle). Abgebrochen.",
+                    status_code=409,
+                )
             os.makedirs(entry_dir, exist_ok=True)
             with open(os.path.join(entry_dir, "definition.md"), "w", encoding="utf-8") as fh:
                 fh.write(definition)
@@ -578,33 +599,79 @@ class RegistryStore:
     # --- Paket-/Staging-Interna ------------------------------------------
 
     def _read_package(self, data: bytes) -> tuple[_Manifest, str]:
-        """Liest + validiert ein ``.jupkg``. Wirft ``RegistryError`` bei jedem Defekt."""
+        """Liest + validiert ein ``.jupkg``. Wirft ``RegistryError`` bei jedem Defekt.
+
+        Schutz gegen Zip-Bomben (BUG-26-1): Eintragszahl begrenzt + beide Dateien
+        gestreamt mit hartem Byte-Limit gelesen (gefälschter Größen-Header greift nicht).
+        """
         try:
             zf = zipfile.ZipFile(io.BytesIO(data))
         except zipfile.BadZipFile as exc:
             raise RegistryError("Defektes Paket: keine gültige .jupkg-Datei (Zip).") from exc
         with zf:
             names = set(zf.namelist())
+            if len(names) > MAX_PACKAGE_ENTRIES:
+                raise RegistryError("Paket abgelehnt: zu viele Einträge (mögliche Zip-Bombe).", status_code=413)
             if "manifest.yaml" not in names:
                 raise RegistryError("Defektes Paket: manifest.yaml fehlt.")
             if "definition.md" not in names:
                 raise RegistryError("Defektes Paket: definition.md fehlt.")
+            manifest_bytes = self._read_capped(zf, "manifest.yaml", MAX_MANIFEST_BYTES, "manifest.yaml")
+            definition_bytes = self._read_capped(zf, "definition.md", MAX_DEFINITION_BYTES, "definition.md")
             try:
-                raw = yaml.safe_load(zf.read("manifest.yaml").decode("utf-8")) or {}
+                raw = yaml.safe_load(manifest_bytes.decode("utf-8")) or {}
             except (yaml.YAMLError, UnicodeDecodeError) as exc:
                 raise RegistryError(f"Defektes Paket: manifest.yaml unlesbar ({exc}).") from exc
-            definition = zf.read("definition.md").decode("utf-8", errors="replace")
+            definition = definition_bytes.decode("utf-8", errors="replace")
         man = _parse_manifest(raw, source="Paket")
         return man, definition
+
+    @staticmethod
+    def _read_capped(zf: zipfile.ZipFile, name: str, limit: int, label: str) -> bytes:
+        """Liest höchstens ``limit`` entpackte Bytes (gestreamt) → DoS-fest gegen Zip-Bomben."""
+        try:
+            with zf.open(name) as fh:
+                data = fh.read(limit + 1)
+        except (zipfile.BadZipFile, OSError) as exc:
+            raise RegistryError(f"Defektes Paket: {label} unlesbar ({exc}).") from exc
+        if len(data) > limit:
+            raise RegistryError(
+                f"Paket abgelehnt: {label} überschreitet das Größenlimit ({limit // 1024} KB).",
+                status_code=413,
+            )
+        return data
 
     def _stage_package(self, data: bytes) -> str:
         import secrets
 
         os.makedirs(self._staging_dir(), exist_ok=True)
+        self._sweep_staging()  # BUG-26-3: alte, nie bestätigte Reste opportunistisch entfernen.
         token = secrets.token_urlsafe(18)
         with open(os.path.join(self._staging_dir(), f"{token}.jupkg"), "wb") as fh:
             fh.write(data)
         return token
+
+    def _sweep_staging(self) -> None:
+        """Entfernt Staging-Pakete, deren Vorschau nie bestätigt wurde (älter als TTL)."""
+        from time import time
+
+        staging = self._staging_dir()
+        try:
+            names = os.listdir(staging)
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        cutoff = time() - STAGING_TTL_SECONDS
+        for name in names:
+            if not name.endswith(".jupkg"):
+                continue
+            path = os.path.join(staging, name)
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
 
     def _staged_path(self, token: str) -> str:
         if not re.match(r"^[A-Za-z0-9_-]{1,64}$", token or ""):

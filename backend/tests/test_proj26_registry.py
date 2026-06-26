@@ -287,26 +287,37 @@ def test_unknown_type_rejected(client: TestClient):
 
 
 # ===========================================================================
-# Red-Team — dokumentierte offene Befunde (xfail bis Backend-Fix)
+# Red-Team — behobene Befunde BUG-26-1/-2/-3 (Regressionsschutz)
 # ===========================================================================
 
-@pytest.mark.xfail(reason="BUG-26-1: kein Dekomprimierungs-Limit (.jupkg-Zip-Bombe)", strict=False)
 def test_decompression_bomb_rejected(client: TestClient):
-    """Ein kleines, stark komprimiertes Paket darf den Server nicht über die
-    entpackte Größe fluten. Edge Case ‚Manipuliertes Paket': Validierung muss greifen.
-    Aktuell prüft nur die KOMPRIMIERTE Upload-Größe (2 MB) — die entpackte
-    definition.md ist ungedeckelt. Erwartet: Ablehnung (413/400)."""
+    """BUG-26-1: Ein kleines, stark komprimiertes Paket darf den Server nicht über die
+    ENTPACKTE Größe fluten. Der komprimierte Upload-Cap (2 MB) sagt nichts über die
+    entpackten Bytes — daher wird die entpackte definition.md gedeckelt (≤ 1 MB)."""
     bomb = _jupkg(definition="A" * (4 * 1024 * 1024))  # ~4 MB entpackt, wenige KB auf der Leitung
     assert len(bomb) < 2 * 1024 * 1024  # umgeht den Upload-Cap
     r = _preview(client, bomb)
-    assert r.status_code in (400, 413), "Zip-Bombe wurde nicht abgewiesen"
+    assert r.status_code == 413, "Zip-Bombe wurde nicht abgewiesen"
+    # kein Teil-Import / kein Staging-Rest, Katalog bleibt leer
+    assert client.get("/registry/catalog").json()["entries"] == []
 
 
-@pytest.mark.xfail(reason="BUG-26-2: 409-Abbruch hinterlässt Teil-Installation + Staging-Leak", strict=False)
+def test_oversized_manifest_rejected(client: TestClient):
+    """BUG-26-1: auch ein aufgeblähtes manifest.yaml (> 64 KB) wird abgewiesen."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.yaml", "id: x\n# " + "B" * (128 * 1024))
+        zf.writestr("definition.md", "x")
+    r = _preview(client, buf.getvalue())
+    assert r.status_code == 413
+
+
 def test_foreign_collision_409_leaves_no_partial_entry(client: TestClient):
-    """Wird die Aktivierung wegen einer fremden Resolver-Datei mit 409 abgebrochen,
-    darf KEIN halber Katalog-Eintrag zurückbleiben (und das Staging soll aufräumen).
-    Aktuell bleibt der Eintrag als ‚installed' im Katalog stehen."""
+    """BUG-26-2: Wird die Aktivierung wegen einer fremden Resolver-Datei mit 409
+    abgebrochen, darf KEIN halber Katalog-Eintrag zurückbleiben."""
     import os
 
     roles_dir = os.path.join(settings.constitution_dir, "roles")
@@ -317,16 +328,28 @@ def test_foreign_collision_409_leaves_no_partial_entry(client: TestClient):
     r = client.post("/registry/import/confirm", json={"token": prev.json()["token"]})
     assert r.status_code == 409
     assert client.get("/registry/catalog").json()["entries"] == [], "Teil-Installation blieb zurück"
+    # fremde, von Hand gepflegte Datei unangetastet
+    with open(os.path.join(roles_dir, "architect.md"), encoding="utf-8") as fh:
+        assert fh.read() == "HANDGEPFLEGT"
 
 
-@pytest.mark.xfail(reason="BUG-26-3: nicht bestätigte Vorschauen lecken Staging-Pakete (kein TTL/Cleanup)", strict=False)
-def test_unconfirmed_previews_do_not_leak_staging(client: TestClient, tmp_path):
-    """Jede Vorschau ohne Confirm legt dauerhaft ein .jupkg im Staging ab.
-    Erwartet: gedeckelte/aufgeräumte Staging-Ablage statt unbegrenztem Wachstum."""
+def test_stale_unconfirmed_staging_is_swept(client: TestClient, tmp_path):
+    """BUG-26-3: Eine nie bestätigte, abgelaufene Vorschau (mtime älter als TTL) wird beim
+    nächsten Stagen aufgeräumt; eine frische Vorschau bleibt (sie kann noch bestätigt werden)."""
     import os
+    import time
 
-    for i in range(8):
-        _preview(client, _jupkg(entry_id=f"ghost-{i}"))
+    from app.engine.marketplace import STAGING_TTL_SECONDS
+
+    _preview(client, _jupkg(entry_id="ghost-old"))
     staging = os.path.join(str(tmp_path / "registry"), "packages", "_staging")
-    leaked = os.listdir(staging) if os.path.isdir(staging) else []
-    assert len(leaked) <= 1, f"{len(leaked)} verwaiste Staging-Pakete"
+    first = os.listdir(staging)
+    assert len(first) == 1
+    stale = os.path.join(staging, first[0])
+    past = time.time() - STAGING_TTL_SECONDS - 60
+    os.utime(stale, (past, past))  # über die TTL hinaus zurückdatieren
+
+    _preview(client, _jupkg(entry_id="ghost-new"))  # triggert den Sweep
+    remaining = os.listdir(staging)
+    assert first[0] not in remaining, "abgelaufenes Staging-Paket nicht aufgeräumt"
+    assert len(remaining) == 1, "frische Vorschau soll erhalten bleiben"

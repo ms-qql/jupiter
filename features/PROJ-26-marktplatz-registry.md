@@ -265,5 +265,14 @@ Keine. Volle Backend-Suite **809 passed** nach der Änderung (`config.py`/`main.
 ### Empfehlung
 **READY** (keine Critical/High). Vor `/abc-deploy` jedoch **BUG-26-1 (Medium) fixen** — der Import-Pfad nimmt per Design Fremd-Pakete an, daher gehört das Dekomprimierungs-Limit zur Kern-Sicherheitslinie der Spec. BUG-26-2/-3 (Low) können nachgezogen werden.
 
+## Bug Fixes (abc-backend, 2026-06-26)
+Alle drei QA-Befunde behoben in `backend/app/engine/marketplace.py`:
+
+- **BUG-26-1 (Medium, behoben):** Dekomprimierungs-Limit. `_read_package` liest `manifest.yaml` (≤ 64 KB) und `definition.md` (≤ 1 MB) jetzt **gestreamt mit hartem Byte-Cap** (`_read_capped` via `zf.open(...).read(limit+1)`) — greift auch bei gefälschtem Größen-Header im Zip; zusätzlich Eintragszahl ≤ 16. Überschreitung → **413**, kein Teil-Import/Staging-Rest.
+- **BUG-26-2 (Low, behoben):** `import_confirm` prüft die Resolver-Kollision (fremde Datei) jetzt **vor** dem Anlegen des Eintrags → bei 409 bleibt kein halber `installed`-Eintrag zurück; die hand-gepflegte Datei bleibt unangetastet.
+- **BUG-26-3 (Low, behoben):** `_stage_package` ruft `_sweep_staging()` → nie bestätigte Staging-Pakete älter als `STAGING_TTL_SECONDS` (1 h) werden opportunistisch entfernt; frische Vorschauen bleiben (noch bestätigbar).
+
+**Re-Test:** `backend/tests/test_proj26_registry.py` — **26 passed** (inkl. 4 Regressionstests für die Fixes: `test_decompression_bomb_rejected`, `test_oversized_manifest_rejected`, `test_foreign_collision_409_leaves_no_partial_entry`, `test_stale_unconfirmed_staging_is_swept`). Volle Suite: **813 passed, keine Regression**. Keine offenen Critical/High/Medium/Low mehr → bereit für `/abc-qa`-Re-Pass (→ Approved) bzw. `/abc-deploy`.
+
 ## Deployment
 _To be added by /abc-deploy_
