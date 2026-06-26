@@ -208,9 +208,24 @@ class WatchdogMonitor:
         self._tool_in_flight = False  # PROJ-32: Modell produziert wieder → kein Tool mehr in-flight.
 
     def note_progress(self) -> None:
-        """Echte Aktivität (Assistenten-Output/Result) → Fortschritts-Uhr zurücksetzen."""
+        """Echte Aktivität (Assistenten-Output/Result) → Fortschritts-Uhr zurücksetzen.
+
+        PROJ-45 (Flag-Hysterese): löscht ``_tool_in_flight`` bewusst NICHT mehr. Ein
+        kurzer Assistenten-Zwischensatz mitten in einem Tool-laufenden Turn würde sonst
+        die In-Flight-Geduld (600 s) abreißen → der nachfolgende große Edit fiele wieder
+        auf den 180 s-Timeout → vorzeitiger „hängt"-Fehlalarm, der die Reanimierungs-
+        Schleife startet. Das Flag fällt nur noch an einer echten Turn-Grenze: im
+        ``result``-Pfad (``feed_usage``) und beim Resume-Start (``clear_tool_in_flight``)."""
         self._last_progress = self._clock()
-        self._tool_in_flight = False  # PROJ-32: Assistenten-Output → kein Tool mehr in-flight.
+
+    def clear_tool_in_flight(self) -> None:
+        """PROJ-45: Turn-Grenze außerhalb des ``result``-Pfads (Resume-Start).
+
+        Ein frisch fortgesetzter ``--resume``-Prozess hat noch kein Tool offen — die
+        In-Flight-Geduld muss zurückfallen, sonst schleppt eine vor dem Resume gesetzte
+        Flag-Hysterese die 600 s über den Neustart. Das ``result``-Event (``feed_usage``)
+        löscht es im Normalbetrieb; hier explizit für den Resume-Pfad."""
+        self._tool_in_flight = False
 
     @property
     def tool_in_flight(self) -> bool:

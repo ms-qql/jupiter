@@ -126,8 +126,10 @@ async def test_request_decision_marks_in_flight():
 
 @pytest.mark.asyncio
 async def test_in_flight_window_ends_after_tool_finishes(monkeypatch):
-    """Red-Team: die hohe Geduld gilt NUR während das Tool läuft. Nach Tool-Ende
-    (note_progress) greift wieder der Normaltimeout — kein Dauer-Freibrief."""
+    """Red-Team: die hohe Geduld gilt NUR während das Tool läuft. Nach der echten
+    Turn-Grenze (result-Event = feed_usage) greift wieder der Normaltimeout — kein
+    Dauer-Freibrief. PROJ-45: ein kurzer Zwischensatz (note_progress) beendet die Geduld
+    NICHT mehr, erst das result-Event."""
     monkeypatch.setattr(
         liveness, "liveness_store",
         StubLivenessStore(progress_timeout_seconds=180, tool_in_flight_timeout_seconds=600),
@@ -137,7 +139,7 @@ async def test_in_flight_window_ends_after_tool_finishes(monkeypatch):
     clk = Clock()
     rt.watchdog = WatchdogMonitor(wd_mod.watchdog_store, clock=clk)
     rt.watchdog.record("Bash", {"command": "npm run build"})  # in-flight
-    rt.watchdog.note_progress()  # Tool fertig, Modell produziert wieder → in-flight aus
+    rt.watchdog.feed_usage(100)  # result-Event = Turn fertig → in-flight aus
     clk.advance(200)             # > 180 Normaltimeout, < 600
     rt.state.status = RUNNING
     assert rt.watchdog.tool_in_flight is False

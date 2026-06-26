@@ -167,6 +167,11 @@ class LivenessMonitor:
         self.auto_attempts: int = 0
         self.next_attempt_at: float = 0.0
         self.last_result: str | None = None  # "läuft_wieder" | "fehlgeschlagen"
+        # PROJ-45: Turn-Wasserstand (``state.num_turns``) zum Zeitpunkt des letzten
+        # Auto-Versuchs. Das Budget wird erst zurückgesetzt, wenn num_turns DIESEN Stand
+        # übersteigt — also ein echter neuer Turn NACH dem Resume-Transkript-Abspiel fertig
+        # wurde. So zählt nur substanzieller neuer Fortschritt, nicht das kurze Replay.
+        self.progress_watermark: int = 0
         # Letzter an die UI gestreamter Zustand — damit der Hintergrund-Poll NUR bei
         # echter Änderung broadcastet (kein Dauer-Strom für stille Sessions).
         self.last_broadcast_state: str | None = None
@@ -184,6 +189,14 @@ class LivenessMonitor:
     def mark_result(self, *, success: bool) -> None:
         self.last_result = "läuft_wieder" if success else "fehlgeschlagen"
 
+    def note_reanimation_baseline(self, turns: int) -> None:
+        """PROJ-45: Turn-Wasserstand zum Reanimations-Zeitpunkt merken.
+
+        Das Budget gilt erst dann als „durch echten Fortschritt verdient zurückzusetzen",
+        wenn ``num_turns`` diesen Stand übersteigt (neuer Turn nach dem Replay), nicht
+        schon durch das kurzzeitige Assistenten-Output des Transkript-Abspiels."""
+        self.progress_watermark = turns
+
     def reset(self) -> None:
         """Echter Fortschritt nach einem Hänger / manueller Eingriff → frisches Budget.
 
@@ -191,3 +204,4 @@ class LivenessMonitor:
         ein neuer Versuch es überschreibt)."""
         self.auto_attempts = 0
         self.next_attempt_at = 0.0
+        self.progress_watermark = 0  # PROJ-45: stale Wasserstand verwerfen (Budget frisch).
