@@ -1,8 +1,8 @@
 # PROJ-46: Live-Aktivitäts-Ticker — sehen, was der Agent gerade tut (v. a. Bypass-Mode)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-26
-**Last Updated:** 2026-06-26
+**Last Updated:** 2026-06-26 (QA)
 
 ## Dependencies
 - Requires: PROJ-4 (Decision Cards) — der PreToolUse-Hook `request_decision` ([manager.py:513](backend/app/engine/manager.py#L513)) feuert bei **jedem** Tool, auch im Bypass; er ist die natürliche „ein Tool startet jetzt"-Quelle. Im Bypass-Zweig ([manager.py:613](backend/app/engine/manager.py#L613)) läuft die operative Freigabe **ohne Card** durch → genau hier fehlt heute jede Sichtbarkeit.
@@ -162,3 +162,43 @@ Frontend:
 
 ### Abweichungen
 - Keine fachlichen Abweichungen vom Design. Einzige Umsetzungsnotiz: Historie wird clientseitig akkumuliert (Backend-Ring nur als letzter Stand gebroadcastet) — bewusst, da transient und Spät-Verbinder ohnehin keine Historie nachladen sollen.
+
+## QA Test Results (2026-06-26)
+**Tester:** QA Engineer · **Branch:** dev · **Verdikt: PRODUCTION-READY ✅** (0 Critical / 0 High / 0 Medium / 2 Low)
+
+### Akzeptanzkriterien (8/8 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|---|---|---|
+| 1 | Tool-Start sichtbar im Bypass (~1 s, Tool-Name + gekürztes Ziel, kein Card-Verhalten) | ✅ PASS | `_emit_activity` feuert in `request_decision` nach `_apply_phase`, vor jedem Gate/Bypass-Auto-Allow ([manager.py:650](backend/app/engine/manager.py#L650)); Test `test_tool_start_broadcasts_activity_in_bypass` (allow ohne Card + korrektes `activity`-Event). |
+| 2 | Zwischen-Text sichtbar (jüngster Assistenten-Schnipsel, gekürzt) | ✅ PASS | Frontend `lastSnippet(liveText)` aus bestehendem `message`-Broadcast; kein neuer Backend-Pfad. |
+| 3 | Transient / nicht persistiert (kein Vault-Log, kein Transcript) | ✅ PASS | `_emit_activity` schreibt nur In-Memory; Test `test_activity_not_persisted_to_transcript` (transcript-Länge unverändert). |
+| 4 | Über vorhandene WS-Leitung (eigener `kind:"activity"`, kein neuer Endpunkt/Polling) | ✅ PASS | `_broadcast({kind:"activity"})`; Hook-Zweig `msg.kind === "activity"` ([use-session-stream.ts:83](nextjs_app/hooks/use-session-stream.ts#L83)). |
+| 5 | Ergänzt Heartbeat (PROJ-27 unverändert, Ticker daneben/darunter) | ✅ PASS | `<ActivityTicker>` unter `ContextGauge`/neben `HeartbeatDot` ([page.tsx:243](nextjs_app/app/(cockpit)/sessions/[id]/page.tsx#L243)); HeartbeatDot unberührt. |
+| 6 | Kein Decision-Card-Eingriff (PROJ-4/Bypass funktional unverändert, rein additiv/lesend) | ✅ PASS | `_emit_activity` ohne Rückgabe/Seiteneffekt auf `outcome`; Regression PROJ-4 (test_proj4_decision_cards) grün. |
+| 7 | Robust bei Stille (friert auf letzter Aktion ein, kein Flackern/„fertig") | ✅ PASS | Frontend löscht nur bei `tool === null` (terminal); keine Timeout-/Stille-Logik. |
+| 8 | Deutsche UI, Lint/Typecheck/Tests grün, keine Backend-Regression | ✅ PASS | Texte deutsch („Agent arbeitet…", „Verlauf anzeigen/einklappen"); siehe Test-Lauf unten. |
+
+### Edge Cases geprüft
+- **Lange/sensible Eingaben:** serverseitig auf ≤ 80 Zeichen gekürzt (`test_sanitize_clips_to_80_chars`), nur Whitelist-Felder (`_ACTIVITY_TARGET_FIELDS`) — keine Roh-Payloads.
+- **Schnelle/parallele Tool-Ketten:** nur jüngster Stand + Ring der letzten 5 (`test_activity_ring_keeps_last_five`).
+- **Session terminal/`tot`:** Ticker leert + Leer-Broadcast (`test_activity_cleared_and_broadcast_empty_on_terminal`).
+- **Reconnect/Spät-Verbinder:** bewusst keine Historie nachgeladen (transient) — Design-konform.
+
+### Security-Audit (Red Team)
+- **Payload-/Secret-Leak ins UI:** mitigiert — `sanitize_target` nimmt nur den Kopf (≤ 80) eines Whitelist-Feldes. Restrisiko: ein Geheimnis in den ersten 80 Zeichen eines `command` (z. B. `export TOKEN=…`) würde dem **Session-Owner im eigenen UI** angezeigt. Jupiter ist single-tenant (App-JWT, kein RLS) → **kein Cross-Tenant-Leak**, Risiko akzeptiert per Design.
+- **Persistenz:** Ticker-Inhalte landen nicht in Vault/Transcript → kein dauerhafter Secret-Niederschlag.
+- **Kein neuer Angriffsvektor:** rein lesend/additiv, kein neuer Endpunkt.
+
+### Automatisierte Tests
+- Backend: `test_proj46_activity_ticker.py` **9 passed**; volle Suite **853 passed** (1 Pre-existing-DeprecationWarning, PROJ-25, unrelated).
+- Regression: PROJ-4/16/27/32/45 + manager + sessions_api alle grün.
+- Frontend: `vitest` **169 passed**; ESLint der 3 geänderten Dateien **sauber**.
+- `tsc --noEmit`: 1 Fehler in `lib/md-tree.test.ts` — **pre-existing** (PROJ-9/22, [370c7db]), **keine** PROJ-46-Datei betroffen → keine Regression.
+
+### Bugs
+| Sev | Befund | Empfehlung |
+|---|---|---|
+| Low | Watchdog-Reißleine (PROJ-16) und Self-Restart-Gate (PROJ-33) kehren **vor** `_emit_activity` zurück → solche Tools erscheinen nicht im Ticker. | Akzeptabel: beide öffnen ohnehin sichtbare Cards (kein stiller Fall). Optional `_emit_activity` vor die Reißleinen ziehen, falls auch geblockte Versuche im Ticker erwünscht. |
+| Low | Namens-Dopplung `SessionState.last_activity` (datetime) vs. `SessionRuntime.last_activity` (dict) — unterschiedliche Objekte, funktional korrekt, aber lesbarkeits-irritierend. | Optional Runtime-Feld umbenennen (z. B. `last_tool_activity`). Kein funktionaler Mangel. |
+
+**Empfehlung: deploybar.** Keine blockierenden Befunde; beide Lows sind optionale Verbesserungen.
