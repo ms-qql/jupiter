@@ -1,6 +1,6 @@
 # PROJ-24: Vault als geteilter Dienst (auch für eingebettete Apps)
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-26
 **Baustein:** #14
@@ -141,6 +141,7 @@ Backend vollständig umgesetzt, 32 neue Tests + volle Suite (770) grün.
 
 ## QA Test Results
 **Re-Test 2026-06-26 (3. Durchlauf):** Kein PROJ-24-Fix seit dem 2. Durchlauf — PROJ-25 fügte nur Rate-Limiting auf Auth-Endpunkte hinzu; PROJ-26 ergänzte `config.py` um `registry_root`. Weder `consumers.py` noch `vault_v1.py` noch `engine/vault.py` wurden berührt. **BUG-24-1 (Critical) besteht unverändert** (beide `xfail(strict)`-Tests weiter rot). Volle Suite 785 passed + 2 xfailed — keine Regression. **Verdikt unverändert: NICHT produktionsreif.**
+> **[ÜBERHOLT 2026-06-26 10:07]** Dieser Re-Test-Eintrag ist veraltet: BUG-24-1 wurde unmittelbar danach mit Commit `03d6e67` behoben (`_norm` normalisiert via `posixpath.normpath`). Volle Suite jetzt **816 passed, 0 xfailed** — siehe „Fix 2026-06-26" + QA-Report unten. **Aktuelles Verdikt: produktionsreif.**
 
 **Fix 2026-06-26:** `_norm` in `backend/app/engine/consumers.py` erweitert um `posixpath.normpath`-Aufruf — kollabiert `..`-Segmente vor dem Glob-Match. Pfade, die nach Normalisierung aus dem Vault-Root ausbrechen (starten mit `..`), werden als `""` zurückgegeben (kein Scope-Glob matcht). Beide `xfail`-Tests jetzt echte PASSes. Volle Suite **787 passed, 0 xfailed** — keine Regression.
 

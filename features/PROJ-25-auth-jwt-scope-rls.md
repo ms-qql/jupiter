@@ -1,6 +1,6 @@
 # PROJ-25: Echtes Auth (JWT) + Scope/RLS auf `owner`
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-26
 **Baustein:** #21 (Ausbau)
@@ -207,7 +207,9 @@ Implementiert ist die komplette **Auth-/Scope-Schicht** (Frontend war bereits ge
 **Offen für QA / Folge-PRs:** Rate-Limiting (`slowapi`) auf `/auth/*` (security.md-Empfehlung, noch nicht im Stack); Read-Scoping des Datei-Vaults nach Owner (PROJ-24).
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Approved 2026-06-26 (gemeinsamer Deploy mit PROJ-24/26 — Betreiber-Entscheidung).** Grundlage: vollständige Implementierung (Backend-Auth + Frontend-Login + Owner-Scope + Rate-Limiting) und **`tests/test_proj25_auth.py` grün (20 Tests)**, volle Suite **816 passed, 0 xfailed** (keine Regression). Diese Session zusätzlich **live in prod verifiziert**: Bootstrap/„Konto einrichten", Login, `owner` ausschließlich aus dem Token, Soft-Gate scharf (401 ohne Token nach erstem Konto), Refresh-Flow, Session-Live-Stream-WS (`?access_token=`, owner-scoped), Rate-Limiting (5/min Login → 429). Forward-Auth-Perimeter entfernt → App-JWT ist alleiniger Login (Details: Deployment-/Betriebsnotiz oben).
+
+**Einschränkung (ehrlich):** Kein separater formaler `/abc-qa`-Durchlauf mit voller AC-Matrix/Red-Team wie bei PROJ-24 — die Akzeptanzkriterien oben sind funktional erfüllt und durch die Auth-Testsuite abgedeckt, aber nicht einzeln in einer dokumentierten QA-Matrix abgehakt. **Empfehlung:** `/abc-qa` für PROJ-25 nachziehen (insb. Cross-Owner-Red-Team aus AC #45), idealerweise vor oder zeitnah nach dem Deploy.
 
 ## Deployment
 _To be added by /abc-deploy_
