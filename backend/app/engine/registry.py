@@ -166,6 +166,22 @@ def _builtin_claude() -> EngineProfile:
     )
 
 
+def _sandbox_from_argv(argv_template: list[str]) -> str | None:
+    """Liest die Sandbox-Policy aus einem ``-s``/``--sandbox <wert>``-Flag im argv.
+
+    Reine Funktion; ``None``, wenn kein Flag (oder kein Folge-Wert) vorhanden. So zeigt
+    GET /engines bei generic_cli-Engines (z. B. Codex `-s workspace-write`) die Leitplanke
+    an, ohne ein redundantes Config-Feld neben dem argv zu pflegen.
+    """
+    for i, tok in enumerate(argv_template):
+        if tok in ("-s", "--sandbox") and i + 1 < len(argv_template):
+            value = str(argv_template[i + 1]).strip()
+            # Platzhalter (z. B. „{model}") sind keine Policy.
+            if value and not value.startswith("{"):
+                return value
+    return None
+
+
 def _coerce_profile(entry: dict) -> EngineProfile:
     """Baut ein ``EngineProfile`` aus einem YAML-Eintrag; wirft ``ValueError`` bei Unsinn."""
     if not isinstance(entry, dict):
@@ -206,6 +222,10 @@ def _coerce_profile(entry: dict) -> EngineProfile:
             prof.oneshot = bool(entry.get("oneshot", False))
             if not prof.bin and not prof.argv_template:
                 raise ValueError(f"Engine „{key}“: generic_cli braucht `bin` oder `argv_template`.")
+            # PROJ-48: Sandbox-Policy aus dem argv (`-s`/`--sandbox <wert>`) ableiten, damit
+            # sie in `to_read()` (GET /engines) als Badge sichtbar wird — EINE Quelle der
+            # Wahrheit bleibt das argv (was real läuft), kein zweites Config-Feld.
+            prof.sandbox = _sandbox_from_argv(prof.argv_template)
         elif driver == DRIVER_OPENAI:
             prof.api_base = str(entry.get("api_base") or "https://api.openai.com").rstrip("/")
             prof.api_path = str(entry.get("api_path") or "/v1/chat/completions")

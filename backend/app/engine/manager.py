@@ -356,6 +356,18 @@ class SessionRuntime:
         kann er nicht gegen die echte Prozess-Realität driften.
         """
         s = self.state
+        # PROJ-48: Eine oneshot-CLI mit Resume (z. B. Codex) ist ZWISCHEN den Turns
+        # prozesslos, aber NICHT tot — sie wartet fortsetzbar auf die nächste Eingabe
+        # (der Treiber re-spawnt kontext-erhaltend). Diese Wartestellung gilt als aktiv,
+        # bevor die „kein Prozess → tot"-Regel greift. So zeigt das Liveness-Badge nicht
+        # fälschlich „tot", und ein manuelles Reanimieren startet die gesunde Session nicht
+        # kontextlos neu (reanimate() lehnt eine ACTIVE-Session ab).
+        if (
+            s.status in (WAITING, AWAITING_APPROVAL)
+            and not self.driver.is_alive
+            and self.driver.supports_self_resume
+        ):
+            return liveness.LIVENESS_ACTIVE
         # Terminal oder nicht mehr steuerbar (auch verwaist nach Restart) → tot/beendet.
         if s.status in (DONE, ERROR) or not self.driver.is_alive:
             return liveness.LIVENESS_DEAD

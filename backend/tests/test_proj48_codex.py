@@ -380,6 +380,76 @@ async def test_clean_exit_without_turn_end_falls_back_to_done(tmp_path):
     assert state.status == DONE
 
 
+# ===========================================================================
+# QA-Fixes: Liveness zwischen Turns (Fix 1/2) + Sandbox-Badge (Fix 3)
+# ===========================================================================
+
+class _StubDriver:
+    """Minimaler Treiber-Stub: steuert is_alive + supports_self_resume für derive_liveness."""
+
+    def __init__(self, *, alive: bool, self_resume: bool) -> None:
+        self._alive = alive
+        self._self_resume = self_resume
+
+    @property
+    def is_alive(self) -> bool:
+        return self._alive
+
+    @property
+    def supports_self_resume(self) -> bool:
+        return self._self_resume
+
+    @property
+    def pid(self):
+        return None
+
+
+def _runtime_with(driver, status):
+    from app.engine.manager import SessionRuntime, SessionState
+    state = SessionState(
+        session_id="s", owner="dev", project_path="/tmp", model="gpt-5.5", permission_mode="default"
+    )
+    rt = SessionRuntime(state, driver)
+    state.status = status
+    return rt
+
+
+def test_liveness_resumable_between_turns_is_active_not_dead():
+    """Fix 1/2: oneshot-CLI mit Resume, WAITING + toter Prozess → aktiv (nicht tot).
+    So zeigt das Badge nicht „tot" und reanimate() lehnt die gesunde Session ab."""
+    from app.engine import liveness
+    from app.engine.manager import WAITING
+    rt = _runtime_with(_StubDriver(alive=False, self_resume=True), WAITING)
+    assert rt.derive_liveness() == liveness.LIVENESS_ACTIVE
+
+
+def test_liveness_non_resumable_dead_process_still_dead():
+    """Gegenprobe: ohne Self-Resume (hermes/ollama/claude) bleibt ein toter Prozess tot."""
+    from app.engine import liveness
+    from app.engine.manager import WAITING
+    rt = _runtime_with(_StubDriver(alive=False, self_resume=False), WAITING)
+    assert rt.derive_liveness() == liveness.LIVENESS_DEAD
+
+
+def test_registry_exposes_sandbox_badge(tmp_path):
+    """Fix 3: GET /engines (to_read) zeigt die Sandbox-Policy aus dem argv als Badge."""
+    from app.engine.registry import EngineRegistry
+    p = tmp_path / "engines.yaml"
+    p.write_text(CODEX_YAML, encoding="utf-8")
+    prof = EngineRegistry(str(p)).get("codex")
+    assert prof.sandbox == "workspace-write"
+    assert prof.to_read()["sandbox"] == "workspace-write"
+
+
+def test_sandbox_from_argv_helper_edge_cases():
+    from app.engine.registry import _sandbox_from_argv
+    assert _sandbox_from_argv(["exec", "-s", "workspace-write", "--json"]) == "workspace-write"
+    assert _sandbox_from_argv(["exec", "--sandbox", "read-only"]) == "read-only"
+    assert _sandbox_from_argv(["exec", "--json"]) is None          # kein Flag
+    assert _sandbox_from_argv(["exec", "-s"]) is None               # Flag ohne Wert
+    assert _sandbox_from_argv(["-s", "{model}"]) is None            # Platzhalter ≠ Policy
+
+
 @pytest.mark.asyncio
 async def test_resume_without_id_raises_clear_error(tmp_path):
     # Schutz: Resume-Template braucht eine resume_id; fehlt sie, klare deutsche Meldung
