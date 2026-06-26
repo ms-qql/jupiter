@@ -1,8 +1,15 @@
 # PROJ-46: Live-Aktivitäts-Ticker — sehen, was der Agent gerade tut (v. a. Bypass-Mode)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-26
-**Last Updated:** 2026-06-26 (QA)
+**Last Updated:** 2026-06-26 (Deploy)
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-26 · **Version:** 0.19.0 · **Tag:** v0.19.0-PROJ-45-46
+- **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend`), GitHub-Webhook → `deploy.sh` (Push auf `main`).
+- **Geliefert:** Transienter Live-Aktivitäts-Ticker (Tool-Start + Text-Schnipsel, bypass-sichtbar, nicht persistiert) im Cockpit neben dem Heartbeat.
+- **Browser-Smoke offen (erst auf Prod prüfbar):** Ticker erscheint live während einer Bypass-Session; aufklappbare Kurz-Historie; Leeren bei terminaler Session.
 
 ## Dependencies
 - Requires: PROJ-4 (Decision Cards) — der PreToolUse-Hook `request_decision` ([manager.py:513](backend/app/engine/manager.py#L513)) feuert bei **jedem** Tool, auch im Bypass; er ist die natürliche „ein Tool startet jetzt"-Quelle. Im Bypass-Zweig ([manager.py:613](backend/app/engine/manager.py#L613)) läuft die operative Freigabe **ohne Card** durch → genau hier fehlt heute jede Sichtbarkeit.
