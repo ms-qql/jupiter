@@ -175,6 +175,27 @@ def test_generator_check_passes_no_drift():
     assert res.returncode == 0, f"Drift/Fehler:\n{res.stdout}\n{res.stderr}"
 
 
+@pytest.mark.xfail(reason="QA-Bug #1 (Low): folded-scalar `description: >-` → leere short-description; Fix in backend-dev offen.", strict=False)
+def test_generator_short_description_nonempty_for_folded_scalar(tmp_path):
+    """QA-Regression: Skills mit YAML-folded-Scalar-Description (`>-`) müssen eine
+    nicht-leere `metadata.short-description` bekommen. Aktuell greift die zeilenbasierte
+    Extraktion den Indikator `>-` ab → leerer Wert. Flippt auf PASS, sobald der Generator
+    Frontmatter YAML-bewusst parst."""
+    import os
+    import yaml
+    src = Path(os.path.expanduser("~/.claude/skills"))
+    if not (src / "abc-dokploy-data" / "SKILL.md").is_file():
+        pytest.skip("Keine ~/.claude/skills-Quelle in dieser Umgebung.")
+    subprocess.run(
+        [sys.executable, str(REPO / "scripts" / "gen_codex_skills.py"),
+         "--src", str(src), "--dest", str(tmp_path)],
+        capture_output=True, text=True, check=True,
+    )
+    out = (tmp_path / "abc-dokploy-data" / "SKILL.md").read_text(encoding="utf-8")
+    fm = yaml.safe_load(out[3:out.find("\n---", 3)])
+    assert (fm.get("metadata") or {}).get("short-description"), "short-description ist leer (folded scalar)"
+
+
 def test_generated_codex_skill_is_valid(tmp_path):
     """Generiert in ein tmp-Ziel und prüft Frontmatter + Claude-Ism-Bereinigung."""
     import os
