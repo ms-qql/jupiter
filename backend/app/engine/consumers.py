@@ -27,6 +27,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import posixpath
 import re
 from dataclasses import dataclass, field
 
@@ -68,8 +69,20 @@ def _glob_to_regex(glob: str) -> re.Pattern[str]:
 
 
 def _norm(rel_path: str) -> str:
-    """Vault-relativen Pfad für den Scope-Vergleich normalisieren (Backslashes → ``/``)."""
-    return (rel_path or "").replace(os.sep, "/").replace("\\", "/").strip("/")
+    """Vault-relativen Pfad für den Scope-Vergleich normalisieren.
+
+    Kollabiert ``..``- und ``.``-Segmente (BUG-24-1-Fix), damit der Scope-Glob auf demselben
+    kanonischen Pfad arbeitet wie ``_resolve_read``/``_resolve_write``. Pfade, die nach der
+    Normalisierung aus dem Vault-Root ausbrechen (starten mit ``..``), werden als leerer String
+    zurückgegeben — kein Scope-Glob matcht ``""`` → automatisch verweigert.
+    """
+    p = (rel_path or "").replace(os.sep, "/").replace("\\", "/").strip("/")
+    if not p:
+        return ""
+    p = posixpath.normpath(p)          # kollabiert a/../b → b, ./a → a, etc.
+    if p.startswith("..") or p == ".":  # Ausbruch aus dem Vault-Root → verweigern
+        return ""
+    return p
 
 
 @dataclass

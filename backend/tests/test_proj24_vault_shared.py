@@ -302,15 +302,10 @@ def test_api_write_records_audit(client: TestClient):
 
 
 # --- Red-Team (QA PROJ-24): Scope-Bypass über ``..`` ------------------------
-# BUG-24-1 (Critical): Das Scope-Gate prüft den ROHEN Pfad-String (``_norm`` kollabiert
-# ``..`` nicht), während die Datei-Auflösung (``_resolve_read`` → realpath) ``..`` auflöst.
-# Ein auf ``Shared/**`` beschränkter Konsument kann damit über
-# ``Shared/../Knowledge/secret.md`` Pfade ausserhalb seines Scopes lesen/schreiben —
-# die einzige Grenze des geteilten Dienstes ist umgehbar.
-# Diese Tests schreiben den SICHEREN Vertrag fest; xfail(strict) → schlägt nach dem Fix
-# als XPASS an (Marker dann entfernen).
+# BUG-24-1 (Critical, behoben): ``_norm`` kollabiert jetzt ``..``-Segmente via
+# ``posixpath.normpath``; Pfade die nach Normalisierung aus dem Root ausbrechen → "".
+# Fix in ``backend/app/engine/consumers.py::_norm``.
 
-@pytest.mark.xfail(strict=True, reason="BUG-24-1: Scope-Gate kollabiert `..` nicht (Scope-Bypass)")
 def test_consumer_scope_no_dotdot_escape():
     c = Consumer(id="x", api_key="k",
                  read=[f"{JUP}/Shared/**"], write=[f"{JUP}/Shared/**"])
@@ -320,7 +315,6 @@ def test_consumer_scope_no_dotdot_escape():
     assert not c.can_write(f"{JUP}/Shared/../../../04 Resources/fremd.md")
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-24-1: API lässt Scope-Bypass via `..` durch")
 def test_api_read_scope_escape_via_dotdot_403(client: TestClient):
     # Knowledge-Datei direkt anlegen; writer darf laut Scope nur Shared/ schreiben,
     # liest sie aber über Shared/../Knowledge/ aus → muss 403 sein, nicht 200.
