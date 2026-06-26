@@ -542,6 +542,11 @@ class SessionRuntime:
         if event.type == "result":
             # Das modellabhängige Kontextfenster liefert nur das result-Event (modelUsage).
             self._ctx_window = usage.context_window
+            # PROJ-48: Engines, deren result-Usage den AKTUELLEN Turn-Prompt abbildet
+            # (z. B. Codex' turn.completed) statt kumulativ wie Claude, füllen damit auch
+            # den Kontext-Füllstand — sie liefern keine assistant-Usage je Turn.
+            if event.raw.get("context_is_per_turn"):
+                self._ctx_occupancy = usage.context_used_tokens
             self.state.tokens_used += usage.billed_tokens
             # PROJ-19 (#27): Cache-Treffer kumulieren (sichtbar im Dashboard/Tile).
             self.state.cache_read_tokens += usage.cache_read_input_tokens
@@ -1359,7 +1364,10 @@ class SessionManager:
             )
         # Beendete Session (Prozess ist weg) → vor der Eingabe per `claude --resume`
         # fortsetzen, damit der User auch an fertigen Sessions weiterarbeiten kann.
-        if not runtime.driver.is_alive:
+        # PROJ-48: Treiber, die sich selbst kontext-erhaltend fortsetzen (oneshot-CLIs mit
+        # Resume-argv, z. B. Codex), übernehmen das in ihrem `send_input` selbst — NICHT
+        # den frischen, kontextlosen `_resume`-Pfad auslösen.
+        if not runtime.driver.is_alive and not runtime.driver.supports_self_resume:
             await self._resume(runtime)
         await runtime.driver.send_input(text)
         runtime.transcript.append(TranscriptEntry("user", "text", text, _now().isoformat()))

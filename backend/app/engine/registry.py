@@ -64,6 +64,10 @@ class EngineProfile:
     # driver == generic_cli:
     bin: str | None = None
     argv_template: list[str] = field(default_factory=list)
+    # PROJ-48: optionales argv für Folge-Turns einer oneshot-CLI (Resume-Pfad). Leer =
+    # keine Fortsetzung möglich (Verhalten wie bisher: Re-Spawn ohne Kontext). Generisch
+    # für jede oneshot-CLI mit Resume — Platzhalter zusätzlich: {resume_id}.
+    resume_argv_template: list[str] = field(default_factory=list)
     adapter: str = "plaintext"
     prompt_via: str = "stdin"        # "stdin" | "arg"
     input_format: str = "text"       # "stream_json" | "text"
@@ -190,6 +194,9 @@ def _coerce_profile(entry: dict) -> EngineProfile:
         if driver == DRIVER_GENERIC_CLI:
             prof.bin = entry.get("bin")
             prof.argv_template = [str(a) for a in (entry.get("argv_template") or [])]
+            prof.resume_argv_template = [
+                str(a) for a in (entry.get("resume_argv_template") or [])
+            ]
             adapter = str(entry.get("adapter") or "plaintext")
             if adapter not in VALID_ADAPTERS:
                 raise ValueError(f"Engine „{key}“: unbekannter adapter „{adapter}“.")
