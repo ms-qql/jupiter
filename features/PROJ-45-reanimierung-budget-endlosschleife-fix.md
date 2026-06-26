@@ -1,6 +1,6 @@
 # PROJ-45: Auto-Reanimierungs-Budget — Endlosschleife & False-„hängt" abstellen
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -226,3 +226,38 @@ keine DB/Migration, kein Frontend, keine neuen Liveness-Schwellen.
 `backend/app/engine/watchdog.py`, `backend/tests/test_proj45_budget_loop.py` (neu),
 `backend/tests/test_proj32_tool_in_flight.py`, `backend/tests/test_proj32_qa.py`,
 `backend/tests/test_proj27_qa.py`.
+
+---
+
+## QA Test Results (QA Engineer) — 2026-06-26
+**Branch:** `dev` · **Tester:** QA · **Build:** HEAD `8e1c51e` (Code aus 7a56ec3/8e1c51e, working tree clean)
+
+### Akzeptanzkriterien (8/8 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|---|---|---|
+| 1 | Budget übersteht Resume-„Fortschritt" (kein Reset durch Replay-`aktiv`) | ✅ Pass | `evaluate_liveness_once` ([manager.py:1485-1497](backend/app/engine/manager.py#L1485)) resettet nur bei `aktiv` ∧ `auto_attempts>0` ∧ `num_turns > progress_watermark`; Test `test_replay_active_does_not_reset_budget` |
+| 2 | Echter neuer Turn setzt Budget zurück; späterer anderer Hänger bekommt frisches Budget | ✅ Pass | `note_reanimation_baseline(num_turns)` vor Resume ([manager.py:1518](backend/app/engine/manager.py#L1518)); Test `test_real_new_turn_resets_budget` |
+| 3 | Deterministischer Hänger terminiert ≤ `max_auto_attempts` (Belegfall a66fa404) | ✅ Pass | Test `test_deterministic_hang_terminates_at_budget`: exakt 2 Versuche, danach stabil „hängt" |
+| 4 | In-Flight-Geduld überlebt kurze Zwischensätze (kein 180 s-Fehlalarm) | ✅ Pass | `note_progress` löscht `tool_in_flight` nicht mehr ([watchdog.py:212-219](backend/app/engine/watchdog.py#L212)); Test `test_in_flight_patience_survives_short_message` (>180 s, <600 s → `aktiv`; nach `result` → `hängt`) |
+| 5 | Amok-Watchdog (PROJ-16) unberührt | ✅ Pass | Nur `_tool_in_flight`-Flag + Budget-Bedingung geändert; Loop-Fingerprint/Token-/Schreibraten-Deques unangetastet; `test_proj16_watchdog.py` + `test_proj16_qa.py` grün |
+| 6 | DEAD bleibt manuell | ✅ Pass | Reset-Zweig nur `aktiv`, Auto-Zweig nur `HANGING` ([manager.py:1499](backend/app/engine/manager.py#L1499)); `DEAD` fällt durch → kein Auto-Pfad |
+| 7 | Manueller Knopf jederzeit, auch nach erschöpftem Budget | ✅ Pass | `reanimate()` → `reset()` ([manager.py:1448](backend/app/engine/manager.py#L1448)); Test `test_resume_clears_in_flight` |
+| 8 | Konfig/Live unverändert, deutsch, Suite grün | ✅ Pass | Keine neuen Schwellen; `tool_in_flight_timeout_seconds` weiter live-konfigurierbar; alle Texte/Logs deutsch |
+
+### Automatisierte Tests
+- **Volle Suite:** `853 passed, 1 warning in 62.64s` (conda env `Dashboard`). Keine Regression in PROJ-16/27/32/33.
+- **PROJ-45 + angepasste Verträge:** `35 passed` (`test_proj45_budget_loop.py` 5, `test_proj32_tool_in_flight.py`, `test_proj32_qa.py`, `test_proj27_qa.py`).
+- Verbleibende Warnung ist ein vorbestehender Starlette-`DeprecationWarning` in `test_proj25_auth.py` (nicht PROJ-45).
+
+### Security-Audit (Red Team)
+- Reiner Engine-Logik-Fix: **kein** neuer Endpoint, **keine** DB/Migration, **kein** neues Nutzer-Eingabe-/Tenant-Surface. Operiert ausschließlich auf internen Signalen (`num_turns`, Fortschritts-Uhr, `tool_in_flight`-Flag). Auth/Owner-Scope (PROJ-25) unberührt. → keine neue Angriffsfläche.
+
+### Beobachtungen (kein Bug, Hinweis)
+- **Commit-Hygiene:** Die `manager.py`-Änderungen (Wasserstand-Bedingung, `clear_tool_in_flight`, Baseline) landeten bereits im PROJ-46-Commit `7a56ec3`, nicht im PROJ-45-Commit `8e1c51e`. Funktional vollständig und committet (working tree clean) — nur Historie unsauber. Kein Blocker.
+- **Designbedingt akzeptiert:** `tool_in_flight` ist ein Bool (kein Zähler) und fällt nur an der Turn-Grenze (`feed_usage`/Resume). Bleibt ein `result`-Event aus, hält die 600 s-Geduld bis zum Timeout — bewusste, dokumentierte Trade-off-Entscheidung (Designentscheidung 2).
+
+### Bugs
+Keine (Critical/High/Medium/Low: 0/0/0/0).
+
+### Production-Ready: **JA**
+Keine Critical/High-Bugs. Alle 8 Akzeptanzkriterien bestanden, volle Suite grün.
