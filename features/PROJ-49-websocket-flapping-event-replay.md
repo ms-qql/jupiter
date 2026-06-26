@@ -1,6 +1,6 @@
 # PROJ-49: WebSocket-Flapping zum Browser — Stabilität + Event-Replay bei Reconnect
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -162,3 +162,41 @@ Keine neuen Pakete. Reine Verträge-/Verhaltensänderung auf vorhandenem WS-Stac
 **Checks:** `npm run lint` sauber, `npm run build` grün, `vitest` 169 passed. Vorbestehender, PROJ-49-fremder `tsc`-Fehler in `lib/md-tree.test.ts` (Testdatei, nicht im Build-Pfad) bleibt unberührt.
 
 **Noch offen:** A2 (Caddy-WS-Idle-Timeout prüfen/setzen, Infra/human-gated bei `/abc-deploy`); A3-Finalbefund am Live-Log (QA).
+
+## QA Test Results (2026-06-26, Branch `dev`)
+**Getestet von:** QA Engineer · **Methode:** pytest (Backend-Integration über `TestClient` + `FakeDriver`), Frontend `lint`/`build`/`vitest`, Code-Red-Team. Browser-Live-Smoke s. „Live-pending" unten (Flapping ist intermittierend + prod-only).
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis | Nachweis |
+|---|---|---|---|
+| 1 | Stabile WS (kein 15–30-s-Reconnect-Takt) | ⚠️ **Mitigiert / live-pending** | Keepalive + Backoff + saubere Effekt-Deps `[id]` adressieren die bekannten Auslöser; der konkrete Trigger ist intermittierend und nur am Live-Log endgültig zu bestätigen (s. AC 6). |
+| 2 | Keepalive verhindert Idle-Timeouts | ✅ **PASS** | `_WS_PING_INTERVAL_S=20` (< ~60 s Proxy-Idle); `test_websocket_keepalive_ping` belegt Ping in stiller Phase. Caddy-Pfad-Check = A2 (Deploy). |
+| 3 | Replay/Resync bei Reconnect (Vollzustand) | ✅ **PASS** | Connect-Snapshot trägt Transkript-Vollzustand; `test_snapshot_carries_full_transcript_for_resync` + `test_reconnect_yields_same_full_snapshot` (idempotent). |
+| 4 | Token-Refresh ohne Daten-Lücke | ✅ **PASS (by design)** | WS liest beim Reconnect den frischen Token (`streamUrl`→`getAccessToken`); REST-Poll refresht bei 401 in ≤4 s; Resync (AC 3) stellt den Stand verlustfrei her. Worst case wenige Sekunden „getrennt", kein Datenverlust. |
+| 5 | Verbindungs-Status sichtbar | ✅ **PASS** | Amber-Banner bei `everConnected && !connected` („verbinde neu … Stand wird nachgeladen") + Header-Indikator `● live / ○ getrennt`. Gegen Initial-Flash gegated. Logik deterministisch (Build grün); visuelle Bestätigung live-pending. |
+| 6 | Ursache (A) behoben/erklärt | ⚠️ **TEILWEISE** | Diagnose-Instrumentierung (Close-`code`/`reason` + Reconnect-Zähler) + Backoff eingebaut; Effekt-Deps als sauber verifiziert (kein Re-Init pro Render/Poll). Der **konkrete Auslöser ist noch nicht final festgenagelt** — die Spec selbst markiert ihn als „Trigger noch unklar / intermittierend". Endbefund erst am Live-Log nach Deploy. |
+| 7 | Lint/Typecheck/Tests grün, keine Regression PROJ-3/4/46 | ✅ **PASS** | `npm run lint` sauber · `npm run build` grün · `vitest` 169 passed · pytest **863 passed**. Regression PROJ-4/25/47/1/3 grün. |
+
+**Summe: 5 PASS · 2 ⚠️ (AC 1 mitigiert, AC 6 teilweise — beide live-pending, KEINE Code-Defekte).**
+
+### Edge Cases (Code-Review-Verifikation)
+- **Reconnect mitten im Broadcast:** kein Verlust/keine Doppelung — Snapshot friert den Stand zum Accept-Zeitpunkt ein, Live-Strom läuft erst danach; `liveText`-Reset + Transkript-Baseline sind idempotent. ✅
+- **Terminale Session während Trennung:** Snapshot trägt terminalen Status → kein „läuft-noch"-Geist. ✅
+- **Sehr lange stille Phase:** Keepalive-Ping (20 s) hält die WS. ✅
+- **Mehrere Tabs/Geräte:** jeder Connect eigener Snapshot + eigene Queue; Fan-out-Semantik unberührt. ✅ (Backend-Fan-out unverändert; mehrfach-Connect-Idempotenz via `test_reconnect_yields_same_full_snapshot` belegt.)
+
+### Security-Red-Team
+- **Kein neuer Angriffsvektor:** keine neuen Endpunkte/Inputs; `transcript` ist serverseitig erzeugt, read-only, und war bereits via REST `GET /{id}` für denselben Owner sichtbar → keine neue Datenexposition.
+- **Owner-Gate unverändert:** Connect prüft weiter `runtime.state.owner != owner` → einheitlich `4404` (kein Existenz-Leak); ungültiger/fehlender Token → `4401`. Kein Cross-Tenant-Leak über den Snapshot.
+- **Ping** ist konstant server→client (kein Input). **Diagnose-Log** ist auf `NODE_ENV !== "production"` gegated → kein Info-Leak in Prod.
+
+### Beobachtungen (Low — keine Blocker)
+- **L1:** Schließt der Server mit `4404` (Session gelöscht/terminal entfernt), reconnectet der Client weiter (alle ≤15 s) statt aufzugeben. Vorbestehendes Muster, kein Datenverlust, nur leichtes Rauschen. Optionaler Folge-Fix: bei `4401/4404` Reconnect einstellen.
+- **L2:** Die WS refresht einen abgelaufenen Token nicht proaktiv selbst, sondern verlässt sich auf den 4-s-REST-Poll. Worst case wenige Sekunden „getrennt" vor erfolgreichem Reconnect; Resync deckt es ab (kein Verlust).
+
+### Neue Tests (permanente Regression)
+`backend/tests/test_proj49_ws_resync.py` (3) + Erweiterungen in `backend/tests/test_sessions_api.py` (`transcript` im Snapshot, `test_websocket_keepalive_ping`).
+
+### Produktionsreife-Empfehlung: ✅ **READY (mit Auflagen)**
+Keine Critical/High-Bugs. Der Resync (B) macht das UI unabhängig vom Flapping-Auslöser robust — das ist das Sicherheitsnetz. AC 1 & 6 sind **live-pending**: das Flapping ist intermittierend und nur im Prod-Betrieb beobachtbar, daher ist ein Deploy nötig, um den A3-Trigger am Live-Log final zu bestätigen.
+**Auflagen für `/abc-deploy`:** (1) **A2** Caddy-WS-Idle-Timeout für `/api/sessions/*/stream` prüfen/setzen (muss > 20 s sein). (2) Nach Deploy das Backend-Log auf wiederholte `[accepted]` derselben Session prüfen + Browser-Devtools-Close-Codes (Diagnose-Log) auswerten → AC 1 & 6 schließen.
