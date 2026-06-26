@@ -25,6 +25,7 @@ import { PolicyControl } from "./policy-control";
 import { WatchdogControl } from "./watchdog-control";
 import { LivenessControl } from "./liveness-control";
 import { TranscriptionControl } from "./transcription-control";
+import { RegistryControl } from "./registry-control";
 
 export function SettingsDialog() {
   return (
@@ -50,6 +51,7 @@ export function SettingsDialog() {
             <TabsTrigger value="watchdog">Watchdog</TabsTrigger>
             <TabsTrigger value="liveness">Liveness</TabsTrigger>
             <TabsTrigger value="sprache">Sprache</TabsTrigger>
+            <TabsTrigger value="registry">Registry</TabsTrigger>
           </TabsList>
           <TabsContent value="allgemein" className="py-2">
             <ThresholdControl />
@@ -71,6 +73,11 @@ export function SettingsDialog() {
           </TabsContent>
           <TabsContent value="sprache" className="py-2">
             <TranscriptionControl />
+          </TabsContent>
+          <TabsContent value="registry" className="py-2">
+            <ScrollArea className="max-h-[60vh] pr-3">
+              <RegistryControl />
+            </ScrollArea>
           </TabsContent>
         </Tabs>
       </DialogContent>

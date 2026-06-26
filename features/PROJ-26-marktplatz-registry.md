@@ -1,8 +1,8 @@
 # PROJ-26: Marktplatz/Registry für Rollen/Skills/Agenten
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-23
-**Last Updated:** 2026-06-25
+**Last Updated:** 2026-06-26
 **Baustein:** — (Roadmap-Erweiterung, Phase 2)
 **Prio:** P2 (Phase 2 — Skalierung)
 
@@ -148,6 +148,23 @@ Wiederverwendung: shadcn/ui Dialog, Tabs, Badge, Select, Switch — keine neuen 
 | Texte deutsch | UI/Fehlermeldungen deutsch |
 
 **Verantwortliche Spezialisten:** Backend Developer (`registry.py`, Manifest/Validierung, `.jupkg`, Resolver-Anbindung) → Frontend Developer (RegistryTab + Import-Flow). QA: Import-Validierung & Capability-Vorschau red-teamen.
+
+## Frontend Implementation (abc-frontend, 2026-06-26)
+**Branch:** dev · **Stack:** Next.js (Cockpit) — neuer Tab im `settings-dialog.tsx`.
+
+### Gebaut
+- **`lib/types.ts`** — Registry-Typen: `RegistryType` (role|skill|agent), `RegistryStatus` (installed|active|inactive), `RegistryEntry` (inkl. `capabilities`, `default_policy` als `PolicyLevel`, `owner`, `verified`, `limited`), `RegistryVersion`, `RegistryEntryDetail` (Definition + Versions-Historie), `RegistryCatalog`, `RegistryImportPreview` (token + Schema-Version + Kollision + Warnungen).
+- **`lib/api.ts`** — Client gegen den Tech-Design-Vertrag `/registry/*`: `getRegistryCatalog`, `getRegistryEntry`, `installRegistryEntry`, `toggleRegistryEntry`, `rollbackRegistryEntry`, `deleteRegistryEntry`, `exportRegistryPackage` (Blob-Download mit Bearer-Token), `importRegistryPreview` (Multipart → Vorschau), `importRegistryConfirm` (Token → aktivieren).
+- **`components/cockpit/registry-control.tsx`** — `RegistryControl` (Such-/Filterleiste: Typ · Status · Freitext, client-seitig gefiltert), `CatalogRow` (Name · Typ-/Status-/„eingeschränkt"-Badge · Version · Installieren/Aktivieren/Deaktivieren · Detail), `ImportDialog` (zweistufig: Datei → Vorschau → Bestätigen), `CapabilityPreview` (angeforderte Tools + konservative Default-Policy + „Quelle nicht verifiziert"/Kollisions-/Warn-Hinweise), `EntryDetailDialog` (Definition-Text · Versions-Historie + Rollback · Export · Deinstallieren).
+- **`settings-dialog.tsx`** — neuer Tab „Registry" (Muster wie Policy/Watchdog, in `ScrollArea`).
+
+### Umgesetzte Akzeptanzkriterien (UI-seitig)
+Durchsuchbarer Katalog + Status · Install/Toggle · Export/Import `.jupkg` · Capability-/Policy-Vorschau **vor** Aktivierung (Human-in-the-Loop) · Versionierung + Rollback · Default-Trust-Policy konservativ angezeigt · `owner` mitgeführt · Import-Fehler/defektes Paket → deutsche Fehler-Toasts (Backend-`detail`) · alle Texte deutsch · Empty-State („Katalog leer — importiere ein Paket") + Filter-Leer-Zustand · `limited`-Markierung („eingeschränkt lauffähig").
+
+### Deviations / offen
+- **Keine neuen shadcn-Komponenten** (kein `Sheet` im Projekt) → `EntryDetailDialog` als `Dialog` statt Sheet umgesetzt; deckt Versions-Historie/Rollback/Export/Deinstallieren ab.
+- Toggle/Status laut Edge-Case (laufende Session behält geladene Version) ist serverseitige Semantik — UI zeigt nur den neuen Status.
+- **Backend fehlt noch:** `backend/app/routes/registry.py` + `backend/registry/`-Speichermodell + `.jupkg`-Validierung sind noch nicht gebaut. Bis dahin zeigt der Tab den Lade-Fehlzustand („Katalog nicht ladbar — Backend offline?"). Verifikation: `npm run build` ✓, `eslint` ✓, `tsc --noEmit` (nur vorbestehender, unabhängiger Fehler in `lib/md-tree.test.ts`).
 
 ## QA Test Results
 _To be added by /abc-qa_

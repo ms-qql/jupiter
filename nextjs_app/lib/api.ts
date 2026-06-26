@@ -49,6 +49,11 @@ import type {
   VaultWriteResult,
   WatchdogLimits,
   WatchdogSetting,
+  RegistryCatalog,
+  RegistryEntry,
+  RegistryEntryDetail,
+  RegistryImportPreview,
+  RegistryType,
   VideoSummaryQueue,
   VideoSummaryAddResult,
   VideoSummarySettings,
@@ -1039,5 +1044,148 @@ export function setCoordinatorContract(
   return request<VaultWriteResult>(`/coordinator/${coordinatorId}/contract`, {
     method: "POST",
     body: JSON.stringify({ body, title: title ?? null }),
+  });
+}
+
+// --- PROJ-26: Marktplatz/Registry ------------------------------------------
+
+/** Katalog durchsuchen — optionaler Filter nach Typ, Status und Freitext.
+ *  Aktiv = Datei am Resolver-Pfad → steht Sessions/Launcher (PROJ-9) zur Verfügung. */
+export function getRegistryCatalog(
+  filter?: { typ?: RegistryType; status?: string; query?: string },
+  signal?: AbortSignal,
+): Promise<RegistryCatalog> {
+  const params = new URLSearchParams();
+  if (filter?.typ) params.set("typ", filter.typ);
+  if (filter?.status) params.set("status", filter.status);
+  if (filter?.query) params.set("query", filter.query);
+  const qs = params.toString();
+  return request<RegistryCatalog>(`/registry/catalog${qs ? `?${qs}` : ""}`, { signal });
+}
+
+/** Detail eines Eintrags inkl. Definition-Text + Versions-Historie + Capabilities. */
+export function getRegistryEntry(
+  typ: RegistryType,
+  id: string,
+  signal?: AbortSignal,
+): Promise<RegistryEntryDetail> {
+  return request<RegistryEntryDetail>(`/registry/${typ}/${encodeURIComponent(id)}`, {
+    signal,
+  });
+}
+
+/** Einen vorhandenen, aber noch nicht aktivierten Eintrag installieren
+ *  (Datei extrahieren). Liefert den aktualisierten Eintrag zurück. */
+export function installRegistryEntry(
+  typ: RegistryType,
+  id: string,
+): Promise<RegistryEntry> {
+  return request<RegistryEntry>(
+    `/registry/${typ}/${encodeURIComponent(id)}/install`,
+    { method: "POST" },
+  );
+}
+
+/** Aktivieren/Deaktivieren. Deaktivierung wirkt erst auf NEUE Sessions —
+ *  laufende Sessions behalten die geladene Version (PROJ-26 Edge Case). */
+export function toggleRegistryEntry(
+  typ: RegistryType,
+  id: string,
+): Promise<RegistryEntry> {
+  return request<RegistryEntry>(
+    `/registry/${typ}/${encodeURIComponent(id)}/toggle`,
+    { method: "PATCH" },
+  );
+}
+
+/** Auf eine frühere Version zurückrollen. Referenziert sie ein fehlendes Tool,
+ *  wird der Eintrag als „eingeschränkt lauffähig" markiert (Hinweis, kein Crash). */
+export function rollbackRegistryEntry(
+  typ: RegistryType,
+  id: string,
+  version: string,
+): Promise<RegistryEntry> {
+  return request<RegistryEntry>(
+    `/registry/${typ}/${encodeURIComponent(id)}/rollback`,
+    { method: "POST", body: JSON.stringify({ version }) },
+  );
+}
+
+/** Eintrag deinstallieren (entfernt Datei + Versionen). */
+export function deleteRegistryEntry(typ: RegistryType, id: string): Promise<void> {
+  return request<void>(`/registry/${typ}/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+/** Eintrag als portierbares `.jupkg`-Paket exportieren und im Browser speichern.
+ *  Eigener fetch (Blob), damit der Bearer-Token (PROJ-25) am Download hängt. */
+export async function exportRegistryPackage(
+  typ: RegistryType,
+  id: string,
+): Promise<void> {
+  let resp: Response;
+  try {
+    resp = await fetch(
+      `${API_BASE}/registry/${typ}/${encodeURIComponent(id)}/export`,
+      { credentials: "include", headers: authHeaders() },
+    );
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (!resp.ok) {
+    if (resp.status === 401) handleAuthFailure();
+    throw new ApiError(`Export fehlgeschlagen (${resp.status})`, resp.status);
+  }
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${id}.jupkg`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** `.jupkg` hochladen → Capability-/Policy-VORSCHAU (noch NICHT aktiv).
+ *  Validierung (Schema-Version, Struktur) passiert serverseitig; ein defektes/
+ *  inkompatibles Paket wird hier abgewiesen. Multipart → eigener fetch. */
+export async function importRegistryPreview(
+  file: File,
+): Promise<RegistryImportPreview> {
+  const fd = new FormData();
+  fd.append("file", file);
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}/registry/import`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (!resp.ok) {
+    if (resp.status === 401) handleAuthFailure();
+    let detail = `Import abgelehnt (${resp.status})`;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(detail, resp.status);
+  }
+  return (await resp.json()) as RegistryImportPreview;
+}
+
+/** Nach Bestätigung der Vorschau aktivieren (Human-in-the-Loop). `token` stammt
+ *  unverändert aus der Vorschau-Antwort. Liefert den neuen Katalog-Eintrag. */
+export function importRegistryConfirm(token: string): Promise<RegistryEntry> {
+  return request<RegistryEntry>("/registry/import/confirm", {
+    method: "POST",
+    body: JSON.stringify({ token }),
   });
 }
