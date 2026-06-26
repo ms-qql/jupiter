@@ -106,3 +106,20 @@ def test_websocket_sends_state_snapshot(client: TestClient):
         msg = ws.receive_json()
         assert msg["kind"] == "state"
         assert msg["session_id"] == sid
+        # PROJ-49 B: Voll-Snapshot trägt das Transkript mit → verlustfreier Resync
+        # nach jedem (Re-)Connect, ohne Re-Polling.
+        assert "transcript" in msg
+        assert isinstance(msg["transcript"], list)
+
+
+def test_websocket_keepalive_ping(client: TestClient, monkeypatch):
+    # PROJ-49 A1: In einer stillen Phase (keine Events) hält ein periodischer Ping
+    # die WS offen, damit Proxy/Browser sie nicht idle-kappen. Intervall hier kurz
+    # gepatcht, damit der Test schnell ist.
+    from app.routes import sessions as sessions_route
+
+    monkeypatch.setattr(sessions_route, "_WS_PING_INTERVAL_S", 0.1)
+    sid = _create(client).json()["session_id"]
+    with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+        assert ws.receive_json()["kind"] == "state"  # Snapshot zuerst
+        assert ws.receive_json()["kind"] == "ping"  # dann Keepalive in der Stille

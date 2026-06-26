@@ -329,6 +329,12 @@ async def get_transcript(
     return {"text": manager.transcript_text(session_id)}
 
 
+# PROJ-49 A1: Keepalive-Intervall (s). Deutlich unter üblichen Proxy/Browser-Idle-
+# Timeouts (Caddy/60 s), damit eine stille Phase (langer Tool-Lauf ohne Events) die
+# WS nicht idle-gekappt wird. Client ignoriert `{"kind":"ping"}`.
+_WS_PING_INTERVAL_S = 20.0
+
+
 @router.websocket("/{session_id}/stream")
 async def stream_session(websocket: WebSocket, session_id: str) -> None:
     import asyncio
@@ -361,25 +367,39 @@ async def stream_session(websocket: WebSocket, session_id: str) -> None:
     queue_get: asyncio.Task | None = None
     sock_recv: asyncio.Task | None = None
     try:
-        # Sofort einen Zustands-Snapshot senden (inkl. offener Decision Cards),
-        # danach live weiterstreamen.
-        await websocket.send_json({"kind": "state", **runtime.to_read()})
+        # PROJ-49 B: Sofort einen Voll-Snapshot senden — Status + offene Decision
+        # Cards (aus `to_read()`) UND das aktuelle Transkript. So ist dieser eine
+        # Frame nach JEDEM (Re-)Connect die alleinige Wahrheit; verpasste `message`-
+        # Chunks während einer Verbindungslücke führen nicht mehr zu dauerhaft
+        # fehlendem UI-Inhalt (verlustfreier Resync ohne Server-Event-Puffer).
+        snapshot = {"kind": "state", **runtime.to_read()}
+        snapshot["transcript"] = [vars(e) for e in runtime.transcript]
+        await websocket.send_json(snapshot)
+        # Tasks EINMAL anlegen und über Iterationen hinweg halten — so kann ein
+        # Keepalive-Timeout feuern, ohne ein laufendes receive() zu zerschneiden.
+        queue_get = asyncio.ensure_future(queue.get())
+        sock_recv = asyncio.ensure_future(websocket.receive())
         while True:
-            # Auf das nächste Event ODER eine Socket-Aktion (Disconnect) warten,
-            # damit getrennte Clients nicht ewig in queue.get() hängen.
-            queue_get = asyncio.ensure_future(queue.get())
-            sock_recv = asyncio.ensure_future(websocket.receive())
-            done, pending = await asyncio.wait(
-                {queue_get, sock_recv}, return_when=asyncio.FIRST_COMPLETED
+            # Auf das nächste Event ODER eine Socket-Aktion (Disconnect) warten —
+            # mit Timeout, damit eine stille Phase einen Keepalive-Ping auslöst.
+            done, _pending = await asyncio.wait(
+                {queue_get, sock_recv},
+                timeout=_WS_PING_INTERVAL_S,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-            for task in pending:
-                task.cancel()
+            if not done:
+                # PROJ-49 A1: stille Phase → Ping, damit Proxy/Browser nicht kappen.
+                await websocket.send_json({"kind": "ping"})
+                continue
             if sock_recv in done:
                 msg = sock_recv.result()  # kann WebSocketDisconnect werfen
                 if msg.get("type") == "websocket.disconnect":
                     break
-                continue  # Client-Eingaben laufen im MVP über REST → ignorieren
-            await websocket.send_json(queue_get.result())
+                # Client-Eingaben laufen im MVP über REST → ignorieren, neu lauschen.
+                sock_recv = asyncio.ensure_future(websocket.receive())
+            if queue_get in done:
+                await websocket.send_json(queue_get.result())
+                queue_get = asyncio.ensure_future(queue.get())
     except WebSocketDisconnect:
         pass
     finally:
