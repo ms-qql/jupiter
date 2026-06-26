@@ -1,6 +1,6 @@
 # PROJ-44: Video Summary — Standard-Ordner, Bibliotheks-Kachel & Modellwahl
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -242,4 +242,9 @@ Keine Critical/High/Medium.
 **Production-Ready: JA.**
 
 ## Deployment
-_To be added by /deploy_
+- **Production URL:** https://jupiter.auxevo.tech (Micro-App `/apps/video_summary`)
+- **Deployed:** 2026-06-26 · **Version:** 0.18.0 · **Tag:** v0.18.0-PROJ-44
+- **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend` + Caddy TLS), Auto-Deploy via GitHub-Webhook auf `main` ([[jupiter-deployment]]).
+- **Geshippt:** Standard-Ordner `04 Resources/Video Summaries/` (feste Ablage statt Auto-Kategorie), Bibliotheks-Kachel (Vault-Scan, Klick → MD-Reader), Modellwahl in den Einstellungen (Haiku/Sonnet/Opus, Default Sonnet). Mit im Merge: PROJ-45/46 **Specs** (docs-only, weiterhin Planned).
+- **Smoke (nach SW-Hard-Refresh):** Einstellungen → Modell wählen; ein Video umwandeln → erscheint in der Bibliothek → Klick öffnet die Notiz im MD-Reader.
+- **Offen (Low, akzeptiert):** A1/A3/A4 sind instruction-based — realer End-to-End-Lauf (ein Video) nach dem Deploy empfohlen.
