@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-50
+**Next Available ID:** PROJ-51
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -60,8 +60,9 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-45 | Auto-Reanimierungs-Budget — Endlosschleife & False-„hängt" abstellen (Token-Überspend) | P1 | Deployed | PROJ-27, PROJ-32, PROJ-16 | [Spec](PROJ-45-reanimierung-budget-endlosschleife-fix.md) |
 | PROJ-46 | Live-Aktivitäts-Ticker — sehen, was der Agent gerade tut (Bypass-Mode) | P1 | Deployed | PROJ-4, PROJ-1, PROJ-3, PROJ-27 | [Spec](PROJ-46-live-aktivitaets-ticker-bypass.md) |
 | PROJ-47 | Stream-Reader-Stall — verwaister Subprozess & eingefrorene Session-Anzeige | P1 | Deployed | PROJ-1, PROJ-14, PROJ-27 | [Spec](PROJ-47-stream-reader-stall-output-sync.md) |
-| PROJ-48 | Engine — OpenAI Codex CLI (Pro-Subscription) als Jupiter-Agent | P1 | Planned | PROJ-18, PROJ-1, PROJ-19 | [Spec](PROJ-48-engine-openai-codex-cli.md) |
+| PROJ-48 | Engine — OpenAI Codex CLI (Pro-Subscription) als Jupiter-Agent | P1 | Architected | PROJ-18, PROJ-1, PROJ-19 | [Spec](PROJ-48-engine-openai-codex-cli.md) |
 | PROJ-49 | WebSocket-Flapping zum Browser — Stabilität + Event-Replay bei Reconnect | P1 | Approved | PROJ-3, PROJ-1, PROJ-25 | [Spec](PROJ-49-websocket-flapping-event-replay.md) |
+| PROJ-50 | abc-Workflow für die Codex-Engine (portierte Skills + Phasen-Signal) | P1 | Planned | PROJ-48, PROJ-9, PROJ-8 | [Spec](PROJ-50-abc-workflow-codex-engine.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
