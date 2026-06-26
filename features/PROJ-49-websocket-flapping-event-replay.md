@@ -1,8 +1,18 @@
 # PROJ-49: WebSocket-Flapping zum Browser — Stabilität + Event-Replay bei Reconnect
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
+
+## Deployment
+- **Produktion:** https://jupiter.auxevo.tech · **Deployed:** 2026-06-26 · **Version:** 0.21.0 · **Tag:** `v0.21.0-PROJ-49`
+- **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend` + Caddy TLS), Promotion `dev → main` → GitHub-Webhook-Auto-Deploy (`reset --hard` + `npm ci && build` + `pip install` + Service-Restart → kein Stale-Build).
+- **Geliefert:** Snapshot-Resync (Transkript im Connect-Snapshot + `liveText`-Reset), Keepalive-Ping (20 s), Reconnect-Backoff, „getrennt"-Banner, A3-Close-Code-Diagnoselog.
+- **A2 verifiziert:** Caddy `/api/*`-`reverse_proxy` hat keinen expliziten Timeout → streamt WS unbegrenzt; 20-s-Keepalive liegt darunter. Flapping war **nicht** Caddy. Kein Caddyfile-Change.
+- **Post-Deploy-Smoke (Live, AC 1 & 6 — nach hartem Reload):**
+  - [ ] WS bleibt über ≥ 10 min `● live`; im Backend-Log **keine** wiederholten `[accepted]` derselben Session.
+  - [ ] Erzwungener Reconnect (Netz/Tab) → Resync stellt Transkript + Status her (kein „eingefrorenes" UI).
+  - [ ] A3: Browser-Devtools/Backend-Log auf Close-Codes prüfen → Flapping-Trigger final einordnen (oder als behoben bestätigen).
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit) — besitzt die WebSocket-Anbindung Frontend↔Backend (`/api/sessions/{id}/stream`) und den Subscriber-Fan-out (`manager.subscribe`/`_broadcast`).
@@ -72,4 +82,131 @@ Zwei Teilprobleme, getrennt behandelbar:
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-26 · **Stack:** Next.js (Cockpit) + FastAPI (WS) + In-Memory-Runtime · **Branch:** dev
+
+### Befund (im Code verifiziert — kein Rätselraten)
+- **Backend `stream_session`** (`backend/app/routes/sessions.py:332`) sendet beim Connect bereits einen Snapshot — aber **nur** `{"kind":"state", **runtime.to_read()}`. `to_read()` (`manager.py:378`) liefert Status + offene Decision Cards + Liveness, **NICHT das Transkript**. Das Transkript kommt heute ausschließlich aus dem einmaligen REST-`GET /{id}` beim Seiten-Mount.
+- **Fan-out** (`subscribe`/`unsubscribe`/`_broadcast`, `manager.py:401`) legt pro Connect eine **frische, leere Queue** an → Events während einer Lücke sind weg.
+- **Frontend `useSessionStream`** (`hooks/use-session-stream.ts`): äußerer Effekt hängt nur an `[id]`, Reconnect läuft *innerhalb* via `setTimeout(connect, 2000)`. `liveText` (seit-Connect-Strom) **überlebt** den Reconnect im React-State — aber während der Lücke gesendete `message`-Chunks fehlen für immer. **Kein Ping/Pong, kein Resync.**
+- **Render-Modell der Detailseite** (`app/(cockpit)/sessions/[id]/page.tsx`): Transkript = `detail.transcript` (REST, einmalig) **+** `liveText` (WS, append-only). Genau hier reißt die Lücke ein.
+
+**Konsequenz:** (B) Verlust ist strukturell — Snapshot trägt das Transkript nicht. (A) Flapping-Auslöser ist noch nicht im Code festnagelbar (Effekt-Deps sind sauber `[id]`); der ~15–30-s-Takt passt **nicht** zu Token-Ablauf (15 min) → Diagnose zuerst, nicht blind beide Layer „härten".
+
+### Reihenfolge (folgt dem Default der Spec: erst B, dann A)
+**B-Resync macht das UI sofort robust gegen JEDEN Reconnect** — auch gegen unvermeidbare (Netz, Tab, Token). Danach A-Stabilität gegen den eigentlichen Auslöser.
+
+---
+
+### Teil B — Verlustfreier Resync (Snapshot-on-subscribe, erweitert)
+**Entscheidung (Design-Frage 1): Snapshot-on-subscribe statt Server-Event-Puffer.** Kein monoton wachsender Cursor/`since` im MVP — der vorhandene Voll-Snapshot beim Connect schließt die Lücke verlustfrei und ist idempotent. (Cursor bleibt eine spätere Option, falls je feingranulares Nachliefern statt Voll-Snapshot gebraucht wird — vgl. Byte-Offset-Muster des Rubric-Sessions-Tabs.)
+
+**Was sich ändert (WAS, nicht WIE):**
+- Der Connect-Snapshot trägt **zusätzlich das aktuelle Transkript** (Tail genügt; Vollzustand des Live-Index). Damit ist *ein* WS-Frame nach jedem (Re-)Connect die alleinige Wahrheit für Status + offene Cards + Transkript.
+- Das **Frontend behandelt diesen Snapshot als Baseline**: beim Empfang ersetzt es die gerenderte Transkript-Basis und **setzt `liveText` zurück** (alles bis „jetzt" steckt schon im Snapshot). Folge-`message`-Chunks hängen wieder an. → Kein Doppeln, kein Verlust, egal wann der Reconnect fällt (Edge Case „mitten im Broadcast" ist abgedeckt, weil der Snapshot den Stand *zum Accept-Zeitpunkt* einfriert und der Live-Strom erst danach anläuft).
+- **Decision Cards** reisen schon heute im `state`-Snapshot mit → bei Reconnect nicht „verschwunden" (PROJ-4 ✓). **Terminaler Status** kommt ebenfalls im Snapshot → kein „läuft-noch"-Geist (Edge Case ✓).
+- **Mehrere Tabs/Geräte:** jeder Connect bekommt seinen eigenen Snapshot + eigene Queue; Fan-out-Semantik unberührt → kein gegenseitiges Trennen (Edge Case ✓).
+
+### Teil A — Stabilität (Flapping abstellen)
+**A1 — Keepalive (Design-Frage 3: app-seitig, treiber-unabhängig).** Server sendet im WS-Loop in festem Intervall einen leichten Ping (z. B. `{"kind":"ping"}`), das Frontend ignoriert ihn. Intervall **deutlich unter** dem Proxy-Idle-Timeout. Hält die WS durch stille Phasen (langer Tool-Lauf ohne Events) → deckt den „sehr lange stille Phase"-Edge-Case ab. Umgesetzt als dritter Zweig/Timeout im bestehenden `asyncio.wait`-Loop (kein zweiter Task-Apparat nötig).
+**A2 — Caddy-WS-Pfad prüfen:** Idle-/Read-Timeout für `/api/sessions/*/stream` verifizieren und ggf. explizit setzen, sodass A1-Ping garantiert darunter liegt. (Infra-Schritt, human-gated über Deploy.)
+**A3 — Diagnose des Auslösers (Pflicht-AC „Ursache A behoben/erklärt").** Bevor irgendetwas „gehärtet" wird, den Auslöser **reproduzierbar eingrenzen**, in dieser Reihenfolge:
+1. **Frontend instrumentieren:** jedes WS `open`/`close` mit `code`/`reason` loggen und gegen die Backend-`[accepted]`-Zeilen korrelieren → klärt **wer schließt** (Client `onerror→close` vs. Server vs. Proxy).
+2. **Remount-Hypothese (Leitverdacht):** Effekt-Deps sind sauber `[id]` — also ist nicht der Effekt, sondern ein **Remount der Detailseite/des Subtrees** der Hauptverdacht (z. B. ein 15-s-Poll im sessions-provider, das einen Key/State oben ändert und unten neu mountet). Per React-DevTools/Mount-Log bestätigen.
+3. **Erst nach Befund** gezielt fixen (Remount stoppen / Backoff statt Tight-Loop / Proxy-Timeout) — **nicht** beide Layer blind härten.
+
+### API-/Vertrags-Form (Endpunkte, keine Implementierung)
+- **WS** `GET /api/sessions/{id}/stream?access_token=…` — unverändert im Pfad. Neu im **Frame-Vertrag**:
+  - Connect-Snapshot: `{"kind":"state", …, transcript:[…]}` (Transkript **neu** im Snapshot).
+  - Keepalive: `{"kind":"ping"}` periodisch (Client ignoriert).
+  - Live wie bisher: `message` / `activity` / `notice` / `state`.
+- Kein neuer REST-Endpunkt nötig (Resync läuft über den WS-Snapshot, nicht über Re-Polling).
+
+### Verbindungs-Status sichtbar (AC „getrennt/verbinde neu")
+`connected` liefert der Hook bereits. Das Cockpit zeigt bei `connected === false` einen klaren deutschen Hinweis („Verbindung getrennt — verbinde neu …") statt stiller, veralteter Anzeige. Reiner Frontend-Indikator, an `connected` gebunden.
+
+### Warum so (für PM)
+- **Snapshot statt Event-Puffer:** Der Server muss keine Event-Historie im RAM mitschleppen — er kennt seinen aktuellen Stand ohnehin und schickt ihn beim Connect komplett. Einfachster verlustfreier Weg, robust gegen *jeden* Reconnect-Grund.
+- **Keepalive vor Proxy-Timeout:** Eine WS, die nichts sendet, sieht für Zwischenschichten „tot" aus und wird gekappt. Ein billiger Ping hält sie am Leben — ohne dass echte Daten fließen müssen.
+- **Diagnose vor Härtung:** Der ~15–30-s-Takt verrät, dass etwas *aktiv* neu verbindet (kein zufälliger Netzabriss). Diesen Auslöser zu finden ist billiger und ehrlicher, als beide Layer „auf Verdacht" zu härten und das eigentliche Leck zu kaschieren.
+
+### Betroffene Module (Mapping)
+| Bereich | Datei | Änderung |
+|---|---|---|
+| Backend WS | `backend/app/routes/sessions.py:332` (`stream_session`) | Transkript in Connect-Snapshot; Keepalive-Ping im `asyncio.wait`-Loop |
+| Frontend Hook | `nextjs_app/hooks/use-session-stream.ts` | Snapshot-Transkript als Baseline + `liveText`-Reset; `ping` ignorieren; Reconnect-Backoff prüfen |
+| Frontend Seite | `app/(cockpit)/sessions/[id]/page.tsx` | Transkript-Render aus Snapshot-Baseline statt nur REST; „getrennt"-Hinweis an `connected` |
+| Diagnose A | sessions-provider / Detailseite | Remount-Auslöser eingrenzen + abstellen |
+| Infra | `Caddyfile` (Deploy, human-gated) | WS-Idle-Timeout für `/api/sessions/*/stream` prüfen |
+
+### Dependencies
+Keine neuen Pakete. Reine Verträge-/Verhaltensänderung auf vorhandenem WS-Stack (FastAPI/Starlette WebSocket + Browser-`WebSocket`).
+
+### Abgrenzung
+- **PROJ-47** (Reader-Stall, Backend↔Subprozess) ist ein **anderer** Defekt — hier ausschließlich Delivery-Layer Backend↔Browser. Nicht vermischen.
+- **PROJ-46**-`activity`-Events profitieren automatisch (Snapshot/Keepalive), brauchen keine eigene Logik.
+
+## Implementierung — Backend (2026-06-26, Branch `dev`)
+**Datei:** `backend/app/routes/sessions.py` (`stream_session`), Tests in `backend/tests/test_sessions_api.py`.
+
+- **B — Snapshot trägt jetzt das Transkript:** Der Connect-Frame ist `{"kind":"state", …, "transcript":[…]}` — `to_read()` (Status + offene Decision Cards + Liveness) **plus** `[vars(e) for e in runtime.transcript]` (identische Form wie `GET /{id}`). Damit ist ein einzelner Frame nach jedem (Re-)Connect die alleinige Wahrheit; während einer Lücke verpasste `message`-Chunks fehlen nicht mehr dauerhaft. Kein Server-Event-Puffer, kein neuer Endpunkt.
+- **A1 — Keepalive-Ping:** Neue Konstante `_WS_PING_INTERVAL_S = 20.0`. Der `asyncio.wait`-Loop läuft jetzt mit `timeout=_WS_PING_INTERVAL_S`; bleibt `done` leer (stille Phase), wird `{"kind":"ping"}` gesendet (Client ignoriert). Hält die WS durch lange Tool-Läufe und unter dem Caddy/Browser-Idle-Timeout (~60 s).
+- **Loop-Umbau:** `queue_get`/`sock_recv` werden **einmal** angelegt und über Iterationen gehalten (statt pro Runde neu) — so zerschneidet ein Ping-Timeout kein laufendes `receive()`. Der jeweils fertige Task wird gezielt neu erstellt; Disconnect bricht weiterhin sauber ab. Cleanup im `finally` unverändert (unsubscribe + Task-Cancel).
+
+**Tests:** `test_websocket_sends_state_snapshot` prüft zusätzlich `transcript` im Snapshot; neuer `test_websocket_keepalive_ping` (Intervall via `monkeypatch` auf 0.1 s) erwartet Snapshot → `ping`. Suite grün: `test_sessions_api` 13 passed; Regression PROJ-4/25/47/1 (83) grün.
+
+**Frame-Vertrag für Frontend (`/abc-frontend`):**
+- Connect-Snapshot: `{"kind":"state", …, transcript:[{role,kind,text,ts}, …]}` → als **Baseline** verwenden, `liveText` zurücksetzen.
+- `{"kind":"ping"}` → ignorieren (kein UI-Effekt).
+- Offen für Frontend: Snapshot-Transkript ins Render übernehmen + `liveText`-Reset; sichtbarer „getrennt"-Hinweis an `connected`; A3-Diagnose des Remount-Auslösers.
+
+## Implementierung — Frontend (2026-06-26, Branch `dev`)
+**Dateien:** `nextjs_app/hooks/use-session-stream.ts`, `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx`.
+
+- **B — Resync im Hook:** `useSessionStream` gibt jetzt zusätzlich `transcript: TranscriptEntry[] | null` zurück. Trägt ein `kind:"state"`-Frame ein `transcript`-Array (nur der **Connect-Snapshot**, nicht die Live-`state`-Broadcasts), wird es als **Baseline** übernommen **und `liveText` geleert** → idempotenter, verlustfreier Resync nach jedem (Re-)Connect, kein Doppeln.
+- **Render:** Die Detailseite rendert das Transkript aus `liveTranscript ?? detail.transcript ?? []` (Snapshot bevorzugt, REST-Load als Fallback bis zum ersten Snapshot). Scroll-Trigger auf `transcript.length` + `liveText`.
+- **A1 — `ping` ignorieren:** expliziter No-op-Zweig für `kind:"ping"` (Keepalive ohne UI-Effekt).
+- **A — Reconnect-Backoff (statt Tight-Loop):** exponentiell mit Jitter (1 s → max 15 s), bei `onopen` zurückgesetzt. Bremst einen Flapping-Sturm und übersteht kurze Netz-/Proxy-Aussetzer.
+- **A3 — Diagnose-Instrumentierung:** `onclose` loggt (nur außerhalb Production) `code`/`reason` + Reconnect-Zähler → erlaubt, Client- vs. Server- vs. Proxy-seitigen Close beim nächsten Live-Vorfall eindeutig zu unterscheiden. Effekt-Deps des Hooks sind sauber `[id]` (kein Re-Init pro Render/Poll); Leitverdacht für (A) bleibt ein Remount/aktives Schließen — final per Live-Log (QA) festzunageln.
+- **Verbindungs-Status sichtbar:** Bei `everConnected && !connected` zeigt ein amber Banner „Verbindung getrennt — verbinde neu … (Stand wird beim Reconnect nachgeladen)". Gegen Initial-Flash gegated (erst nach dem ersten erfolgreichen Connect). Der bestehende `● live / ○ getrennt`-Indikator im Header bleibt.
+
+**Checks:** `npm run lint` sauber, `npm run build` grün, `vitest` 169 passed. Vorbestehender, PROJ-49-fremder `tsc`-Fehler in `lib/md-tree.test.ts` (Testdatei, nicht im Build-Pfad) bleibt unberührt.
+
+**Noch offen:** A2 (Caddy-WS-Idle-Timeout prüfen/setzen, Infra/human-gated bei `/abc-deploy`); A3-Finalbefund am Live-Log (QA).
+
+## QA Test Results (2026-06-26, Branch `dev`)
+**Getestet von:** QA Engineer · **Methode:** pytest (Backend-Integration über `TestClient` + `FakeDriver`), Frontend `lint`/`build`/`vitest`, Code-Red-Team. Browser-Live-Smoke s. „Live-pending" unten (Flapping ist intermittierend + prod-only).
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis | Nachweis |
+|---|---|---|---|
+| 1 | Stabile WS (kein 15–30-s-Reconnect-Takt) | ⚠️ **Mitigiert / live-pending** | Keepalive + Backoff + saubere Effekt-Deps `[id]` adressieren die bekannten Auslöser; der konkrete Trigger ist intermittierend und nur am Live-Log endgültig zu bestätigen (s. AC 6). |
+| 2 | Keepalive verhindert Idle-Timeouts | ✅ **PASS** | `_WS_PING_INTERVAL_S=20` (< ~60 s Proxy-Idle); `test_websocket_keepalive_ping` belegt Ping in stiller Phase. Caddy-Pfad-Check = A2 (Deploy). |
+| 3 | Replay/Resync bei Reconnect (Vollzustand) | ✅ **PASS** | Connect-Snapshot trägt Transkript-Vollzustand; `test_snapshot_carries_full_transcript_for_resync` + `test_reconnect_yields_same_full_snapshot` (idempotent). |
+| 4 | Token-Refresh ohne Daten-Lücke | ✅ **PASS (by design)** | WS liest beim Reconnect den frischen Token (`streamUrl`→`getAccessToken`); REST-Poll refresht bei 401 in ≤4 s; Resync (AC 3) stellt den Stand verlustfrei her. Worst case wenige Sekunden „getrennt", kein Datenverlust. |
+| 5 | Verbindungs-Status sichtbar | ✅ **PASS** | Amber-Banner bei `everConnected && !connected` („verbinde neu … Stand wird nachgeladen") + Header-Indikator `● live / ○ getrennt`. Gegen Initial-Flash gegated. Logik deterministisch (Build grün); visuelle Bestätigung live-pending. |
+| 6 | Ursache (A) behoben/erklärt | ⚠️ **TEILWEISE** | Diagnose-Instrumentierung (Close-`code`/`reason` + Reconnect-Zähler) + Backoff eingebaut; Effekt-Deps als sauber verifiziert (kein Re-Init pro Render/Poll). Der **konkrete Auslöser ist noch nicht final festgenagelt** — die Spec selbst markiert ihn als „Trigger noch unklar / intermittierend". Endbefund erst am Live-Log nach Deploy. |
+| 7 | Lint/Typecheck/Tests grün, keine Regression PROJ-3/4/46 | ✅ **PASS** | `npm run lint` sauber · `npm run build` grün · `vitest` 169 passed · pytest **863 passed**. Regression PROJ-4/25/47/1/3 grün. |
+
+**Summe: 5 PASS · 2 ⚠️ (AC 1 mitigiert, AC 6 teilweise — beide live-pending, KEINE Code-Defekte).**
+
+### Edge Cases (Code-Review-Verifikation)
+- **Reconnect mitten im Broadcast:** kein Verlust/keine Doppelung — Snapshot friert den Stand zum Accept-Zeitpunkt ein, Live-Strom läuft erst danach; `liveText`-Reset + Transkript-Baseline sind idempotent. ✅
+- **Terminale Session während Trennung:** Snapshot trägt terminalen Status → kein „läuft-noch"-Geist. ✅
+- **Sehr lange stille Phase:** Keepalive-Ping (20 s) hält die WS. ✅
+- **Mehrere Tabs/Geräte:** jeder Connect eigener Snapshot + eigene Queue; Fan-out-Semantik unberührt. ✅ (Backend-Fan-out unverändert; mehrfach-Connect-Idempotenz via `test_reconnect_yields_same_full_snapshot` belegt.)
+
+### Security-Red-Team
+- **Kein neuer Angriffsvektor:** keine neuen Endpunkte/Inputs; `transcript` ist serverseitig erzeugt, read-only, und war bereits via REST `GET /{id}` für denselben Owner sichtbar → keine neue Datenexposition.
+- **Owner-Gate unverändert:** Connect prüft weiter `runtime.state.owner != owner` → einheitlich `4404` (kein Existenz-Leak); ungültiger/fehlender Token → `4401`. Kein Cross-Tenant-Leak über den Snapshot.
+- **Ping** ist konstant server→client (kein Input). **Diagnose-Log** ist auf `NODE_ENV !== "production"` gegated → kein Info-Leak in Prod.
+
+### Beobachtungen (Low — keine Blocker)
+- **L1:** Schließt der Server mit `4404` (Session gelöscht/terminal entfernt), reconnectet der Client weiter (alle ≤15 s) statt aufzugeben. Vorbestehendes Muster, kein Datenverlust, nur leichtes Rauschen. Optionaler Folge-Fix: bei `4401/4404` Reconnect einstellen.
+- **L2:** Die WS refresht einen abgelaufenen Token nicht proaktiv selbst, sondern verlässt sich auf den 4-s-REST-Poll. Worst case wenige Sekunden „getrennt" vor erfolgreichem Reconnect; Resync deckt es ab (kein Verlust).
+
+### Neue Tests (permanente Regression)
+`backend/tests/test_proj49_ws_resync.py` (3) + Erweiterungen in `backend/tests/test_sessions_api.py` (`transcript` im Snapshot, `test_websocket_keepalive_ping`).
+
+### Produktionsreife-Empfehlung: ✅ **READY (mit Auflagen)**
+Keine Critical/High-Bugs. Der Resync (B) macht das UI unabhängig vom Flapping-Auslöser robust — das ist das Sicherheitsnetz. AC 1 & 6 sind **live-pending**: das Flapping ist intermittierend und nur im Prod-Betrieb beobachtbar, daher ist ein Deploy nötig, um den A3-Trigger am Live-Log final zu bestätigen.
+**Auflagen für `/abc-deploy`:** (1) **A2** Caddy-WS-Idle-Timeout für `/api/sessions/*/stream` prüfen/setzen (muss > 20 s sein). (2) Nach Deploy das Backend-Log auf wiederholte `[accepted]` derselben Session prüfen + Browser-Devtools-Close-Codes (Diagnose-Log) auswerten → AC 1 & 6 schließen.

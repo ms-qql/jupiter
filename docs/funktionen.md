@@ -401,6 +401,392 @@ sequenceDiagram
 **Tipps zum Verstehen:**
 - Änderungen greifen **live** (mtime-Watch) — kein Neustart. Ist die Datei defekt/fehlt, fallen konservative Defaults ein (nie „kein Schutz").
 
+### Einloggen (JWT-Auth)
+
+**Was du tust:**
+1. Öffne `https://jupiter.auxevo.tech` — du landest auf dem Login-Screen.
+2. Gib Benutzername und Passwort ein, klicke **„Anmelden"**.
+3. Erster Start: Jupiter fragt nach einem Account — **Bootstrap** einmalig ausfüllen.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI as Login-Screen
+  participant API
+  participant DB as SQLite (users)
+  Du->>UI: Benutzername + Passwort eingeben
+  UI->>API: POST /auth/login
+  API->>DB: Passwort-Hash prüfen
+  DB-->>API: OK
+  API-->>UI: Access-Token (JSON) + Refresh-Token (httpOnly-Cookie)
+  UI->>UI: Token im Memory, Cockpit laden
+```
+
+**Wer macht was:**
+- **UI**: `app/login/page.tsx`, `login-form.tsx`
+- **API**: `POST /auth/login` → `backend/app/engine/auth.py`
+- **DB**: Tabellen `users`, `refresh_token_registry`
+
+**Tipps zum Verstehen:**
+- Der Access-Token läuft nach **15 Minuten** ab; das Browser-Tab holt via httpOnly-Cookie automatisch einen neuen. Du musst dich im Normalbetrieb nie erneut anmelden.
+- Bei zu vielen Fehlversuchen (5/30 s) sperrt das Rate-Limit den Login kurz — Schutz gegen Brute-Force.
+
+---
+
+### Git-Branch wechseln / Feature-Branch anlegen
+
+**Was du tust:**
+1. Im Fileexplorer das **Branch-Panel** öffnen.
+2. Bestehenden Branch wählen (wechseln) **oder** Namen für neuen Feature-Branch eingeben.
+3. Klicken — fertig.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI
+  participant API
+  participant Git
+  Du->>UI: Branch auswählen oder neuen Namen eingeben
+  UI->>API: POST /git/switch oder /git/feature-branch
+  API->>API: realpath-Scope + Dirty-Tree-Check (unstaged? → 409)
+  API->>Git: git checkout [-b] <branch>
+  Git-->>API: Exit-Code + neuer Branch-Status
+  API-->>UI: BranchStatus aktualisiert
+```
+
+**Wer macht was:**
+- **UI**: `branch-panel.tsx` (im Dateien-Bereich)
+- **API**: `POST /git/switch`, `POST /git/feature-branch` → `backend/app/engine/git_service.py`
+
+**Tipps zum Verstehen:**
+- Hat das Repo **uncommittete Änderungen**, blockiert der API-Aufruf mit 409 — du musst erst committen oder stashen.
+- Feature-Branches bekommen automatisch einen Slug aus der Spec (z. B. `feat/PROJ-X-name`).
+
+---
+
+### Spracheingabe / Push-to-Talk
+
+**Was du tust:**
+1. In der Session auf den **Mikrofon-Button** drücken und gedrückt halten.
+2. Sprechen.
+3. Loslassen — der Text erscheint im Eingabefeld und wird ans Ende angefügt.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI
+  participant API
+  participant Whisper as faster-whisper (lokal)
+  Du->>UI: Mikrofon-Button gedrückt
+  UI->>UI: Audio aufzeichnen (WebAudio API, im Browser)
+  Du->>UI: Mikrofon-Button loslassen
+  UI->>API: POST /transcription (Audio-Blob)
+  API->>Whisper: faster-whisper.transcribe()
+  Whisper-->>API: Text
+  API-->>UI: TranscriptionResult
+  UI->>UI: Text an Eingabefeld anhängen (kein Überschreiben)
+```
+
+**Wer macht was:**
+- **UI**: `push-to-talk-button.tsx`, `sessions/[id]/page.tsx`
+- **API**: `POST /transcription` → `backend/app/engine/transcription.py`
+
+**Tipps zum Verstehen:**
+- Whisper läuft **lokal** auf dem VPS — kein US-Dienst, DSGVO-konform. Optionaler Groq-Fallback (Cloud) nur bei expliziter Aktivierung.
+- Text wird **angehängt**, nicht ersetzt — du kannst erst tippen, dann nochmal diktieren.
+
+---
+
+### Multi-Agent-Fleet starten (Coordinator)
+
+**Was du tust:**
+1. In einer Koordinator-Session das **Dispatch-Panel** öffnen.
+2. Den topologisch sortierten Plan ansehen (welches Ticket, welche Abhängigkeiten).
+3. Plan freigeben — Jupiter startet die Kind-Sessions.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI
+  participant API
+  participant Coord as CoordinatorService
+  participant CC as Kind-Sessions
+  Du->>UI: Plan ansehen
+  UI->>API: POST /coordinator/plan (liest features/INDEX.md)
+  API-->>UI: Topo-sortierter Plan (Tickets + Abhängigkeiten)
+  Du->>UI: Plan freigeben
+  UI->>API: POST /coordinator/dispatch
+  API->>Coord: Abhängigkeiten checken, Slots freigeben
+  Coord->>CC: je Ticket: POST /sessions (Kind-Session)
+  CC-->>API: Events parallel
+  API-->>UI: Fleet-Status (laufend/wartend/fertig)
+```
+
+**Wer macht was:**
+- **UI**: `fleet-view.tsx`, `coordinator-panel.tsx`, `dispatch-plan-dialog.tsx`
+- **API**: `POST /coordinator/plan|dispatch` → `backend/app/engine/coordinator.py`
+- **Daten**: `features/INDEX.md` des Projekts + Session-Parent-Child-Baum
+
+**Tipps zum Verstehen:**
+- Tickets mit unerfüllten Abhängigkeiten werden **automatisch blockiert** — sie warten in der Queue, bis das vorgelagerte Ticket fertig ist.
+- Du kannst die Fleet jederzeit pausieren oder einzelne Tickets neu zuweisen (andere Rolle, andere Engine).
+
+---
+
+### Cross-Agent-Review starten
+
+**Was du tust:**
+1. In einer Session auf **„Review starten"** klicken.
+2. Reviewer-Engine und Fokus (z. B. „Sicherheit", „Korrektheit") wählen.
+3. Findings in der Reviews-Panel-Ansicht einzeln entscheiden (Annehmen / Ablehnen / Kommentar).
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI
+  participant API
+  participant Rev as Reviewer-Session
+  participant Vault
+  Du->>UI: Review starten, Engine + Fokus wählen
+  UI->>API: POST /sessions/{id}/challenge
+  API->>Rev: neue Reviewer-Session (adversariell, selbe oder andere Engine)
+  Rev-->>API: Findings (strukturierte Karten)
+  API-->>UI: ReviewRead mit Findings
+  Du->>UI: Finding annehmen/ablehnen/kommentieren
+  UI->>API: POST /reviews/{id}/findings/{fid}
+  API->>Vault: Audit-Trail schreiben
+```
+
+**Wer macht was:**
+- **UI**: `challenge-dialog.tsx`, `reviews-panel.tsx`, `review-finding.tsx`
+- **API**: `/sessions/{id}/challenge`, `/reviews/{id}` → `backend/app/engine/challenge.py`
+
+**Tipps zum Verstehen:**
+- Der Reviewer wird bewusst **adversariell** instruiert — er sucht Fehler, nicht Bestätigung.
+- Jede Finding-Entscheidung landet als Audit-Trail im Vault, auch verworfene Findings.
+
+---
+
+### Marktplatz: Rollen, Skills, Agenten verwalten
+
+**Was du tust:**
+1. Öffne den **Marktplatz** (Sidebar oder `/apps`-Route).
+2. Katalog durchsuchen oder eine **`.jupkg`-Datei hochladen**.
+3. Import-Preview prüfen (Capabilities, Policy-Impact), bestätigen.
+4. Eintrag **installieren** und **aktivieren**.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI
+  participant API
+  participant Reg as RegistryStore
+  Du->>UI: .jupkg hochladen
+  UI->>API: POST /registry/import (Preview)
+  API->>Reg: Paket parsen, Capabilities + Policies prüfen
+  API-->>UI: ImportPreview (Diffs, Risiko-Bewertung)
+  Du->>UI: Bestätigen
+  UI->>API: POST /registry/import/confirm
+  API->>Reg: Eintrag speichern
+  Du->>UI: Aktivieren
+  UI->>API: POST /registry/{typ}/{id}/activate
+  API-->>UI: Eintrag aktiv (Rolle/Skill sofort nutzbar)
+```
+
+**Wer macht was:**
+- **UI**: `registry-control.tsx`, `(cockpit)/apps/[key]/page.tsx`
+- **API**: `/registry/*` → `backend/app/engine/marketplace.py`
+
+**Tipps zum Verstehen:**
+- Import ist **zweistufig** (Preview → Confirm) — du siehst immer, was sich ändert, bevor es wirksam wird.
+- Rollen werden nach Aktivierung sofort im Session-Dialog angeboten; Skills in der Konstitution nutzbar.
+
+---
+
+### Session reanimieren (Liveness + Auto-Restart)
+
+**Was du tust:**
+1. Eine Session zeigt „hängt" — der **Heartbeat-Dot** ist rot.
+2. Jupiter versucht es **automatisch** (bis zum Budget, Standard: 2 Versuche).
+3. Nach Erschöpfen des Budgets: **Manuell reanimieren** klicken.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Monitor as LivenessMonitor
+  participant API
+  participant UI
+  participant CC as claude -p
+  loop jede poll_interval s
+    Monitor->>Monitor: PID-Check + progress_timeout
+    alt Tool in-flight
+      Monitor->>Monitor: tool_in_flight_timeout (höhere Geduld)
+    end
+  end
+  Monitor->>CC: SIGTERM → Neustart
+  Monitor->>API: Attempt-Count +1
+  API-->>UI: Heartbeat-Dot rot + Versuch N/max
+  alt Budget erschöpft
+    API-->>UI: "Manuell reanimieren"-Button
+    Du->>UI: Klick
+    UI->>API: POST /sessions/{id}/reanimate
+    API->>CC: Neustart (reset Zähler)
+  end
+```
+
+**Wer macht was:**
+- **Logik**: `backend/app/engine/liveness.py` (`LivenessMonitor`) + `config/liveness.yaml`
+- **UI**: `heartbeat-dot.tsx`, `reanimate-button.tsx`, `liveness-control.tsx`
+
+**Tipps zum Verstehen:**
+- Jupiter **wartet länger**, wenn ein Tool gerade läuft (PROJ-32 Tool-in-Flight-Flag) — so werden legitim lange Operationen nicht fälschlicherweise als „hängt" bewertet.
+- Nach dem Budget: nur noch manuelles Reanimieren — verhindert Endlosschleifen (PROJ-45-Hysterese).
+
+---
+
+### Live-Aktivität beobachten (Aktivitäts-Ticker)
+
+**Was du tust:**
+1. In einer laufenden Session den **Aktivitäts-Ticker** unten im Transkript-Bereich beobachten.
+2. Er zeigt: welches Tool gerade läuft, Ziel-Datei, kurzer Text-Ausschnitt.
+3. Zum Ausblenden einklappen.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant CC as claude -p
+  participant API
+  participant UI
+  CC->>API: Tool-Start Event
+  API->>API: Aktivitäts-Payload bauen (Tool, Target, Snippet)
+  API-->>UI: WS kind:"activity" (transient)
+  UI->>UI: activity-ticker aktualisieren
+  Note over UI: Kein REST-Pull; rein WS-getrieben; keine History
+```
+
+**Wer macht was:**
+- **API**: Event-Broadcast in `routes/sessions.py`
+- **UI**: `activity-ticker.tsx` in `sessions/[id]/page.tsx`
+
+**Tipps zum Verstehen:**
+- Der Ticker ist **transient** — er zeigt das Jetzt, keine Vergangenheit. Für die volle History ist das Transkript zuständig.
+- Im Bypass-Modus (auto-allow) ist das der einzige Weg zu sehen, was der Agent gerade tut, ohne auf Decision Cards zu warten.
+
+---
+
+### Video zusammenfassen (Video Summary)
+
+**Was du tust:**
+1. Öffne die **Video-Summary-Micro-App** in der Sidebar.
+2. Video-URL(s) einfügen → **„In Warteschlange"**.
+3. Modell und Standard-Ordner ggf. anpassen.
+4. **„Jetzt starten"** oder automatisch im Hintergrund abarbeiten lassen.
+5. Fertiges Summary in der **Bibliothek** ansehen.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI
+  participant API
+  participant Worker as VideoSummaryWorker
+  participant Vault
+  Du->>UI: URL einfügen + In Warteschlange
+  UI->>API: POST /video-summary/queue
+  API->>Worker: URL zur Queue hinzufügen (SQLite)
+  Du->>UI: Jetzt starten
+  UI->>API: POST /video-summary/run-now
+  Worker->>Worker: hal-video-summary-Skill (transkribieren + zusammenfassen)
+  Worker->>Vault: Summary-MD schreiben (Standard-Ordner)
+  API-->>UI: Queue-Status aktualisiert
+```
+
+**Wer macht was:**
+- **UI**: Video-Summary-Micro-App (Sidebar)
+- **API**: `/video-summary/*` → `backend/app/engine/video_summary.py`
+- **Persistenz**: `video_summary_queue` (SQLite) + Summary im Vault
+
+**Tipps zum Verstehen:**
+- Der Worker läuft **nicht-interaktiv** — er braucht keine Eingabe während der Verarbeitung.
+- Modell-Wahl ist **persistent** — du musst es nicht jedes Mal neu wählen.
+
+---
+
+### VPS-Admin: Metriken & Terminal
+
+**Was du tust:**
+1. **Dashboard**: Öffne die VPS-Admin-Micro-App → sieh CPU/RAM/Disk/Load als Ampel.
+2. **Terminal**: Klick auf „Terminal öffnen" → ttyd-Shell im Browser-Tab.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI
+  participant API
+  participant OS as VPS-OS
+
+  Du->>UI: VPS-Admin öffnen (Dashboard)
+  UI->>API: GET /metrics/current
+  API->>OS: psutil (CPU/RAM/Disk/Load)
+  OS-->>API: Metriken (gecacht per Tick)
+  API-->>UI: MetricsSnapshot (Ampelfarben)
+
+  Du->>UI: Terminal öffnen
+  UI->>API: GET /terminal/info
+  API->>OS: TCP-Probe auf ttyd-Port
+  OS-->>API: erreichbar/nicht erreichbar
+  API-->>UI: TerminalInfo (URL)
+  UI->>UI: ttyd in iFrame einbetten
+```
+
+**Wer macht was:**
+- **UI**: VPS-Admin-Micro-App, `ampel.tsx`, `embed-tab.tsx`
+- **API**: `GET /metrics/current` → `engine/metrics.py`; `GET /terminal/info` → `routes/terminal.py`
+
+**Tipps zum Verstehen:**
+- Metriken sind **read-only** und gecacht — sie verursachen keine Abfragelast pro Seitenaufruf.
+- Das Terminal ist **echte Shell auf dem VPS** — mit ttyd läuft ein vollwertiger Shell-Tab im Browser.
+
+---
+
+### Sidebar anpassen (Sektionen, Micro-Apps, Orchestration)
+
+**Was du tust:**
+1. Klicke das **Konfig-Icon** im Sidebar-Header → Konfig-Panel öffnet sich.
+2. Sektionen ein-/ausblenden oder per Drag-and-Drop umsortieren.
+3. **Speichern** — Präferenzen bleiben auch nach Reload erhalten.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI
+  participant LS as localStorage
+  Du->>UI: Konfig-Panel öffnen
+  UI->>LS: Prefs laden (Reihenfolge, Sichtbarkeit)
+  Du->>UI: Sektion ausblenden oder verschieben
+  Du->>UI: Speichern
+  UI->>LS: Prefs schreiben
+  UI->>UI: Sidebar neu rendern (sofort)
+```
+
+**Wer macht was:**
+- **UI**: `sidebar-config-panel.tsx`, `sidebar-prefs-provider.tsx`, `session-rail.tsx`
+- **Persistenz**: `localStorage` (kein Backend nötig)
+
+**Tipps zum Verstehen:**
+- Die **Workspace-Sektion** ist immer sichtbar — so kommst du nie ans Konfig-Panel nicht heran.
+- Micro-Apps und Orchestration-Apps kommen aus der **Registry** — nach einer neuen Installation erscheinen sie automatisch in der Sidebar ohne Neustart.
+
+---
+
 ## Wiederkehrende Muster
 
 Fast jede Lese-Ansicht im Cockpit folgt demselben Standard-Muster — die einzelnen Funktionen oben verweisen darauf, statt es zu wiederholen:
