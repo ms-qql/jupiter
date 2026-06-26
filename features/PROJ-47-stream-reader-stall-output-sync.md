@@ -59,7 +59,7 @@ Der **stdout-Stream-Leser** einer Session bleibt stehen, während der Subprozess
 
 ## Zweitbefund — WebSocket-Flapping zum Browser (separat scope-bar)
 Im selben Vorfall flappte die **WebSocket Backend→Browser** für **beide** laufenden Sessions (`3e16cb4a` und `5a2969fc`) im ~15-30-s-Takt (`WebSocket … [accepted]` wiederholt im Backend-Log) mit GET-Re-Polling. Bei jedem Reconnect bekommt der neue Subscriber **nur** ab Verbindungszeit Events — verpasste `message`-Broadcasts werden **nicht nachgeliefert** → veraltetes Transkript im UI, selbst wenn das Backend die Daten hat.
-**Empfehlung:** als eigenes Ticket behandeln (Delivery-Layer: WS-Stabilität + Replay/Resync der verpassten Events bei Reconnect), da mechanistisch getrennt vom Reader-Stall (Backend↔Subprozess). Falls /abc-architecture es zusammenfassen will, hier andocken; sonst PROJ-48 dafür.
+**→ Eigenes Ticket: [PROJ-49](PROJ-49-websocket-flapping-event-replay.md)** (Delivery-Layer: WS-Stabilität + Replay/Resync der verpassten Events bei Reconnect), mechanistisch getrennt vom Reader-Stall hier (Backend↔Subprozess vs. Backend↔Browser).
 
 ## Betroffene Features (Cross-Feature-Impact — explizit)
 | Feature | Wirkung dieses Fixes |
@@ -138,7 +138,7 @@ SessionRuntime    (backend/app/engine/manager.py)
 ### Offene Design-Fragen — Entscheidungen
 1. **Stall-Mechanismus:** ✅ bestätigt = ungeschützter Reader + 64-KiB-Limit + fehlende Aufsicht (nicht die vermutete stdin-Kopplung).
 2. **Stall-Schwelle:** „Prozess lebt + Reader-Task beendet" ist ein **deterministisches** Signal (kein Timeout-Raten) — sauberer als eine Sekunden-Schwelle; konservativ und klar von PROJ-32/45 getrennt.
-3. **WS-Flapping (Zweitbefund):** **getrennt** als **PROJ-48** (Delivery-Layer ≠ Subprozess-Pump). Empfehlung: nach PROJ-47 als eigene Spec via `/abc-requirements`.
+3. **WS-Flapping (Zweitbefund):** **getrennt** als **PROJ-49** ([Spec](PROJ-49-websocket-flapping-event-replay.md), Delivery-Layer ≠ Subprozess-Pump).
 
 > **Hinweis an Backend-Dev:** Beim Bau zusätzlich kurz prüfen, ob `send_input` ([manager.py:1366](backend/app/engine/manager.py#L1366)) den Status mitten im Turn fälschlich auf `RUNNING` zurücksetzt (Edge „Input exakt im Moment des `result`") — falls ja, minimal absichern. Kernfix bleibt der Reader.
 
@@ -164,4 +164,4 @@ SessionRuntime    (backend/app/engine/manager.py)
 - [x] Kein stiller Tod (`test_reader_crash_emits_error_event_not_silent`, `test_done_callback_logs_reader_exception`).
 - [x] Deutsche Logs/Texte; volle Suite grün (**859 passed**); keine Regression PROJ-1/14/27.
 
-**Offen / Folgeticket:** WS-Flapping (Zweitbefund) bleibt separat → **PROJ-48** via `/abc-requirements`.
+**Offen / Folgeticket:** WS-Flapping (Zweitbefund) bleibt separat → **PROJ-49** ([Spec](PROJ-49-websocket-flapping-event-replay.md)).
