@@ -71,10 +71,13 @@ def test_parse_result_paths_missing_marker():
 
 
 def test_build_prompt_invokes_skill_and_forbids_questions():
-    p = build_prompt("https://youtu.be/x")
+    p = build_prompt("https://youtu.be/x", "04 Resources/Video Summaries")
     assert p.startswith("/hal-video-summary https://youtu.be/x")
     assert "AskUserQuestion" in p
     assert "JUPITER_VIDEO_RESULT" in p
+    # PROJ-44: fester Zielordner statt Auto-Kategorie.
+    assert "04 Resources/Video Summaries/" in p
+    assert "KEINE Kategorie" in p
 
 
 def test_next_run_at_today_and_tomorrow():
@@ -115,7 +118,7 @@ async def _drain_to_idle(worker: VideoSummaryWorker, max_ticks: int = 50) -> Non
 async def test_drossel_pauses_after_batch_size(tmp_path, monkeypatch):
     worker = _worker(tmp_path, monkeypatch)
     await worker.startup()
-    await worker.save_settings(cooldown_minutes=30, batch_size=4, schedule="")
+    await worker.save_settings(cooldown_minutes=30, batch_size=4, schedule="", model="sonnet")
     await worker.add_urls([f"https://v.com/{i}" for i in range(5)])
     await worker.run_now()
 

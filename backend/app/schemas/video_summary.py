@@ -8,6 +8,10 @@ from pydantic import BaseModel, Field
 QueueStatus = Literal["pending", "running", "done", "error"]
 WorkerStatus = Literal["idle", "running", "paused"]
 
+# Erlaubte Umwandlungs-Modelle (PROJ-44). Kurz-Aliase, die die Claude-CLI als
+# ``--model`` akzeptiert. Server-Whitelist gegen ungültige Slugs (PROJ-18-Slug-Falle).
+VALID_MODELS: tuple[str, ...] = ("haiku", "sonnet", "opus")
+
 
 class QueueItemRead(BaseModel):
     """Ein Warteschlangen-Eintrag (eine Zeile pro eingereichtem Video)."""
@@ -66,6 +70,7 @@ class VideoSummarySettingsRead(BaseModel):
     cooldown_minutes: int
     batch_size: int
     schedule: str = Field("", description="Tagesplan HH:MM (24h) oder leer = nur manuell.")
+    model: str = Field("sonnet", description="Modell der Umwandlung (haiku | sonnet | opus).")
 
 
 class VideoSummarySettingsPatch(BaseModel):
@@ -76,3 +81,15 @@ class VideoSummarySettingsPatch(BaseModel):
     schedule: str | None = Field(
         None, description="Tagesplan HH:MM (24h) oder leerer String = kein Plan."
     )
+    model: str | None = Field(
+        None, description="Modell der Umwandlung (haiku | sonnet | opus)."
+    )
+
+
+class VideoSummaryLibraryItem(BaseModel):
+    """Eine bereits umgewandelte Notiz im Standard-Ordner (Vault-Scan, PROJ-44)."""
+
+    title: str = Field(..., description="Dateiname ohne .md-Endung.")
+    md_path: str = Field(..., description="Absoluter Pfad der .md-Notiz (für MD-Reader).")
+    pdf_path: str | None = Field(None, description="Absoluter Pfad eines gleichnamigen .pdf, falls vorhanden.")
+    mtime: str | None = Field(None, description="Letzte Änderung (ISO 8601).")

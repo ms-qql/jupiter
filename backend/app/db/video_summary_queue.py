@@ -60,9 +60,17 @@ CREATE TABLE IF NOT EXISTS video_summary_settings (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     cooldown_minutes  INTEGER NOT NULL DEFAULT 30,
     batch_size        INTEGER NOT NULL DEFAULT 4,
-    schedule          TEXT NOT NULL DEFAULT ''
+    schedule          TEXT NOT NULL DEFAULT '',
+    model             TEXT NOT NULL DEFAULT 'sonnet'
 );
 """
+
+# Idempotente Spalten-Migrationen für bestehende DBs (Vorbild ``session_index.py``):
+# (Spaltenname, Spalten-DDL). Beim Start best-effort angewendet — eine bereits
+# vorhandene Spalte wirft „duplicate column" und wird ignoriert.
+_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("model", "ALTER TABLE video_summary_settings ADD COLUMN model TEXT NOT NULL DEFAULT 'sonnet'"),
+)
 
 
 @runtime_checkable
@@ -78,7 +86,7 @@ class VideoSummaryRepository(Protocol):
     async def reset_running(self) -> None: ...
     async def get_settings(self) -> dict: ...
     async def save_settings(
-        self, cooldown_minutes: int, batch_size: int, schedule: str
+        self, cooldown_minutes: int, batch_size: int, schedule: str, model: str
     ) -> dict: ...
     async def close(self) -> None: ...
 
@@ -117,10 +125,17 @@ class SqliteVideoSummaryRepository:
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
+            # Idempotente Spalten-Migrationen für bestehende DBs (z. B. ``model``).
+            for _col, ddl in _MIGRATIONS:
+                try:
+                    conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass  # Spalte existiert bereits (frische DB via SCHEMA_SQL).
             # Default-Einstellungszeile sicherstellen (idempotent).
             conn.execute(
                 "INSERT OR IGNORE INTO video_summary_settings "
-                "(id, cooldown_minutes, batch_size, schedule) VALUES (1, 30, 4, '')"
+                "(id, cooldown_minutes, batch_size, schedule, model) "
+                "VALUES (1, 30, 4, '', 'sonnet')"
             )
 
     def _list_queue_sync(self) -> list[dict]:
@@ -178,28 +193,30 @@ class SqliteVideoSummaryRepository:
     def _get_settings_sync(self) -> dict:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT cooldown_minutes, batch_size, schedule "
+                "SELECT cooldown_minutes, batch_size, schedule, model "
                 "FROM video_summary_settings WHERE id = 1"
             ).fetchone()
         if row is None:
-            return {"cooldown_minutes": 30, "batch_size": 4, "schedule": ""}
+            return {"cooldown_minutes": 30, "batch_size": 4, "schedule": "", "model": "sonnet"}
         return dict(row)
 
     def _save_settings_sync(
-        self, cooldown_minutes: int, batch_size: int, schedule: str
+        self, cooldown_minutes: int, batch_size: int, schedule: str, model: str
     ) -> dict:
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO video_summary_settings (id, cooldown_minutes, batch_size, schedule) "
-                "VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                "INSERT INTO video_summary_settings (id, cooldown_minutes, batch_size, schedule, model) "
+                "VALUES (1, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
                 "cooldown_minutes = excluded.cooldown_minutes, "
-                "batch_size = excluded.batch_size, schedule = excluded.schedule",
-                (cooldown_minutes, batch_size, schedule),
+                "batch_size = excluded.batch_size, schedule = excluded.schedule, "
+                "model = excluded.model",
+                (cooldown_minutes, batch_size, schedule, model),
             )
         return {
             "cooldown_minutes": cooldown_minutes,
             "batch_size": batch_size,
             "schedule": schedule,
+            "model": model,
         }
 
     # --- Async-Fassade -----------------------------------------------------
@@ -229,10 +246,10 @@ class SqliteVideoSummaryRepository:
         return await asyncio.to_thread(self._get_settings_sync)
 
     async def save_settings(
-        self, cooldown_minutes: int, batch_size: int, schedule: str
+        self, cooldown_minutes: int, batch_size: int, schedule: str, model: str
     ) -> dict:
         return await asyncio.to_thread(
-            self._save_settings_sync, cooldown_minutes, batch_size, schedule
+            self._save_settings_sync, cooldown_minutes, batch_size, schedule, model
         )
 
     async def close(self) -> None:

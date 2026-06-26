@@ -67,6 +67,7 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-41 | Video Summary (native Micro-App: URL-Queue → `hal-video-summary` → Hal) | P1 | Micro-Apps | Deployed |
 | PROJ-42 | VPS-Admin — Dashboard (native Micro-App: Metriken + Sidebar-Ampel) | P1 | Micro-Apps | Deployed |
 | PROJ-43 | VPS-Admin — Terminal (ttyd-iFrame Shell-Zugriff) | P1 | Micro-Apps | Architected |
+| PROJ-44 | Video Summary — Standard-Ordner · Bibliotheks-Kachel · Modellwahl | P1 | Micro-Apps | Planned |
 
 ---
 
