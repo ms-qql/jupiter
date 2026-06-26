@@ -8,6 +8,7 @@ faster-whisper>=1.0      # PROJ-20: self-hosted Whisper (CPU/int8), Default-Tran
 psutil>=5.9              # PROJ-42: VPS-Admin Host-Metriken (CPU/RAM/Disk/Swap/Netz/Prozesse)
 python-jose[cryptography]>=3.3  # PROJ-25: JWT HS256 (Access-/Refresh-Token)
 bcrypt>=4.1             # PROJ-25: Passwort-Hash (direkt, ohne passlib)
+limits>=3.0             # PROJ-25 Hardening: Rate-Limiting auf /auth/* (Login/Bootstrap/Refresh) via FastAPI-Dependency
 
 # Dev / Test
 pytest>=8

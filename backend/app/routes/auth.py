@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from ..config import settings
 from ..deps import CurrentUser, get_auth_service, get_current_user
 from ..engine.auth import AuthError, AuthService
+from ..ratelimit import rate_limit
 from ..schemas.auth import (
     AccessTokenResponse,
     AuthStatus,
@@ -65,7 +66,11 @@ async def auth_status(auth: AuthService = Depends(get_auth_service)) -> dict:
     return {"has_users": await auth.has_users()}
 
 
-@router.post("/bootstrap", response_model=TokenResponse)
+@router.post(
+    "/bootstrap",
+    response_model=TokenResponse,
+    dependencies=[Depends(rate_limit("5/minute"))],
+)
 async def bootstrap(
     payload: LoginRequest, response: Response, auth: AuthService = Depends(get_auth_service)
 ) -> dict:
@@ -78,7 +83,11 @@ async def bootstrap(
     return {"access_token": access, "user": user}
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    dependencies=[Depends(rate_limit("5/minute"))],
+)
 async def login(
     payload: LoginRequest, response: Response, auth: AuthService = Depends(get_auth_service)
 ) -> dict:
@@ -90,7 +99,11 @@ async def login(
     return {"access_token": access, "user": user}
 
 
-@router.post("/refresh", response_model=AccessTokenResponse)
+@router.post(
+    "/refresh",
+    response_model=AccessTokenResponse,
+    dependencies=[Depends(rate_limit("30/minute"))],
+)
 async def refresh(
     request: Request, response: Response, auth: AuthService = Depends(get_auth_service)
 ) -> dict:

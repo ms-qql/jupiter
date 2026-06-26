@@ -2,7 +2,7 @@
 
 ## Status: In Progress
 **Created:** 2026-06-23
-**Last Updated:** 2026-06-25
+**Last Updated:** 2026-06-26
 **Baustein:** #21 (Ausbau)
 **Prio:** P2 (Phase 2 — Skalierung)
 
@@ -18,6 +18,13 @@ Das MVP ist bewusst **single-user, ohne echtes Auth/RLS** — es trägt nur ein 
 Damit wird Jupiter **teamfähig**, ohne das Datenmodell umzubauen: Das `owner`-Feld existiert überall schon; hier kommt die Durchsetzung dazu.
 
 **Grundhaltung:** Identität war von Tag 1 da (#21); dieses Feature schaltet die Durchsetzung scharf — minimaler Umbau, maximaler Migrationsschutz.
+
+## Deployment-/Betriebsnotiz (2026-06-26)
+- **Scharfgeschaltet auf prod:** Erstes App-Konto via `/auth/bootstrap` angelegt → Soft-Gate (`deps.get_current_user`) ist jetzt **scharf** (401 ohne gültigen Bearer-JWT) für alle geschützten Router. Ausgenommen: `/auth`, `/internal` (Hook-Token), `/vault/v1` (Consumer-Key), `/sessions` (per-Route; WS via `?access_token=`), `/health`.
+- **Auslöser/Lektion:** Routen waren zunächst 404, weil `jupiter-backend` mit altem Code lief — Code-Änderungen auf `dev` greifen erst nach `sudo systemctl restart jupiter-backend` (Services laufen direkt aus dem Repo-Workingtree, kein separates Deploy-Artefakt). `JUPITER_JWT_SECRET` wurde in `/etc/jupiter-backend.env` gesetzt (vorher unsicherer Dev-Default).
+- **Einziger Login (Cutover):** Der frühere Forward-Auth-Cookie-Perimeter (Caddy `forward_auth :9100`) wurde aus dem `jupiter.auxevo.tech`-Block **entfernt** — die App-JWT-Auth ist jetzt der alleinige Login (keine Doppelanmeldung). Caddy blockt `/api/internal/*` extern mit 403 (Permission-Hook läuft localhost-only). Paperclip (9101) + Wayland unberührt. Rollback: `/etc/caddy/Caddyfile.bak-20260626-pre-perimeter`.
+- **Impact-Analyse bestätigt:** Kein 401-Bruch in der Orchestration — Permission-Callback (`X-Jupiter-Hook-Token`), Live-Stream-WS (`access_token`-Query-Param, owner-scoped) und Vault-Shared (Consumer-Key) haben eigene, JWT-unabhängige Auth-Wege.
+- **Rate-Limiting (erledigt 2026-06-26):** `/auth/login` & `/auth/bootstrap` **5/min**, `/auth/refresh` **30/min**, je Client-IP (aus `X-Forwarded-For`, da Caddy davor). Umgesetzt als FastAPI-**Dependency** (`app/ratelimit.py`, `limits`-Lib, Fixed-Window in-memory) statt slowapi-Decorator — Letzterer bricht bei `from __future__ import annotations` die Body-Erkennung (Wrapper-`__globals__` → String-Annotation `LoginRequest` nicht auflösbar → 422). Per `settings.auth_rate_limit_enabled` schaltbar (in Tests via conftest aus). 429 mit deutscher Meldung. Tests grün (785 passed).
 
 ## User Stories
 - Als Nutzer möchte ich mich **anmelden** (JWT, kurzer Access- + längerer Refresh-Token) und danach nur **meine eigenen** Sessions/Artefakte sehen.

@@ -26,3 +26,6 @@ def _isolate_vault(tmp_path, monkeypatch):
     # Hintergrund-Worker-Tick im Test praktisch ausschalten (großes Intervall) →
     # Tests treiben den Worker deterministisch selbst via tick().
     monkeypatch.setattr(settings, "video_summary_poll_interval_seconds", 3600.0)
+    # PROJ-25 Hardening: Rate-Limiting der Auth-Endpunkte im Test AUS (sonst teilen
+    # sich alle Tests die "testclient"-IP und laufen nach 5 Logins/Bootstraps in 429).
+    monkeypatch.setattr(settings, "auth_rate_limit_enabled", False)

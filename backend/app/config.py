@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     refresh_cookie_path: str = "/auth"
     # Mindestlänge für Bootstrap-/Login-Passwörter (Eingabe-Validierung).
     password_min_length: int = 8
+    # Rate-Limiting der öffentlichen Auth-Endpunkte (Login/Bootstrap/Refresh) gegen
+    # Brute-Force — nötig, seit der Forward-Auth-Perimeter entfernt wurde und /auth/*
+    # direkt internet-exponiert ist. In Tests via conftest abgeschaltet.
+    auth_rate_limit_enabled: bool = True
 
     # CORS-Origins für das Browser-Frontend (PROJ-3 Cockpit). Dev-Default = Next.js
     # auf :3000. In Prod via JUPITER_CORS_ORIGINS (JSON-Liste) überschreiben.
