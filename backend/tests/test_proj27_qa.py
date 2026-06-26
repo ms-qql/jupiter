@@ -124,8 +124,10 @@ async def test_bug1fix_genuine_tool_hang_beyond_in_flight_is_still_hanging(monke
 @pytest.mark.asyncio
 async def test_bug1fix_in_flight_patience_released_after_tool_finishes(monkeypatch):
     """Re-QA-Schärfung: die großzügige In-Flight-Geduld darf NICHT über den Tool-Call
-    hinaus leaken. Sobald das Modell wieder produziert (note_progress), ist kein Tool mehr
-    in-flight → ein anschließender echter Stillstand greift wieder beim normalen Timeout."""
+    hinaus leaken. Sobald der Turn fertig ist (result-Event = feed_usage), ist kein Tool
+    mehr in-flight → ein anschließender echter Stillstand greift wieder beim normalen
+    Timeout. PROJ-45: erst die echte Turn-Grenze beendet die Geduld, nicht ein kurzer
+    Zwischensatz (note_progress)."""
     monkeypatch.setattr(
         liveness, "liveness_store",
         StubLivenessStore(progress_timeout_seconds=180, tool_in_flight_timeout_seconds=600),
@@ -136,7 +138,7 @@ async def test_bug1fix_in_flight_patience_released_after_tool_finishes(monkeypat
     rt.watchdog = WatchdogMonitor(watchdog.watchdog_store, clock=clk)
     rt.watchdog.record("Bash", {"command": "kurzes-tool"})
     assert rt.watchdog.tool_in_flight is True
-    rt.watchdog.note_progress()  # Tool fertig, Modell produziert wieder
+    rt.watchdog.feed_usage(100)  # Turn fertig (result-Event)
     assert rt.watchdog.tool_in_flight is False  # Geduld freigegeben
     clk.advance(200)  # danach echter Stillstand > normalem Timeout (180), KEIN Tool mehr
     rt.state.status = RUNNING

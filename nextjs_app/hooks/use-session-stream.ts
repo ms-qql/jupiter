@@ -14,11 +14,23 @@ export interface ThresholdNotice {
   threshold_pct: number;
 }
 
+/** Live-Aktivitäts-Ticker (PROJ-46): jüngste Tool-Start-Aktion, transient. */
+export interface LiveActivity {
+  /** Tool-Name (z. B. "Edit", "Bash"); `null` = Ticker geleert (Session terminal). */
+  tool: string | null;
+  /** Knapper, serverseitig gekürzter Ziel-Hinweis (Datei/Kommando-Kopf). */
+  target: string;
+  /** ISO-Zeitstempel des Tool-Starts (oder `null` beim Leeren). */
+  ts: string | null;
+}
+
 interface StreamResult {
   /** Letzter State-Snapshot vom Server (live, ohne Polling). */
   state: Session | null;
   /** Seit Verbindungsaufbau gestreamter Assistenten-Text. */
   liveText: string;
+  /** PROJ-46: jüngste Tool-Aktion (transient); `null`, solange noch keine kam. */
+  lastActivity: LiveActivity | null;
   connected: boolean;
 }
 
@@ -30,6 +42,7 @@ interface StreamOptions {
 export function useSessionStream(id: string, opts?: StreamOptions): StreamResult {
   const [state, setState] = useState<Session | null>(null);
   const [liveText, setLiveText] = useState("");
+  const [lastActivity, setLastActivity] = useState<LiveActivity | null>(null);
   const [connected, setConnected] = useState(false);
   const closedByUs = useRef(false);
   // Callback in einem Ref halten → die WS-Verbindung hängt nicht an seiner Identität.
@@ -54,6 +67,9 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
           role?: string;
           text?: string;
           event?: string;
+          tool?: string | null;
+          target?: string;
+          ts?: string | null;
         } & Partial<Session>;
         try {
           msg = JSON.parse(ev.data);
@@ -64,6 +80,13 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
           setState(msg as Session);
         } else if (msg.kind === "message" && msg.role === "assistant" && msg.text) {
           setLiveText((prev) => prev + msg.text);
+        } else if (msg.kind === "activity") {
+          // PROJ-46: leerer Stand (tool === null) = Session terminal → Ticker löschen.
+          setLastActivity(
+            msg.tool
+              ? { tool: msg.tool, target: msg.target ?? "", ts: msg.ts ?? null }
+              : null,
+          );
         } else if (msg.kind === "notice" && msg.event === "threshold_reached") {
           onNotice.current?.(msg as unknown as ThresholdNotice);
         }
@@ -88,5 +111,5 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
     };
   }, [id]);
 
-  return { state, liveText, connected };
+  return { state, liveText, lastActivity, connected };
 }

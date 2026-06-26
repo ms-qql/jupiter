@@ -15,6 +15,7 @@ import { HandoverDialog } from "@/components/cockpit/handover-dialog";
 import { ChallengeDialog } from "@/components/cockpit/challenge-dialog";
 import { ReviewsPanel } from "@/components/cockpit/reviews-panel";
 import { HeartbeatDot } from "@/components/cockpit/heartbeat-dot";
+import { ActivityTicker } from "@/components/cockpit/activity-ticker";
 import { ReanimateButton } from "@/components/cockpit/reanimate-button";
 import { ResetSessionButton } from "@/components/cockpit/reset-session-button";
 import { SessionThresholdControl } from "@/components/cockpit/threshold-control";
@@ -42,7 +43,7 @@ export default function SessionDetailPage({
 }) {
   const { id } = use(params);
   const now = useNow();
-  const { state: liveState, liveText, connected } = useSessionStream(id, {
+  const { state: liveState, liveText, lastActivity, connected } = useSessionStream(id, {
     onNotice: (n) => {
       if (n.event === "threshold_reached") {
         toast.warning(
@@ -236,6 +237,10 @@ export default function SessionDetailPage({
           className="pb-1"
         />
       )}
+
+      {/* PROJ-46: Live-Aktivitäts-Ticker — zeigt die jüngste Tool-Aktion + Text-Schnipsel
+          (v. a. im Bypass, wo keine Decision Card die Sichtbarkeit liefert). Transient. */}
+      <ActivityTicker lastActivity={lastActivity} liveText={liveText} className="my-1" />
 
       {/* PROJ-27: Liveness-Banner — hängende/tote Sessions reanimieren, mit Rückmeldung. */}
       {head && canReanimate(head.liveness) && (

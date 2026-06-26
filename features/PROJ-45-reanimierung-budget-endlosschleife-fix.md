@@ -1,6 +1,6 @@
 # PROJ-45: Auto-Reanimierungs-Budget — Endlosschleife & False-„hängt" abstellen
 
-## Status: Planned
+## Status: Approved
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -73,4 +73,191 @@ Auswertung der Vault-Session-Logs seit 25.06. zeigt Sessions, die **bis zu 25×*
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-26 · **Stack:** Backend-only (FastAPI / Engine-Layer, Python) — kein Frontend, keine DB, kein neuer API-Endpoint · **Branch:** dev
+
+### Kurzfassung
+Reiner Engine-Bugfix in drei Dateien (`manager.py`, `liveness.py`, `watchdog.py`). Zwei
+unabhängige Wurzelursachen, zwei kleine, getrennt testbare Eingriffe — kein neuer Zustand,
+keine zweite Buchhaltung, O(1) im Poll-Tick. Frontend, Settings-Tab und die Liveness-Config
+(YAML) bleiben unverändert; bestehende Schwellen genügen.
+
+### Was wird geändert (grobes Bild)
+```
+Engine-Layer (backend/app/engine/)
+├── manager.py
+│   ├── evaluate_liveness_once()      ← Bug 1: Budget-Reset nicht mehr blind bei „aktiv",
+│   │                                    sondern nur bei ECHTEM neuen Fortschritt
+│   ├── _auto_reanimate()             ← merkt sich den Fortschritts-Stand zum Reanim-Zeitpunkt
+│   └── _resume()                     ← markiert „kein Tool mehr in-flight" beim Resume-Start
+├── liveness.py
+│   └── LivenessMonitor               ← ein neues Feld: Fortschritts-Wasserstand (turns@Versuch)
+└── watchdog.py
+    └── note_progress()               ← Bug 2: löscht tool_in_flight NICHT mehr
+                                         (nur Turn-Ende/Resume löschen es)
+```
+
+### Designentscheidung 1 — „Echten Fortschritt" vom Resume-Replay unterscheiden
+**Problem:** `evaluate_liveness_once` setzt das Auto-Budget zurück, sobald die Session
+„aktiv" wirkt ([manager.py:1403-1405](backend/app/engine/manager.py#L1403)). Das kurze
+Transkript-Abspiel eines `_resume` erzeugt aber bereits Assistenten-Output → Uhr resettet →
+„aktiv" → Budget genullt → `max_auto_attempts` greift nie → Endlosschleife.
+
+**Entscheidung (Default-Vorschlag der Spec, geschärft): Turn-Wasserstand statt Zeitmarge.**
+- Zum Reanimierungs-Zeitpunkt merkt sich der Monitor den **Turn-Zähler** (`state.num_turns`,
+  vorhandenes Signal — wächst nur bei abgeschlossenem `result`-Event,
+  [manager.py:420](backend/app/engine/manager.py#L420)).
+- Das Budget wird **nur** zurückgesetzt, wenn der Turn-Zähler diesen Wasserstand **übersteigt**
+  — d. h. die Session hat nach dem Replay einen **neuen Turn abgeschlossen** (= substanzieller
+  neuer Fortschritt), nicht nur den alten Verlauf nachgespielt.
+- Im Belegfall `a66fa404` hängt jeder Resume am selben Tool-Call **innerhalb desselben Turns**
+  → `num_turns` wächst nie über den Wasserstand → Budget bleibt → nach `max_auto_attempts`
+  bleibt „hängt" stehen. Schleife terminiert. ✔
+- Erholt sich die Session real (Turn fertig) → Wasserstand überschritten → Budget frisch →
+  ein *späterer, anderer* Hänger bekommt wieder volle `max_auto_attempts`. ✔ (kein Dauer-Ausschluss)
+
+**Warum `num_turns` und nicht „Zeitmarge nach Reanimierung":** Eine reine Zeitmarge würde das
+deterministisch-erneut-hängende Replay (das ja kurzzeitig Output erzeugt) fälschlich als
+Fortschritt werten. Der Turn-Zähler ist der einzige vorhandene, monoton wachsende „echte
+Arbeit ist fertig"-Marker — exakt die Grenze zwischen „nachgespielt" und „weitergekommen".
+
+**Verworfene Alternative:** harter Budget-Deckel pro Session-Lebenszeit (einfachste Variante).
+Abgelehnt, weil eine kurz hängende, dann lange gesunde Session dauerhaft vom Auto-Schutz
+ausgeschlossen bliebe (verletzt User Story 3).
+
+### Designentscheidung 2 — In-Flight-Geduld über kurze Zwischen-Sätze halten
+**Problem:** Jeder kurze Assistenten-Satz löscht `tool_in_flight`
+([watchdog.py:213](backend/app/engine/watchdog.py#L213) via
+[manager.py:415](backend/app/engine/manager.py#L415)). Für den darauf folgenden großen Edit
+(+ Modell-Denk-/Generierzeit) gilt dann der **180 s**-Timeout statt der **600 s**-In-Flight-
+Geduld aus PROJ-32 → vorzeitiger „hängt"-Fehlalarm, der die Schleife aus (1) erst startet.
+
+**Entscheidung: Flag-Hysterese (nicht Timeout-Anhebung).**
+- `note_progress()` setzt weiterhin die Fortschritts-**Uhr** zurück (echter Fortschritt zählt),
+  **löscht aber `tool_in_flight` nicht mehr**.
+- `tool_in_flight` wird nur noch an einer echten **Turn-Grenze** gelöscht: im `result`-Pfad
+  (`feed_usage`, [watchdog.py:208](backend/app/engine/watchdog.py#L208)) und explizit beim
+  **Resume-Start** (frischer Prozess, noch kein Tool offen).
+- Effekt: Solange ein Turn mit Tools läuft, bleibt die 600 s-Geduld über kurze Zwischen-Sätze
+  hinweg erhalten; sobald der Turn fertig ist (`result`), gilt wieder der strenge 180 s-Idle-
+  Timeout. Ein real *unbegrenzt* hängendes Tool wird weiterhin nach 600 s als „hängt" erkannt.
+
+**Warum nicht `progress_timeout` global auf 240–300 s anheben:** das würde **jede** echt
+leerlaufende Session pauschal träger erkennen. Die Hysterese hält den strengen 180 s-Wert für
+den genuinen Leerlauf und verlängert die Geduld nur, *während ein Turn nachweislich läuft*.
+
+### Auswirkung auf andere Features (keine Schwächung)
+- **PROJ-16 Amok-Watchdog:** unberührt. Die separaten Deques (Token-/Schreibraten-Fenster,
+  Loop-Fingerprint `_repeat`) werden nicht angefasst; nur das `tool_in_flight`-Flag und die
+  Budget-Reset-Bedingung ändern sich. Eine echte Wiederholungs-Schleife wird weiter erkannt.
+- **PROJ-27 Liveness/Reanimieren:** Indikator, manueller „Reaktivieren"-Knopf und der
+  unbedingte Budget-Reset bei manuellem Eingriff ([manager.py:1366](backend/app/engine/manager.py#L1366))
+  bleiben. Re-QA des Auto-Limits empfohlen.
+- **PROJ-32 Fortschritt aus Tool-Aktivität:** 600 s-In-Flight-Timeout bleibt, greift jetzt
+  zuverlässig. PROJ-33 (Restart-Orphans/`tot`) bleibt bewusst außen vor.
+
+### Konfiguration / API / Daten
+- **Keine** neuen Liveness-Schwellen nötig — beide Fixes nutzen vorhandene Signale.
+  `max_auto_attempts`, `backoff_seconds`, `progress_timeout_seconds`,
+  `tool_in_flight_timeout_seconds` bleiben gültig + live-konfigurierbar (YAML/mtime/Settings).
+- **Kein** neuer Endpoint, **keine** DB-Migration, **kein** Frontend-Eingriff.
+
+### Test-Strategie (für /abc-backend → /abc-qa)
+Unit-Tests mit injizierter Uhr (`clock`) + Stream-Stub (das Muster existiert bereits in den
+Liveness/Watchdog-Tests):
+1. **Endlosschleifen-Repro (`a66fa404`):** Session hängt nach jedem Resume am selben Turn →
+   genau `max_auto_attempts` Auto-Reanimierungen, danach stabil „hängt", kein weiterer Versuch.
+2. **Echter Fortschritt resettet Budget:** nach Reanim einen Turn abschließen (`num_turns`+1) →
+   späterer, anderer Hänger bekommt wieder vololles Budget.
+3. **In-Flight-Hysterese:** Tool-Start → kurzer Assistenten-Satz → >180 s ohne Event →
+   NICHT „hängt" (600 s gelten); erst `result` schaltet auf 180 s zurück.
+4. **DEAD/Manuell unverändert:** toter Prozess wird nicht auto-reanimiert; manueller Knopf wirkt
+   auch nach erschöpftem Budget.
+5. **Regression PROJ-16:** Loop-/Schreibraten-Alarm feuert unverändert.
+
+### Abhängigkeiten / Pakete
+Keine neuen Pakete. Reiner Logik-Fix im bestehenden Engine-Layer.
+
+### Nächster Schritt
+`/abc-backend` (PROJ-45) auf Branch `dev` umsetzen — kein Frontend nötig, danach `/abc-qa`.
+
+---
+
+## Implementierung (Backend Developer) — 2026-06-26
+**Branch:** `dev` · **Status:** In Progress (bereit für `/abc-qa`)
+
+Reiner Engine-Bugfix, drei Dateien geändert, ein neues Test-Modul. Keine neuen Pakete,
+keine DB/Migration, kein Frontend, keine neuen Liveness-Schwellen.
+
+### Fix 1 — Budget übersteht Resume-„Fortschritt" (Turn-Wasserstand)
+- `liveness.py` · `LivenessMonitor`: neues Feld `progress_watermark: int` + Methode
+  `note_reanimation_baseline(turns)`. `reset()` verwirft den Wasserstand (`= 0`).
+- `manager.py` · `_auto_reanimate()`: merkt sich VOR dem Resume den Turn-Stand
+  (`note_reanimation_baseline(runtime.state.num_turns)`).
+- `manager.py` · `evaluate_liveness_once()`: Budget-Reset jetzt **nur** wenn
+  `live == aktiv` **und** `auto_attempts > 0` **und** `num_turns > progress_watermark`
+  (echter neuer Turn nach dem Replay) — statt blind bei „aktiv".
+- Effekt: Belegfall a66fa404 (gleicher Turn hängt jeden Resume, `num_turns` wächst nie)
+  → nach `max_auto_attempts` bleibt „hängt" stehen, Schleife terminiert. Erholt sich die
+  Session real (neuer Turn) → Wasserstand überschritten → frisches Budget für einen
+  späteren, anderen Hänger.
+
+### Fix 2 — In-Flight-Geduld über kurze Zwischen-Sätze (Flag-Hysterese)
+- `watchdog.py` · `note_progress()`: löscht `tool_in_flight` **nicht mehr** (nur noch die
+  Fortschritts-Uhr). Neue Methode `clear_tool_in_flight()` für den Resume-Start.
+- `manager.py` · `_resume()`: ruft nach `note_progress()` zusätzlich
+  `clear_tool_in_flight()` (frischer Prozess, kein Tool offen).
+- `tool_in_flight` fällt damit nur noch an echten Turn-Grenzen: `feed_usage()` (result-
+  Event) und Resume-Start. Während eines Tool-laufenden Turns überlebt die 600 s-Geduld
+  kurze Zwischensätze; nach `result` gilt wieder der strenge 180 s-Idle-Timeout.
+
+### Tests
+- **Neu:** `backend/tests/test_proj45_budget_loop.py` (5 Tests): deterministischer Hänger
+  terminiert bei `max_auto_attempts`; Replay-„aktiv" nullt das Budget nicht; echter neuer
+  Turn resettet das Budget; In-Flight-Geduld übersteht kurzen Zwischensatz, bricht erst bei
+  `result`; Resume löscht In-Flight-Flag.
+- **Angepasst** (alte Verträge, die PROJ-45 bewusst ändert): `test_proj32_tool_in_flight.py`
+  (`note_progress` hält jetzt das Flag; neuer Test für `clear_tool_in_flight`),
+  `test_proj32_qa.py` und `test_proj27_qa.py` (Tool-Ende-Trigger von `note_progress` auf
+  `feed_usage` umgestellt).
+- **Volle Suite grün:** 853 passed.
+
+### Geänderte Dateien
+`backend/app/engine/liveness.py`, `backend/app/engine/manager.py`,
+`backend/app/engine/watchdog.py`, `backend/tests/test_proj45_budget_loop.py` (neu),
+`backend/tests/test_proj32_tool_in_flight.py`, `backend/tests/test_proj32_qa.py`,
+`backend/tests/test_proj27_qa.py`.
+
+---
+
+## QA Test Results (QA Engineer) — 2026-06-26
+**Branch:** `dev` · **Tester:** QA · **Build:** HEAD `8e1c51e` (Code aus 7a56ec3/8e1c51e, working tree clean)
+
+### Akzeptanzkriterien (8/8 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|---|---|---|
+| 1 | Budget übersteht Resume-„Fortschritt" (kein Reset durch Replay-`aktiv`) | ✅ Pass | `evaluate_liveness_once` ([manager.py:1485-1497](backend/app/engine/manager.py#L1485)) resettet nur bei `aktiv` ∧ `auto_attempts>0` ∧ `num_turns > progress_watermark`; Test `test_replay_active_does_not_reset_budget` |
+| 2 | Echter neuer Turn setzt Budget zurück; späterer anderer Hänger bekommt frisches Budget | ✅ Pass | `note_reanimation_baseline(num_turns)` vor Resume ([manager.py:1518](backend/app/engine/manager.py#L1518)); Test `test_real_new_turn_resets_budget` |
+| 3 | Deterministischer Hänger terminiert ≤ `max_auto_attempts` (Belegfall a66fa404) | ✅ Pass | Test `test_deterministic_hang_terminates_at_budget`: exakt 2 Versuche, danach stabil „hängt" |
+| 4 | In-Flight-Geduld überlebt kurze Zwischensätze (kein 180 s-Fehlalarm) | ✅ Pass | `note_progress` löscht `tool_in_flight` nicht mehr ([watchdog.py:212-219](backend/app/engine/watchdog.py#L212)); Test `test_in_flight_patience_survives_short_message` (>180 s, <600 s → `aktiv`; nach `result` → `hängt`) |
+| 5 | Amok-Watchdog (PROJ-16) unberührt | ✅ Pass | Nur `_tool_in_flight`-Flag + Budget-Bedingung geändert; Loop-Fingerprint/Token-/Schreibraten-Deques unangetastet; `test_proj16_watchdog.py` + `test_proj16_qa.py` grün |
+| 6 | DEAD bleibt manuell | ✅ Pass | Reset-Zweig nur `aktiv`, Auto-Zweig nur `HANGING` ([manager.py:1499](backend/app/engine/manager.py#L1499)); `DEAD` fällt durch → kein Auto-Pfad |
+| 7 | Manueller Knopf jederzeit, auch nach erschöpftem Budget | ✅ Pass | `reanimate()` → `reset()` ([manager.py:1448](backend/app/engine/manager.py#L1448)); Test `test_resume_clears_in_flight` |
+| 8 | Konfig/Live unverändert, deutsch, Suite grün | ✅ Pass | Keine neuen Schwellen; `tool_in_flight_timeout_seconds` weiter live-konfigurierbar; alle Texte/Logs deutsch |
+
+### Automatisierte Tests
+- **Volle Suite:** `853 passed, 1 warning in 62.64s` (conda env `Dashboard`). Keine Regression in PROJ-16/27/32/33.
+- **PROJ-45 + angepasste Verträge:** `35 passed` (`test_proj45_budget_loop.py` 5, `test_proj32_tool_in_flight.py`, `test_proj32_qa.py`, `test_proj27_qa.py`).
+- Verbleibende Warnung ist ein vorbestehender Starlette-`DeprecationWarning` in `test_proj25_auth.py` (nicht PROJ-45).
+
+### Security-Audit (Red Team)
+- Reiner Engine-Logik-Fix: **kein** neuer Endpoint, **keine** DB/Migration, **kein** neues Nutzer-Eingabe-/Tenant-Surface. Operiert ausschließlich auf internen Signalen (`num_turns`, Fortschritts-Uhr, `tool_in_flight`-Flag). Auth/Owner-Scope (PROJ-25) unberührt. → keine neue Angriffsfläche.
+
+### Beobachtungen (kein Bug, Hinweis)
+- **Commit-Hygiene:** Die `manager.py`-Änderungen (Wasserstand-Bedingung, `clear_tool_in_flight`, Baseline) landeten bereits im PROJ-46-Commit `7a56ec3`, nicht im PROJ-45-Commit `8e1c51e`. Funktional vollständig und committet (working tree clean) — nur Historie unsauber. Kein Blocker.
+- **Designbedingt akzeptiert:** `tool_in_flight` ist ein Bool (kein Zähler) und fällt nur an der Turn-Grenze (`feed_usage`/Resume). Bleibt ein `result`-Event aus, hält die 600 s-Geduld bis zum Timeout — bewusste, dokumentierte Trade-off-Entscheidung (Designentscheidung 2).
+
+### Bugs
+Keine (Critical/High/Medium/Low: 0/0/0/0).
+
+### Production-Ready: **JA**
+Keine Critical/High-Bugs. Alle 8 Akzeptanzkriterien bestanden, volle Suite grün.

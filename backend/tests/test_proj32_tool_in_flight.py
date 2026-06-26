@@ -78,13 +78,18 @@ def test_record_marks_in_flight_and_resets_progress():
     assert mon.seconds_since_progress() == 0  # Tool-Start = Fortschritt
 
 
-def test_note_progress_clears_in_flight():
+def test_note_progress_keeps_in_flight():
+    """PROJ-45 (Flag-Hysterese): ein kurzer Assistenten-Zwischensatz (note_progress)
+    löscht das In-Flight-Flag NICHT mehr — sonst fiele der folgende große Edit zurück auf
+    den 180 s-Timeout und löste den „hängt"-Fehlalarm aus. Nur die Uhr wird zurückgesetzt."""
     clk = Clock()
     mon = WatchdogMonitor(watchdog.watchdog_store, clock=clk)
     mon.record("Bash", {"command": "x"})
     assert mon.tool_in_flight is True
-    mon.note_progress()  # Modell produziert wieder
-    assert mon.tool_in_flight is False
+    clk.advance(50)
+    mon.note_progress()  # kurzer Zwischensatz mitten im Tool-Turn
+    assert mon.tool_in_flight is True  # Geduld bleibt erhalten
+    assert mon.seconds_since_progress() == 0  # Uhr aber zurückgesetzt
 
 
 def test_feed_usage_clears_in_flight():
@@ -92,7 +97,17 @@ def test_feed_usage_clears_in_flight():
     mon = WatchdogMonitor(watchdog.watchdog_store, clock=clk)
     mon.record("Bash", {"command": "x"})
     assert mon.tool_in_flight is True
-    mon.feed_usage(100)  # result-Event
+    mon.feed_usage(100)  # result-Event = echte Turn-Grenze
+    assert mon.tool_in_flight is False
+
+
+def test_clear_tool_in_flight_resets_flag():
+    """PROJ-45: der Resume-Start löscht das Flag explizit (frischer Prozess, kein Tool offen)."""
+    clk = Clock()
+    mon = WatchdogMonitor(watchdog.watchdog_store, clock=clk)
+    mon.record("Bash", {"command": "x"})
+    assert mon.tool_in_flight is True
+    mon.clear_tool_in_flight()
     assert mon.tool_in_flight is False
 
 

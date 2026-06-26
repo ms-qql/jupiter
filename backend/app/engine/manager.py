@@ -123,6 +123,39 @@ def _is_self_restart(tool_name: str, tool_input: dict | None) -> bool:
     return False
 
 
+# PROJ-46: Aus welchem Tool-Input-Feld der knappe Ziel-Hinweis für den Aktivitäts-Ticker
+# kommt — pro Tool das erste sinnvolle Argument (Datei-/Kommando-Kopf). Reihenfolge =
+# Priorität; das erste vorhandene, nicht-leere Feld gewinnt.
+_ACTIVITY_TARGET_FIELDS: tuple[str, ...] = (
+    "file_path", "path", "notebook_path", "command", "pattern", "query", "url", "prompt",
+)
+_ACTIVITY_TARGET_MAXLEN = 80
+
+
+def sanitize_target(tool_name: str, tool_input: dict | None) -> str:
+    """PROJ-46: knapper, sicherer Ziel-Hinweis für den Live-Aktivitäts-Ticker.
+
+    Nimmt NUR den Kopf des ersten sinnvollen Arguments (Datei/Kommando/Pattern …),
+    kürzt serverseitig auf ≤ 80 Zeichen und kollabiert Whitespace — so landen weder
+    Secrets noch ganze Payloads im UI. Tool-Name selbst trägt das Frontend bei.
+    """
+    if not tool_input:
+        return ""
+    raw = ""
+    for key in _ACTIVITY_TARGET_FIELDS:
+        val = tool_input.get(key)
+        if val:
+            raw = str(val)
+            break
+    if not raw:
+        return ""
+    # Whitespace (inkl. Zeilenumbrüche) auf einzelne Leerzeichen kollabieren.
+    collapsed = " ".join(raw.split())
+    if len(collapsed) > _ACTIVITY_TARGET_MAXLEN:
+        collapsed = collapsed[: _ACTIVITY_TARGET_MAXLEN - 1].rstrip() + "…"
+    return collapsed
+
+
 def _model_alias(model: str) -> str:
     """Mappt eine ggf. aufgelöste Modell-ID (z. B. ``claude-haiku-4-5-…``) zurück
     auf den kurzen, garantiert von ``--model`` akzeptierten Alias."""
@@ -309,6 +342,11 @@ class SessionRuntime:
         # PROJ-27: Auto-Reanimierungs-Buchhaltung (Versuche/Backoff/Ergebnis). Den
         # Fortschritt misst weiterhin der Watchdog-Monitor — hier nur „wann reanimieren".
         self.liveness = liveness.LivenessMonitor()
+        # PROJ-46: Live-Aktivitäts-Ticker — rein flüchtig, NICHT persistiert (kein
+        # transcript/Vault-Log). Letzte Tool-Start-Aktion + kurze Ring-Historie (~5),
+        # nur für die Live-Anzeige. Wird bei Session-Ende (terminal/„tot") geleert.
+        self.last_activity: dict | None = None
+        self._activity_ring: list[dict] = []
 
     def derive_liveness(self, timeout: float | None = None) -> str:
         """PROJ-27: verifizierter Liveness-Zustand — frisch aus vorhandenen Signalen.
@@ -371,6 +409,36 @@ class SessionRuntime:
     def _broadcast(self, message: dict) -> None:
         for q in self._subscribers:
             q.put_nowait(message)
+
+    # --- Live-Aktivitäts-Ticker (PROJ-46) ----------------------------------
+
+    def _emit_activity(self, tool_name: str, tool_input: dict | None) -> None:
+        """PROJ-46: jüngste Tool-Start-Aktion transient halten + broadcasten.
+
+        Flüchtig: lebt nur im Speicher (``last_activity`` + Ring der letzten ~5),
+        geht NICHT in ``transcript``/Vault/``_write_session_log``. O(1) pro Event,
+        kein Hot-Path-Regress. Ziel-Hinweis ist serverseitig gekürzt/sanitisiert.
+        """
+        activity = {
+            "tool": tool_name,
+            "target": sanitize_target(tool_name, tool_input),
+            "ts": _now().isoformat(),
+        }
+        self.last_activity = activity
+        self._activity_ring.append(activity)
+        if len(self._activity_ring) > 5:
+            self._activity_ring.pop(0)
+        self._broadcast({"kind": "activity", **activity})
+
+    def _clear_activity(self) -> bool:
+        """Bei Session-Ende (terminal/„tot") den Ticker leeren — keine veraltete
+        Aktion „hängen lassen". Transient, daher nur In-Memory-Reset. Gibt ``True``
+        zurück, wenn tatsächlich etwas zu leeren war (→ einmaliger Broadcast)."""
+        if self.last_activity is None and not self._activity_ring:
+            return False
+        self.last_activity = None
+        self._activity_ring.clear()
+        return True
 
     # --- Event-Verarbeitung ------------------------------------------------
 
@@ -436,6 +504,12 @@ class SessionRuntime:
         # Stirbt/endet die Session, sind offene Cards hinfällig (Edge-Case: „obsolet").
         if self.state.status in (DONE, ERROR) and self.pending:
             self.abandon_decisions()
+
+        # PROJ-46: bei terminalem Zustand den Aktivitäts-Ticker leeren (kein veralteter
+        # „läuft gerade"-Stand). Broadcast eines leeren Stands, damit verbundene Clients
+        # die letzte Aktion sofort löschen.
+        if self.state.status in (DONE, ERROR) and self._clear_activity():
+            self._broadcast({"kind": "activity", "tool": None, "target": "", "ts": None})
 
         # Nach jedem Event einen Zustands-Snapshot an die UI streamen.
         self._broadcast({"kind": "state", **self.to_read()})
@@ -569,6 +643,11 @@ class SessionRuntime:
         # einfror (AC: „auch dann erfasst, wenn keine Decision Card entsteht"). abc_phase_reached
         # bleibt über max_phase monoton. Ersetzt den früheren _detect_abc-im-Nicht-Gate-Zweig.
         self._apply_phase(tool_name, tool_input, prospective)
+
+        # PROJ-46: Live-Aktivitäts-Ticker — VOR jedem Gate/Card und vor dem Bypass-Auto-
+        # Allow den Tool-Start transient broadcasten (rein lesend/additiv, kein Eingriff in
+        # PROJ-4). So sieht das UI „was läuft gerade" auch im Bypass, wo keine Card entsteht.
+        self._emit_activity(tool_name, tool_input)
 
         # 1) Hartes, bypass-festes Phasen-Übergangs-Gate — reine KONTROLLE: pausiert die
         # Tool-Ausführung (Checkpoint bleibt auch im Bypass erhalten), ist aber nicht mehr
@@ -1332,6 +1411,9 @@ class SessionManager:
         # PROJ-27: Resume IST Fortschritt — Fortschritts-Uhr zurücksetzen, sonst gilt die
         # frisch fortgesetzte Session sofort wieder als „hängt" (alte Stillstands-Zeit).
         runtime.watchdog.note_progress()
+        # PROJ-45: frischer Resume-Prozess → noch kein Tool offen. Die In-Flight-Geduld
+        # (Flag-Hysterese aus PROJ-45) darf nicht über den Neustart geschleppt werden.
+        runtime.watchdog.clear_tool_in_flight()
         self._persist(runtime)  # PROJ-14: rehydrierte/fortgesetzte Session läuft wieder.
 
     # --- Liveness + Reanimierung (PROJ-27) ---------------------------------
@@ -1400,8 +1482,18 @@ class SessionManager:
         backoff = cfg["backoff_seconds"]
         for runtime in list(self._sessions.values()):
             live = runtime.derive_liveness(timeout)
-            if live == liveness.LIVENESS_ACTIVE and runtime.liveness.auto_attempts:
-                # Echter Fortschritt nach einem Hänger → Auto-Budget zurücksetzen.
+            if (
+                live == liveness.LIVENESS_ACTIVE
+                and runtime.liveness.auto_attempts
+                and runtime.state.num_turns > runtime.liveness.progress_watermark
+            ):
+                # PROJ-45: Budget NUR bei echtem neuen Fortschritt zurücksetzen — ein
+                # abgeschlossener neuer Turn (num_turns über dem Wasserstand zum Reanim-
+                # Zeitpunkt), nicht das kurze „aktiv" des Resume-Transkript-Abspiels.
+                # Sonst nullt jeder Resume das Budget → max_auto_attempts greift nie →
+                # Endlosschleife (Belegfall a66fa404). Hängt die Session erneut am selben
+                # Turn, wächst num_turns nicht → Budget bleibt → nach max_auto_attempts
+                # bleibt „hängt" stehen.
                 runtime.liveness.reset()
             elif (
                 live == liveness.LIVENESS_HANGING
@@ -1420,6 +1512,10 @@ class SessionManager:
         """Ein automatischer Reanimations-Versuch (gezählt, mit Backoff, nie fatal)."""
         backoff = liveness.liveness_store.config()["backoff_seconds"]
         sid = runtime.state.session_id
+        # PROJ-45: Turn-Wasserstand VOR dem Resume merken. Erst ein num_turns ÜBER diesem
+        # Stand (neuer Turn nach dem Replay) gilt als echter Fortschritt und setzt das
+        # Budget zurück — das bloße Transkript-Abspiel tut es nicht.
+        runtime.liveness.note_reanimation_baseline(runtime.state.num_turns)
         try:
             await self._reanimate_once(runtime)
             success = True
