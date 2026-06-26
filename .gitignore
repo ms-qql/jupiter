@@ -48,5 +48,8 @@ backend/config/engines.yaml
 # PROJ-24: Konsumenten-Registry des geteilten Vault-Dienstes (enthält api_keys) — nicht versionieren.
 backend/config/consumers.yaml
 
+# PROJ-27/32/45: Laufzeit-Liveness-Schwellen (nutzer-editiert, live mtime-Reload) — nicht versionieren.
+backend/config/liveness.yaml
+
 # PROJ-26: Marktplatz/Registry — installierte Pakete + Import/Export-Staging (Laufzeit-Daten).
 backend/registry/
