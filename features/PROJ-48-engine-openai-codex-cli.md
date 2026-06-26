@@ -1,6 +1,6 @@
 # PROJ-48: Engine — OpenAI Codex CLI (Pro-Subscription) als Jupiter-Agent
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -235,3 +235,10 @@ PROJ-50 (abc-Workflow für Codex) wird **parallel** auf `dev` entwickelt und hat
 
 ### Production-Ready: **JA** (Approved)
 Keine Critical/High-Bugs. Die drei Low/Info-Punkte sind Anzeige-/UX-Feinheiten innerhalb der bewusst gewählten generic_cli-Grenzen. Empfehlung: deploybar via `/abc-deploy`.
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-26 · **Version:** 0.22.0 · **Tag:** v0.22.0-PROJ-48-50
+- **Host:** host-nativ auf Dev-VPS (systemd + Caddy + GitHub-Webhook auf `main`).
+- **Was geht live:** Codex-Engine (generic_cli + `codex`-Adapter, Multi-Turn via Resume, Usage-Mapping), Engine-Registry-Eintrag, Sandbox `workspace-write`.
+- **Smoke-Test (offen, auf Prod):** Codex-Session starten, Mehr-Turn-Konversation, Token-/Kontext-Anzeige.

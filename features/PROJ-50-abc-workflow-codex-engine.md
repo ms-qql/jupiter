@@ -1,6 +1,6 @@
 # PROJ-50: abc-Workflow für die Codex-Engine (portierte Skills + Phasen-Signal)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -234,3 +234,10 @@ Kein PreToolUse-Hook bei Codex → **keine** Decision Cards (PROJ-4), **kein** P
 7. **QA/E2E**: eine Phase (`abc-architecture` oder `abc-document`) end-to-end mit Codex; Regression Claude/hermes/ollama → *QA-Engineer*
 
 > Schwerpunkt **Backend**; Frontend nur ein kleiner Hinweis. Kein UI-Feature im engeren Sinn → `/abc-frontend` entfällt fast vollständig, direkt `/abc-backend`.
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-26 · **Version:** 0.22.0 · **Tag:** v0.22.0-PROJ-48-50
+- **Host:** host-nativ auf Dev-VPS (systemd `jupiter-backend`/`jupiter-frontend`/`jupiter-webhook`, Caddy TLS, GitHub-Webhook auf `main`).
+- **Was geht live:** Skill-Generator + 15 Codex-abc-Skills, codex-Adapter `file_change`→`tool_use`, Stream-Phasen-Verdrahtung, Launcher-Seeding/Engine-Awareness, Capability `abc`.
+- **Smoke-Test (offen, auf Prod):** vollständiger Cockpit-Lauf einer abc-Phase mit Codex (AC5) — Skill greift, Phase im Kanban, Spec/INDEX aktualisiert. Codex-Skills greifen erst nach Codex-Reload (oneshot je Turn → automatisch frisch).
