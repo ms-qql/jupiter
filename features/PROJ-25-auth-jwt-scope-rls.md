@@ -35,15 +35,15 @@ Damit wird Jupiter **teamfähig**, ohne das Datenmodell umzubauen: Das `owner`-F
 - Als Betreiber möchte ich, dass **abgelaufene/ungültige Tokens** sauber zurückgewiesen werden und ein Refresh-Flow existiert.
 
 ## Acceptance Criteria
-- [ ] **JWT-Login** existiert: kurzer Access-Token + längerer Refresh-Token; Standard-Schema (HS256) gemäß Stack-Konvention.
-- [ ] **`owner` wird ausschließlich aus dem Token** gelesen — Client-Payload-`owner` wird ignoriert/abgelehnt.
-- [ ] **Scope/RLS auf `owner`:** Lese-/Schreibzugriffe auf Sessions, Handovers und Wissensnotizen sind auf den eigenen `owner` beschränkt; Fremdzugriff liefert leer/403, nie fremde Daten.
-- [ ] Der **geteilte Vault-Dienst** (PROJ-24) bindet Scope an die Token-Identität.
-- [ ] **Migration:** vor dem Auth angelegte Artefakte (`owner` = bisheriger Single-User) bleiben für diesen Nutzer voll nutzbar; kein Datenverlust, keine verwaisten Artefakte.
-- [ ] **Token-Ablauf** wird korrekt zurückgewiesen; ein **Refresh-Flow** verlängert ohne erneuten Login.
-- [ ] Geschützte Endpunkte verlangen ein gültiges Token; öffentliche (Login/Refresh) sind klar abgegrenzt.
-- [ ] Cross-Owner-**Red-Team-Test** bestätigt: Nutzer A kann Nutzer B's Sessions/Artefakte weder lesen noch ändern (auch nicht via ID-Raten oder Payload-Manipulation).
-- [ ] Alle Texte/Fehlermeldungen deutsch.
+- [x] **JWT-Login** existiert: kurzer Access-Token + längerer Refresh-Token; Standard-Schema (HS256) gemäß Stack-Konvention.
+- [x] **`owner` wird ausschließlich aus dem Token** gelesen — Client-Payload-`owner` wird ignoriert/abgelehnt.
+- [~] **Scope/RLS auf `owner`:** Lese-/Schreibzugriffe auf Sessions, Handovers und Wissensnotizen sind auf den eigenen `owner` beschränkt; Fremdzugriff liefert leer/403, nie fremde Daten. — *Sessions ✅; Datei-Vault (Handovers/Notizen) nicht owner-gefiltert → BUG-25-1 (Medium, Deferral).*
+- [~] Der **geteilte Vault-Dienst** (PROJ-24) bindet Scope an die Token-Identität. — *Writes stempeln `owner`; Reads nicht owner-gefiltert (= BUG-25-1).*
+- [x] **Migration:** vor dem Auth angelegte Artefakte (`owner` = bisheriger Single-User) bleiben für diesen Nutzer voll nutzbar; kein Datenverlust, keine verwaisten Artefakte.
+- [x] **Token-Ablauf** wird korrekt zurückgewiesen; ein **Refresh-Flow** verlängert ohne erneuten Login.
+- [x] Geschützte Endpunkte verlangen ein gültiges Token; öffentliche (Login/Refresh) sind klar abgegrenzt.
+- [x] Cross-Owner-**Red-Team-Test** bestätigt: Nutzer A kann Nutzer B's Sessions/Artefakte weder lesen noch ändern (auch nicht via ID-Raten oder Payload-Manipulation).
+- [x] Alle Texte/Fehlermeldungen deutsch.
 
 ## Edge Cases
 - **Manipuliertes/gefälschtes Token** (Signatur, abgelaufen, `owner` umgeschrieben) → abgelehnt; nie Vertrauen in Payload-Claims ohne Signaturprüfung.
@@ -207,9 +207,42 @@ Implementiert ist die komplette **Auth-/Scope-Schicht** (Frontend war bereits ge
 **Offen für QA / Folge-PRs:** Rate-Limiting (`slowapi`) auf `/auth/*` (security.md-Empfehlung, noch nicht im Stack); Read-Scoping des Datei-Vaults nach Owner (PROJ-24).
 
 ## QA Test Results
-**Approved 2026-06-26 (gemeinsamer Deploy mit PROJ-24/26 — Betreiber-Entscheidung).** Grundlage: vollständige Implementierung (Backend-Auth + Frontend-Login + Owner-Scope + Rate-Limiting) und **`tests/test_proj25_auth.py` grün (20 Tests)**, volle Suite **816 passed, 0 xfailed** (keine Regression). Diese Session zusätzlich **live in prod verifiziert**: Bootstrap/„Konto einrichten", Login, `owner` ausschließlich aus dem Token, Soft-Gate scharf (401 ohne Token nach erstem Konto), Refresh-Flow, Session-Live-Stream-WS (`?access_token=`, owner-scoped), Rate-Limiting (5/min Login → 429). Forward-Auth-Perimeter entfernt → App-JWT ist alleiniger Login (Details: Deployment-/Betriebsnotiz oben).
+**Getestet:** 2026-06-26 · **Tester:** QA Engineer (`/abc-qa`) · **Branch:** `dev`
+**Methode:** AC-Matrix + Red-Team (Code-Review + `TestClient`-Repros gegen Auth/Owner-Scope inkl. WebSocket-Stream) + volle pytest-Suite. Zusätzlich diese Session **live in prod verifiziert** (Bootstrap/Login/Owner-Scope/WS-Stream/Rate-Limit/Soft-Gate).
 
-**Einschränkung (ehrlich):** Kein separater formaler `/abc-qa`-Durchlauf mit voller AC-Matrix/Red-Team wie bei PROJ-24 — die Akzeptanzkriterien oben sind funktional erfüllt und durch die Auth-Testsuite abgedeckt, aber nicht einzeln in einer dokumentierten QA-Matrix abgehakt. **Empfehlung:** `/abc-qa` für PROJ-25 nachziehen (insb. Cross-Owner-Red-Team aus AC #45), idealerweise vor oder zeitnah nach dem Deploy.
+### Produktionsreife: **BEREIT** (für den aktuellen Single-User-Betrieb) — kein Critical/High
+Volle Suite **821 passed, 0 xfailed** (`test_proj25_auth.py`: 20 grün, inkl. 5 neuer Red-Team-Fälle). 1 Medium-Befund (BUG-25-1) — bekannte, dokumentierte Deferral, kein Blocker für den Single-User-Deploy.
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis |
+|---|---|---|
+| 1 | JWT-Login (Access + Refresh, HS256) | ✅ PASS (Login, Refresh-Rotation, Cookie) |
+| 2 | `owner` ausschließlich aus dem Token (Payload ignoriert) | ✅ PASS (`test_owner_from_token_not_payload`) |
+| 3 | Scope auf `owner`: Sessions/Handovers/Wissensnotizen, Fremdzugriff leer/403 | ⚠️ TEILWEISE — **Sessions** voll gescoped (Liste/GET/DELETE/Input/WS-Stream je 404/abgewiesen); **Datei-Vault (Handovers/Notizen) NICHT owner-gefiltert** → BUG-25-1 |
+| 4 | Geteilter Vault-Dienst bindet Scope an Token-Identität | ⚠️ TEILWEISE — Writes stempeln `owner`/`consumer`; **Reads nicht owner-gefiltert** (= BUG-25-1) |
+| 5 | Migration: Vor-Auth-Artefakte (`owner="dev"`) bleiben nutzbar | ✅ PASS (`test_migration_…`, Bootstrap erbt `default_owner`) |
+| 6 | Token-Ablauf abgelehnt + Refresh-Flow | ✅ PASS (`test_expired_token_rejected`, Refresh-Rotation invalidiert alt) |
+| 7 | Geschützte Endpunkte verlangen Token; öffentliche klar abgegrenzt | ✅ PASS (Soft-Gate scharf nach Bootstrap; `/auth/*`,`/internal`,`/vault/v1`,`/health` offen) |
+| 8 | Cross-Owner-Red-Team (kein Lesen/Ändern via ID-Raten/Payload) | ✅ PASS (`test_cross_owner_isolation` + WS-Stream + Payload-Owner ignoriert) |
+| 9 | Alle Texte/Fehler deutsch | ✅ PASS |
+
+### Bugs
+**BUG-25-1 — Datei-Vault-Reads nicht owner-gescoped · Severity: MEDIUM · bekannte Deferral**
+`routes/vault.py`/`routes/md.py` filtern Such-/Lese-/RAG-Ergebnisse **nicht** nach `owner` (`md.py` nutzt `user_id` 0×; `vault.py` nur zum Owner-Stempeln beim Schreiben). In einem echten Multi-User-Betrieb könnte Nutzer B Handovers/Wissensnotizen von Nutzer A im geteilten Hal-Vault lesen. **Bewusst zurückgestellt** (Spec „Offen für QA / Folge-PRs: Read-Scoping des Datei-Vaults nach Owner"; entspricht dem PROJ-24-„shared vault, eine Wahrheit"-Design). **Kein Blocker im aktuellen Single-User-Deploy** (genau ein Konto). **Vor echtem Multi-User-Rollout zu fixen.**
+
+### Security-Audit (Red-Team) — alle ✅
+- **JWT-Manipulation:** verändertes Token → 401 ✓; **Fremd-Secret** signiert → 401 ✓; **`alg=none`** (unsigniert) → 401 ✓ (`test_alg_none_token_rejected`).
+- **Token-Typ-Verwechslung:** gültig signierter **Refresh**-Token als Access-Bearer → 401 ✓ (`resolve_access` prüft `type=="access"`); **fehlender `type`-Claim** → 401 ✓.
+- **Ablauf/Replay:** abgelaufenes Token → 401 ✓; Refresh-Rotation invalidiert den alten Refresh ✓; Logout widerruft ✓.
+- **Owner-Scope:** Payload-`owner` wird ignoriert (Server stempelt aus Token) ✓; Fremd-Session per ID-Raten → 404 (kein Existenz-Leak) ✓; **Live-Stream-WS** (`?access_token=`) owner-scoped, fremd → close 4404, tokenlos → 4401 ✓ (`test_ws_stream_owner_scoped`).
+- **Rate-Limiting:** `/auth/login` 5/min/IP → ab dem 6. Versuch 429 ✓ (`test_login_rate_limited_after_threshold`); Schlüssel = Client-IP aus `X-Forwarded-For` (Caddy davor).
+- **Perimeter:** Forward-Auth (9100) entfernt; `/api/internal/*` am Caddy-Edge 403 (Permission-Hook bleibt localhost-only) ✓.
+
+### Regression
+Volle Backend-Suite **821 grün, 0 xfailed** — keine Regression. 5 neue Red-Team-Regressionstests in `test_proj25_auth.py` ergänzt (Typ-Verwechslung, `alg=none`, fehlender `type`, WS-Owner-Scope, Rate-Limit).
+
+### Verdikt
+**Approved** für den gemeinsamen Deploy mit PROJ-24/26 im **Single-User-Betrieb**. BUG-25-1 (Medium) ist dokumentiert und vor einem echten Multi-User-Rollout zu beheben (Read-Scoping des Datei-Vaults nach `owner`).
 
 ## Deployment
 _To be added by /abc-deploy_

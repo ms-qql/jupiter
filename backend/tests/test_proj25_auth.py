@@ -214,3 +214,97 @@ def test_migration_anonymous_session_survives_bootstrap(client: TestClient):
     # Die alte Session (owner="dev") gehört jetzt dem Bootstrap-Account.
     listed = client.get("/sessions", headers=_auth(token)).json()
     assert any(s["session_id"] == sid for s in listed)
+
+
+# --- Red-Team-Ergänzungen (QA /abc-qa 2026-06-26) ---------------------------
+# Schließen Lücken, die der erste Durchlauf offen ließ: Token-Typ-Verwechslung,
+# alg=none, fehlender type-Claim, Live-Stream-WS-Owner-Scope, Rate-Limit.
+
+def _b64url(obj: dict) -> str:
+    import base64
+    import json
+
+    return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+
+
+def test_refresh_token_not_accepted_as_access(client: TestClient):
+    """Typ-Verwechslung: ein gültig signierter REFRESH-Token darf NICHT als
+    Access-Bearer durchgehen (``resolve_access`` prüft ``type == "access"``)."""
+    _bootstrap(client)
+    refresh_like = jwt.encode(
+        {"sub": settings.default_owner, "username": "alice", "type": "refresh",
+         "jti": "abc", "iat": 0, "exp": 9999999999},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+    assert client.get("/sessions", headers=_auth(refresh_like)).status_code == 401
+
+
+def test_alg_none_token_rejected(client: TestClient):
+    """``alg=none`` (unsigniert) muss abgelehnt werden — Decode erlaubt nur HS256."""
+    _bootstrap(client)
+    none_token = (
+        _b64url({"alg": "none", "typ": "JWT"})
+        + "."
+        + _b64url({"sub": settings.default_owner, "type": "access", "iat": 0, "exp": 9999999999})
+        + "."
+    )
+    assert client.get("/sessions", headers=_auth(none_token)).status_code == 401
+
+
+def test_token_without_type_claim_rejected(client: TestClient):
+    """Fehlt der ``type``-Claim, ist es kein gültiger Access-Token → 401."""
+    _bootstrap(client)
+    no_type = jwt.encode(
+        {"sub": settings.default_owner, "username": "alice", "iat": 0, "exp": 9999999999},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+    assert client.get("/sessions", headers=_auth(no_type)).status_code == 401
+
+
+def test_ws_stream_owner_scoped(client: TestClient):
+    """Live-Stream-WS (`/sessions/{id}/stream`) ist owner-scoped: der Eigentümer
+    verbindet (Snapshot), ein fremder Nutzer UND der Tokenlose werden abgewiesen."""
+    from starlette.websockets import WebSocketDisconnect
+
+    alice = _bootstrap(client, "alice", "geheim123")
+    assert client.post(
+        "/auth/users", json={"username": "bob", "password": "geheim123"}, headers=_auth(alice)
+    ).status_code == 201
+    bob = client.post("/auth/login", json={"username": "bob", "password": "geheim123"}).json()["access_token"]
+    sid = _create_session(client, alice)
+
+    # Eigentümerin: verbindet + erhält den State-Snapshot.
+    with client.websocket_connect(f"/sessions/{sid}/stream?access_token={alice}") as ws:
+        assert ws.receive_json()["kind"] == "state"
+
+    # Fremder Nutzer: Handshake wird abgewiesen (close 4404 → kein Existenz-Leak).
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/sessions/{sid}/stream?access_token={bob}") as ws:
+            ws.receive_json()
+
+    # Ohne Token: ebenfalls abgewiesen (close 4401).
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.receive_json()
+
+
+def test_login_rate_limited_after_threshold(client: TestClient, monkeypatch):
+    """Rate-Limiting (PROJ-25-Härtung): nach 5 Login-Versuchen/Minute/IP → 429.
+    (In der globalen conftest-Fixture ist es aus; hier gezielt eingeschaltet.)"""
+    _bootstrap(client, "alice", "geheim123")
+    monkeypatch.setattr(settings, "auth_rate_limit_enabled", True)
+    # Fixed-Window-Zähler vor dem Test leeren (Modul-Singleton, sonst Test-Pollution).
+    from app import ratelimit
+
+    try:
+        ratelimit._limiter.storage.reset()
+    except Exception:
+        pass
+    codes = [
+        client.post("/auth/login", json={"username": "alice", "password": "falsch"}).status_code
+        for _ in range(7)
+    ]
+    assert codes.count(401) >= 4, codes  # die ersten Versuche sind echte 401 (falsches PW)
+    assert 429 in codes, codes  # ab dem 6. greift der Limiter
