@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "/home/dev/.nvm/versions/node/v24.17.0/bin/node",
+      "args": [
+        "/home/dev/.nvm/versions/node/v24.17.0/lib/node_modules/@colbymchenry/codegraph/dist/bin/codegraph.js",
+        "serve",
+        "--mcp",
+        "--path",
+        "/home/dev/projects/jupiter"
+      ]
+    }
+  }
+}
