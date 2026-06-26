@@ -64,6 +64,10 @@ class EngineProfile:
     # driver == generic_cli:
     bin: str | None = None
     argv_template: list[str] = field(default_factory=list)
+    # PROJ-48: optionales argv für Folge-Turns einer oneshot-CLI (Resume-Pfad). Leer =
+    # keine Fortsetzung möglich (Verhalten wie bisher: Re-Spawn ohne Kontext). Generisch
+    # für jede oneshot-CLI mit Resume — Platzhalter zusätzlich: {resume_id}.
+    resume_argv_template: list[str] = field(default_factory=list)
     adapter: str = "plaintext"
     prompt_via: str = "stdin"        # "stdin" | "arg"
     input_format: str = "text"       # "stream_json" | "text"
@@ -158,8 +162,26 @@ def _builtin_claude() -> EngineProfile:
         models=sorted(VALID_MODELS),
         default_model=settings.default_model,
         context_window=DEFAULT_CONTEXT_WINDOW,
-        capabilities=["usage", "resume", "multi_turn", "tools"],
+        # PROJ-50: „abc" = Engine kann den abc-Workflow fahren. Claude über den
+        # PreToolUse-Skill-Hook, Codex über Launcher-Seeding + file_change-Stream.
+        capabilities=["usage", "resume", "multi_turn", "tools", "abc"],
     )
+
+
+def _sandbox_from_argv(argv_template: list[str]) -> str | None:
+    """Liest die Sandbox-Policy aus einem ``-s``/``--sandbox <wert>``-Flag im argv.
+
+    Reine Funktion; ``None``, wenn kein Flag (oder kein Folge-Wert) vorhanden. So zeigt
+    GET /engines bei generic_cli-Engines (z. B. Codex `-s workspace-write`) die Leitplanke
+    an, ohne ein redundantes Config-Feld neben dem argv zu pflegen.
+    """
+    for i, tok in enumerate(argv_template):
+        if tok in ("-s", "--sandbox") and i + 1 < len(argv_template):
+            value = str(argv_template[i + 1]).strip()
+            # Platzhalter (z. B. „{model}") sind keine Policy.
+            if value and not value.startswith("{"):
+                return value
+    return None
 
 
 def _coerce_profile(entry: dict) -> EngineProfile:
@@ -190,6 +212,9 @@ def _coerce_profile(entry: dict) -> EngineProfile:
         if driver == DRIVER_GENERIC_CLI:
             prof.bin = entry.get("bin")
             prof.argv_template = [str(a) for a in (entry.get("argv_template") or [])]
+            prof.resume_argv_template = [
+                str(a) for a in (entry.get("resume_argv_template") or [])
+            ]
             adapter = str(entry.get("adapter") or "plaintext")
             if adapter not in VALID_ADAPTERS:
                 raise ValueError(f"Engine „{key}“: unbekannter adapter „{adapter}“.")
@@ -199,6 +224,10 @@ def _coerce_profile(entry: dict) -> EngineProfile:
             prof.oneshot = bool(entry.get("oneshot", False))
             if not prof.bin and not prof.argv_template:
                 raise ValueError(f"Engine „{key}“: generic_cli braucht `bin` oder `argv_template`.")
+            # PROJ-48: Sandbox-Policy aus dem argv (`-s`/`--sandbox <wert>`) ableiten, damit
+            # sie in `to_read()` (GET /engines) als Badge sichtbar wird — EINE Quelle der
+            # Wahrheit bleibt das argv (was real läuft), kein zweites Config-Feld.
+            prof.sandbox = _sandbox_from_argv(prof.argv_template)
         elif driver == DRIVER_OPENAI:
             prof.api_base = str(entry.get("api_base") or "https://api.openai.com").rstrip("/")
             prof.api_path = str(entry.get("api_path") or "/v1/chat/completions")

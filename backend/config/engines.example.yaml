@@ -42,22 +42,31 @@ engines:
     context_window: 128000
     capabilities: [usage, multi_turn]
 
-  # Beispiel: eine fremde CLI über den generischen Treiber (kein Code pro Engine).
-  # Platzhalter in argv_template: {model} {session_id} {project_path} {prompt}.
-  # adapter: claude | jsonl | plaintext  (normalisiert den Ausgabestrom).
+  # PROJ-48: OpenAI Codex CLI über den generischen Treiber (kein Code pro Engine).
+  # Platzhalter: {model} {session_id} {project_path} {prompt} {resume_id}.
+  # adapter: claude | jsonl | plaintext | codex  (normalisiert den Ausgabestrom).
+  #
+  # Auth: KEIN auth_env/API-Key — Codex nutzt die eingeloggte ChatGPT-Pro-Subscription
+  #   (~/.codex/auth.json über geerbtes HOME=/home/dev), genau wie Claude Max.
+  # Sandbox: `-s workspace-write` ist die EINZIGE Leitplanke (generic_cli hat keine
+  #   Decision Cards/Watchdog) — Codex darf im Projektordner lesen+editieren, nicht
+  #   beliebig ins System/Netz. `--skip-git-repo-check` erlaubt auch Nicht-Git-Projekte.
+  # Multi-Turn: oneshot je Turn; Folge-Turns über `resume_argv_template` (Kontext bleibt
+  #   am thread_id aus `thread.started`, vom codex-Adapter als resume_id durchgereicht).
   - key: codex
-    label: "OpenAI Codex CLI"
+    label: "OpenAI Codex"
     kind: engine
     driver: generic_cli
-    bin: codex
-    argv_template: ["exec", "--model", "{model}", "--json"]
-    adapter: jsonl
-    prompt_via: stdin                 # stdin | arg
+    bin: /home/dev/.local/bin/codex
+    argv_template: ["exec", "-m", "{model}", "-s", "workspace-write", "--skip-git-repo-check", "--json", "-"]
+    resume_argv_template: ["exec", "-m", "{model}", "-s", "workspace-write", "--skip-git-repo-check", "--json", "resume", "{resume_id}", "-"]
+    adapter: codex
+    prompt_via: stdin                 # stdin | arg ('-' im argv → Codex liest den Prompt von stdin)
     input_format: text                # text | stream_json
     oneshot: true                     # stdin nach Eingabe schließen (Single-Turn-CLI)
-    models: [gpt-5-codex]
-    default_model: gpt-5-codex
-    capabilities: [multi_turn]
+    models: [gpt-5.5]
+    default_model: gpt-5.5            # am Live-System verifiziert (config.toml); gpt-5-codex ist veraltet
+    capabilities: [usage, resume, multi_turn, abc]
 
   # Beispiel: lokales Ollama (kein Key nötig). Streamt Klartext → plaintext-Adapter
   # (eingeschränkte Live-Sicht, keine Token-Anzeige → „n/v").

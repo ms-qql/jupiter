@@ -1,6 +1,6 @@
 # PROJ-48: Engine — OpenAI Codex CLI (Pro-Subscription) als Jupiter-Agent
 
-## Status: Architected
+## Status: Deployed
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -35,16 +35,17 @@ Der Nutzer hat eine **OpenAI-Codex-Pro-Subscription** und die `codex`-CLI auf de
 - Als Nutzer möchte ich eine **bewusste, sichere Sandbox-Voreinstellung**, da bei generic_cli die Decision Cards/Watchdog nicht greifen.
 
 ## Acceptance Criteria
-- [ ] **Codex wählbar + startbar:** Eintrag in der Laufzeit-`engines.yaml` (gitignored) macht Codex im Launcher wählbar; eine Session startet über den `generic_cli`-Treiber und läuft (`codex exec --json`, Prompt via stdin).
-- [ ] **`codex`-Adapter:** neuer Adapter (in `adapters.py`, wählbar via `adapter: codex`) mappt Codex-JSONL → Jupiter-StreamEvents: `item.completed/agent_message` → Assistenten-Text; `turn.completed` → result/Turn-Ende **inkl. Usage** (input/cached/output/reasoning); unbekannte Event-Typen werden ignoriert (kein Hard-Fail, wie bei Claude/jsonl).
-- [ ] **Live-Text:** Codex-Antworten erscheinen im Cockpit-Transkript.
-- [ ] **Turn-Ende/Status:** nach `turn.completed` wechselt der Status korrekt (`running → wartet`); kein Steckenbleiben auf „Arbeitet".
-- [ ] **Token-/Kontext-Anzeige:** Usage aus `turn.completed` füllt `tokens_used`/Kontext-Gauge (Kosten bleiben „none/partial" wie bei Subscription-Engines — kein USD-Routing nötig).
-- [ ] **Auth ohne Key:** funktioniert über die eingeloggte ChatGPT-Auth (`~/.codex/auth.json`, geerbtes `HOME`) — **kein** `auth_env`/API-Key im Config-Eintrag.
-- [ ] **Sandbox = `workspace-write` (geklärt):** der `engines.yaml`-Eintrag setzt explizit `-s workspace-write` — Codex darf im Projektverzeichnis lesen+editieren, aber nicht beliebig ins System/Netz. Die Policy ist im Config-Eintrag sichtbar dokumentiert.
-- [ ] **Degradation dokumentiert + sauber:** ohne Decision Cards/Phasen-Gate/Watchdog läuft die Session stabil (wie hermes); das UI zeigt diese Engine-Grenzen nachvollziehbar (analog bestehender generic_cli-Engines).
-- [ ] **Multi-Turn via `resume` (geklärt):** der Kontext bleibt über mehrere Turns erhalten. Erster Turn `codex exec --json … ` (+ `thread_id` aus `thread.started` merken); Folge-Turns `codex exec resume --last --json …` (bzw. per `thread_id`). Implementiert + getestet (Kontext-Erhalt über ≥ 2 Turns nachgewiesen).
-- [ ] Tests (Adapter-Mapping inkl. echtem Codex-Sample, Engine-Registrierung) grün; deutsche Texte/Logs; keine Regression in PROJ-18/Adaptern/anderen Engines.
+> Backend implementiert + am Live-System (codex-cli 0.142.2) end-to-end verifiziert (2026-06-26). Checkboxen unten = Implementierungsstand; finale QA via `/abc-qa`.
+- [x] **Codex wählbar + startbar:** Eintrag in der Laufzeit-`engines.yaml` (gitignored) macht Codex im Launcher wählbar; eine Session startet über den `generic_cli`-Treiber und läuft (`codex exec --json`, Prompt via stdin).
+- [x] **`codex`-Adapter:** neuer Adapter (in `adapters.py`, wählbar via `adapter: codex`) mappt Codex-JSONL → Jupiter-StreamEvents: `item.completed/agent_message` → Assistenten-Text; `turn.completed` → result/Turn-Ende **inkl. Usage** (input/cached/output/reasoning); unbekannte Event-Typen werden ignoriert (kein Hard-Fail, wie bei Claude/jsonl).
+- [x] **Live-Text:** Codex-Antworten erscheinen im Cockpit-Transkript.
+- [x] **Turn-Ende/Status:** nach `turn.completed` wechselt der Status korrekt (`running → wartet`); kein Steckenbleiben auf „Arbeitet".
+- [x] **Token-/Kontext-Anzeige:** Usage aus `turn.completed` füllt `tokens_used`/Kontext-Gauge (Kosten bleiben „none/partial" wie bei Subscription-Engines — kein USD-Routing nötig).
+- [x] **Auth ohne Key:** funktioniert über die eingeloggte ChatGPT-Auth (`~/.codex/auth.json`, geerbtes `HOME`) — **kein** `auth_env`/API-Key im Config-Eintrag.
+- [x] **Sandbox = `workspace-write` (geklärt):** der `engines.yaml`-Eintrag setzt explizit `-s workspace-write` — Codex darf im Projektverzeichnis lesen+editieren, aber nicht beliebig ins System/Netz. Die Policy ist im Config-Eintrag sichtbar dokumentiert.
+- [x] **Degradation dokumentiert + sauber:** ohne Decision Cards/Phasen-Gate/Watchdog läuft die Session stabil (wie hermes); das UI zeigt diese Engine-Grenzen nachvollziehbar (analog bestehender generic_cli-Engines).
+- [x] **Multi-Turn via `resume` (geklärt):** der Kontext bleibt über mehrere Turns erhalten. Erster Turn `codex exec --json … ` (+ `thread_id` aus `thread.started` merken); Folge-Turns `codex exec resume --last --json …` (bzw. per `thread_id`). Implementiert + getestet (Kontext-Erhalt über ≥ 2 Turns nachgewiesen).
+- [x] Tests (Adapter-Mapping inkl. echtem Codex-Sample, Engine-Registrierung) grün; deutsche Texte/Logs; keine Regression in PROJ-18/Adaptern/anderen Engines.
 
 ## Edge Cases
 - **Reasoning-Tokens:** `reasoning_output_tokens` sinnvoll in die Usage einrechnen (Teil der Output-Last), damit der Kontext-Gauge nicht untertreibt.
@@ -164,3 +165,80 @@ Keine neuen HTTP-Endpoints. Codex erscheint automatisch über die bestehende Eng
 - **Backend Developer:** `codex_parse_line` + Registry-Key, `resume_argv_template`-Pfad im Treiber, `thread_id`-Session-Merken, `engines.yaml`-Eintrag + `engines.example.yaml`-Korrektur, Usage-Einklinkung, Tests (Adapter-Mapping mit echtem Codex-Sample + Registrierung). → `/abc-backend`
 - **QA Engineer:** Acceptance-Criteria durchgehen (Live-Text, Turn-Ende, Token-Anzeige, Multi-Turn-Kontext ≥2 Turns, Auth-ohne-Key, Sandbox), Regression PROJ-18/andere Engines. → `/abc-qa`
 - **Kein Frontend-Ticket** nötig (Cockpit/Launcher engine-agnostisch).
+
+---
+
+## Implementation Notes (Backend Developer, 2026-06-26)
+
+**Branch:** `dev`. Umgesetzt wie im Tech-Design — ein Adapter, ein generischer Treiber-Zusatz, ein Config-Eintrag; keine neuen Subsysteme/HTTP-Endpoints, kein Frontend-Code.
+
+### Geänderte Dateien
+- `backend/app/engine/adapters.py` — **neu** `codex_parse_line` (+ Helper `_codex_result_event`), Registry-Key `codex`. Mapping: `thread.started`→`system/resume_token` (nicht sichtbar), `item.completed` mit `item.text`→assistant-Text, `turn.completed`→`result/success` inkl. gemappter Usage, `turn.started`/unbekannt→`None`.
+- `backend/app/engine/registry.py` — neues optionales Feld `resume_argv_template` (+ Coercion für `generic_cli`). Fehlt es → Verhalten wie bisher (keine Regression für hermes/ollama).
+- `backend/app/engine/generic_cli_driver.py` — `build_generic_argv` um `{resume_id}`-Platzhalter + `resume=`-Schalter erweitert; `start`/`_spawn`/`_write_stdin` refaktoriert; `send_input` re-spawnt einen toten oneshot-Prozess mit dem Resume-argv (Kontext bleibt am `resume_id`); `_read_stdout` fängt `resume_token` ab (merkt `self._resume_id`, unterdrückt Anzeige) und emittiert nach einem sauberen, resumefähigen Turn **kein** `closed` (Session bleibt „wartet" statt „done"); neue Property `supports_self_resume`.
+- `backend/app/engine/base.py` — Default-Property `supports_self_resume=False` auf `EngineDriver`.
+- `backend/app/engine/manager.py` — (1) `send_input` löst den `_resume`-Pfad **nicht** aus, wenn der Treiber `supports_self_resume`; (2) `_apply_usage` füllt den Kontext-Füllstand auch aus `result`-Usage, wenn `raw["context_is_per_turn"]` (Codex liefert keine assistant-Usage je Turn). Beides Claude-neutral.
+- `backend/config/engines.yaml` (gitignored, live) — Codex-Eintrag ergänzt. `backend/config/engines.example.yaml` — alten `codex`-Beispieleintrag korrigiert (`adapter: codex`, `-s workspace-write`, `--skip-git-repo-check`, `resume_argv_template`, `gpt-5.5`).
+- `backend/tests/test_proj48_codex.py` — **neu**, 12 Tests (Adapter-Mapping mit echtem Sample, Usage-Mapping, argv-Resume, Registry, Treiber-Multi-Turn gegen eine Fake-Codex-CLI, Regression nicht-resumefähiger oneshot, Fehlerfall ohne resume_id).
+
+### Usage-Mapping (wichtige Entscheidung)
+Codex `turn.completed.usage` → Claude-Form **analog Claude** (cached als separate Sicht, NICHT in `input_tokens`): `input_tokens = input − cached`, `cache_read_input_tokens = cached`, `output_tokens = output + reasoning`. So ist der Kontext-Füllstand der **echte Prompt-Umfang** (kein Doppelzählen des Cache) und die abgerechneten Tokens sind cross-engine konsistent. `context_is_per_turn`-Marker im result-`raw` erlaubt dem Manager, den Gauge aus per-Turn-Usage zu füllen (Codex' `input_tokens` wächst je Turn = aktueller Konversations-Kontext, anders als Claudes kumulative result-Usage).
+
+### Resume-Mechanik (am Live-System verifiziert)
+- Initial-argv: `codex exec -m gpt-5.5 -s workspace-write --skip-git-repo-check --json -` (Prompt via stdin, `-`).
+- Folge-argv: `codex exec … --json resume <thread_id> -` (Sandbox-/exec-Optionen MÜSSEN **vor** dem `resume`-Subcommand stehen; `<thread_id>` + `-` sind Positionale von `resume`).
+- `thread_id` (= `resume_id`) je Session im Treiber gemerkt → robust gegen parallele Sessions (statt `--last`).
+
+### Live-Verifikation (codex-cli 0.142.2, echte Subscription-Auth)
+2-Turn-Lauf über den echten Treiber gegen das echte `codex`-Binary: Turn 1 „Merke dir 13"→„OK" (billed=1972, ctx=11567, cache=9600); Turn 2 nach Resume „Welche Zahl?"→**„13"** → **Kontext erhalten**; zwischen den Turns kein `closed` → Status „wartet". Auth ohne Key (geerbtes `HOME`) bestätigt.
+
+### Bekannte Grenzen (unverändert dokumentiert)
+Keine Decision Cards/Phasen-Gate/Watchdog/`tool_in_flight` (generic_cli ohne PreToolUse-Hook); Sandbox `workspace-write` ist die Leitplanke. Backend-Restart mitten in einer Codex-Session → `DeadDriver` → regulärer `_resume`-Pfad startet kontextlos frisch (degradiert, wie andere generic_cli-Engines; `thread_id` wird nicht persistiert). Kontextfenster-Gauge nutzt den 200 000er-Default (Codex meldet kein `contextWindow`).
+
+### Tests
+`conda run -n Dashboard --no-capture-output python -m pytest backend/tests` → **875 passed** (inkl. 12 neue PROJ-48-Tests; PROJ-18/26/40-Engine-Suites grün — keine Regression).
+
+---
+
+## QA Test Results (QA Engineer, 2026-06-26)
+
+**Branch:** `dev` · **Build:** Backend-pytest + Live-Verifikation gegen echtes `codex` (codex-cli 0.142.2, ChatGPT-Pro-Auth). Kein Frontend-Code (Cockpit/Launcher engine-agnostisch) → keine responsive/Browser-Matrix nötig.
+
+### Akzeptanzkriterien (10/10 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|---|---|---|
+| 1 | Codex wählbar + startbar | ✅ PASS | Registry lädt `codex`, `availability()=(True, None)`, keine Warnung; `default_model=gpt-5.5`. |
+| 2 | `codex`-Adapter (JSONL→StreamEvents) | ✅ PASS | `test_proj48_codex.py`: thread.started→resume_token, agent_message→Text, turn.completed→result+Usage, turn.started/unbekannt→None. |
+| 3 | Live-Text im Transkript | ✅ PASS | Manager-Integrationstest: `hi:erste` im Transkript; Live „OK"/„13". |
+| 4 | Turn-Ende/Status `running→wartet` | ✅ PASS | Manager-Test asserted `status==WAITING` (Race-sicher, nicht DONE); kein `closed` zwischen Turns. |
+| 5 | Token-/Kontext-Anzeige aus Usage | ✅ PASS | `tokens_used>0`, `context_known`, `context_fill_pct>0`, `cache_read_tokens` gefüllt; akkumuliert über Turns. |
+| 6 | Auth ohne Key | ✅ PASS | Kein `auth_env`; Live-Lauf nutzte Subscription-Auth (geerbtes HOME). |
+| 7 | Sandbox `workspace-write` | ✅ PASS | `-s workspace-write` im argv (initial + resume), sichtbar in `engines.yaml`. |
+| 8 | Degradation dokumentiert + sauber | ✅ PASS | Keine Cards/Gate/Watchdog (generic_cli), Session stabil; konsistent zu hermes/ollama. |
+| 9 | Multi-Turn via `resume` (Kontext ≥2 Turns) | ✅ PASS | Live: Turn 2 nach `resume <thread_id>` antwortete „13" (Merk-Zahl erhalten); Fake-CLI-Test echot resume_id zurück. |
+| 10 | Tests grün, deutsch, keine Regression | ✅ PASS | **877 passed** (14 PROJ-48 + Rest); PROJ-18/26/40 grün. |
+
+### Security / Red-Team
+- **Secret-Exposure:** `to_read()` (GET /engines) enthält **keine** Internals — `bin`/`argv_template`/`resume_argv_template`/`auth_env` werden nicht exponiert. ✅
+- **Kein API-Key im Repo:** Codex-Eintrag hat kein `auth_env`; `engines.yaml` gitignored. ✅
+- **Sandbox-Eingrenzung:** `-s workspace-write` (nicht `danger-full-access`) ist die einzige Leitplanke — bewusste, dokumentierte Entscheidung; bei generic_cli greifen Cards/Watchdog konstruktionsbedingt nicht. ✅
+- **Command-Injection:** argv wird als Liste (`create_subprocess_exec`, kein Shell) gebaut; Platzhalter-Substitution ohne Shell-Interpolation. Prompt geht via stdin, nicht als argv. ✅
+- **Tenant-Isolation:** für dieses Feature n/a (kein DB-/RLS-Pfad; reine Engine-Subprozess-Steuerung).
+
+### Gefundene Punkte (alle Low/Info — kein Blocker) → **alle behoben (2026-06-26)**
+- **[Low/UX] ✅ FIXED — Liveness-Badge zeigte zwischen Turns „tot".** `derive_liveness` (manager.py) stuft eine WAITING-Session mit totem Prozess jetzt als **ACTIVE** ein, **wenn** der Treiber `supports_self_resume` ist (Codex zwischen Turns) — geprüft **vor** der „kein Prozess → tot"-Regel. Gegenprobe: nicht-resumefähige oneshots (hermes/ollama) bleiben korrekt DEAD. Tests: `test_liveness_resumable_between_turns_is_active_not_dead`, `…non_resumable_dead_process_still_dead`.
+- **[Low] ✅ FIXED — Manuelles „Reaktivieren" startete kontextlos.** Folgt direkt aus dem Liveness-Fix: `reanimate()` lehnt eine ACTIVE-Session mit `SessionAliveError` ab → kein versehentlicher kontextloser Neustart der gesunden Between-Turns-Session; der reguläre Weg (Nachricht senden) resumed mit Kontext.
+- **[Info] ✅ FIXED — Sandbox nun als UI-Badge.** `_sandbox_from_argv` leitet die Policy aus dem `-s`/`--sandbox`-Flag des argv ab (EINE Quelle der Wahrheit = das real laufende argv); `to_read().sandbox` liefert für Codex jetzt `"workspace-write"`. Tests: `test_registry_exposes_sandbox_badge`, `test_sandbox_from_argv_helper_edge_cases`.
+
+### Hinweis (Cross-Feature)
+PROJ-50 (abc-Workflow für Codex) wird **parallel** auf `dev` entwickelt und hat uncommittete Änderungen in `adapters.py` (file_change→tool_use), `manager.py`, `abc_phases.py` sowie die `abc`-Capability am Codex-Eintrag. Die volle Suite lief **mit** diesen Änderungen grün → keine Wechselwirkungs-Regression mit PROJ-48. Diese Dateien gehören zu PROJ-50 und sind **nicht** Teil dieses QA-Commits.
+
+### Production-Ready: **JA** (Approved)
+Keine Critical/High-Bugs. Die drei Low/Info-Punkte sind Anzeige-/UX-Feinheiten innerhalb der bewusst gewählten generic_cli-Grenzen. Empfehlung: deploybar via `/abc-deploy`.
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-26 · **Version:** 0.22.0 · **Tag:** v0.22.0-PROJ-48-50
+- **Host:** host-nativ auf Dev-VPS (systemd + Caddy + GitHub-Webhook auf `main`).
+- **Was geht live:** Codex-Engine (generic_cli + `codex`-Adapter, Multi-Turn via Resume, Usage-Mapping), Engine-Registry-Eintrag, Sandbox `workspace-write`.
+- **Smoke-Test (offen, auf Prod):** Codex-Session starten, Mehr-Turn-Konversation, Token-/Kontext-Anzeige.

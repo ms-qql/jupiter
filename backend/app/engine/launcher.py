@@ -15,6 +15,19 @@ import re
 
 from . import abc_phases
 from .manager import validate_project_path
+from .registry import engine_registry
+
+
+def _engine_uses_naming(engine: str | None) -> bool:
+    """PROJ-50: Soll der Anstoß-Prompt die Skill benennen (statt `/abc-…`)?
+
+    True für abc-fähige Engines OHNE Claude-PreToolUse-Skill-Signal (Description-
+    Matching, z. B. Codex). None/Claude/unbekannt → False (bewährte Slash-Form).
+    """
+    if not engine:
+        return False
+    profile = engine_registry.get(engine)
+    return bool(profile and profile.has_capability("abc") and not profile.is_claude)
 
 _PROJ_RE = re.compile(r"PROJ-(\d+)", re.IGNORECASE)
 _LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]*\)")
@@ -106,11 +119,18 @@ def _prio_num(prio: str | None) -> int:
     return int(m.group(1)) if m else 99
 
 
-def _feature_suggestion(f: dict) -> dict:
-    """Feature-Zeile + daraus abgeleitete nächste Phase/Skill/Modell/Prompt."""
+def _feature_suggestion(f: dict, *, naming: bool = False) -> dict:
+    """Feature-Zeile + daraus abgeleitete nächste Phase/Skill/Modell/Prompt.
+
+    ``naming`` (PROJ-50): Description-Matching-Engine (Codex) → Skill-benennender
+    Anstoß-Prompt statt `/abc-…`, damit die Skill zuverlässig gewählt wird.
+    """
     phase = abc_phases.next_phase_for_status(f["status"])
     skill = abc_phases.skill_for_phase(phase)
-    prompt = f"/{skill} {f['number']}" if skill else f"Arbeite an {f['id']}: {f['title']}".strip()
+    if skill:
+        prompt = abc_phases.phase_trigger_prompt(skill, f["number"], naming=naming)
+    else:
+        prompt = f"Arbeite an {f['id']}: {f['title']}".strip()
     return {
         "id": f["id"],
         "number": f["number"],
@@ -142,8 +162,13 @@ def _empty(project_path: str, hinweis: str | None) -> dict:
 class LauncherService:
     """Leitet den Session-Start-Vorschlag aus der INDEX.md eines Projekts ab (PROJ-9)."""
 
-    def suggest(self, project_path: str) -> dict:
-        """Vorschlag für ``project_path``. ``ValueError`` bei Pfad außerhalb der Roots."""
+    def suggest(self, project_path: str, engine: str | None = None) -> dict:
+        """Vorschlag für ``project_path``. ``ValueError`` bei Pfad außerhalb der Roots.
+
+        ``engine`` (PROJ-50, optional): ist eine Description-Matching-Engine (Codex)
+        gewählt, werden die Anstoß-Prompts Skill-benennend formuliert.
+        """
+        naming = _engine_uses_naming(engine)
         real = validate_project_path(project_path)  # ValueError → 400
         index_path = os.path.join(real, "features", "INDEX.md")
         if not os.path.isfile(index_path):
@@ -170,7 +195,10 @@ class LauncherService:
                 "naechste_phase": "requirements",
                 "skill": "abc-requirements",
                 "modell": abc_phases.model_for_phase("requirements"),
-                "initial_prompt": "/abc-requirements ",
+                "initial_prompt": (
+                    "Nutze die Skill »abc-requirements«, um ein neues Feature anzulegen."
+                    if naming else "/abc-requirements "
+                ),
             })
             return sug
 
@@ -182,7 +210,7 @@ class LauncherService:
             _prio_num(f["prio"]),
             f["order"],
         ))
-        options = [_feature_suggestion(f) for f in open_feats]
+        options = [_feature_suggestion(f, naming=naming) for f in open_feats]
         primary = options[0]
 
         sug = _empty(real, None)

@@ -91,6 +91,13 @@ class EngineDriver(ABC):
         """
         return None
 
+    @property
+    def supports_self_resume(self) -> bool:
+        """PROJ-48: Kann der Treiber einen beendeten Turn selbst (kontext-erhaltend)
+        fortsetzen? Default ``False`` — dann übernimmt der Manager den Resume-Pfad
+        (frischer Treiber). Nur oneshot-CLIs mit ``resume_argv_template`` überschreiben das."""
+        return False
+
 
 class DeadDriver(EngineDriver):
     """Platzhalter-Treiber ohne Prozess (PROJ-14).

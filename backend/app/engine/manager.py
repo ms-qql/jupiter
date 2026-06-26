@@ -356,6 +356,18 @@ class SessionRuntime:
         kann er nicht gegen die echte Prozess-Realität driften.
         """
         s = self.state
+        # PROJ-48: Eine oneshot-CLI mit Resume (z. B. Codex) ist ZWISCHEN den Turns
+        # prozesslos, aber NICHT tot — sie wartet fortsetzbar auf die nächste Eingabe
+        # (der Treiber re-spawnt kontext-erhaltend). Diese Wartestellung gilt als aktiv,
+        # bevor die „kein Prozess → tot"-Regel greift. So zeigt das Liveness-Badge nicht
+        # fälschlich „tot", und ein manuelles Reanimieren startet die gesunde Session nicht
+        # kontextlos neu (reanimate() lehnt eine ACTIVE-Session ab).
+        if (
+            s.status in (WAITING, AWAITING_APPROVAL)
+            and not self.driver.is_alive
+            and self.driver.supports_self_resume
+        ):
+            return liveness.LIVENESS_ACTIVE
         # Terminal oder nicht mehr steuerbar (auch verwaist nach Restart) → tot/beendet.
         if s.status in (DONE, ERROR) or not self.driver.is_alive:
             return liveness.LIVENESS_DEAD
@@ -483,6 +495,26 @@ class SessionRuntime:
                 self.watchdog.note_progress()
             self._apply_usage(event)
 
+        elif event.type == "tool_use":
+            # PROJ-50: Tool-/Datei-Signal aus dem OUTPUT-Stream (generic_cli/Codex haben
+            # keinen PreToolUse-Hook → das Gate-Recognizer-Pfad bei manager.py:633 greift
+            # nicht). Hier wird DIESELBE engine-agnostische `detect_phase_signal` an einem
+            # zweiten Einspeise-Punkt genutzt: Feature-/Fortschritts-Erkennung aus den
+            # `file_change`-Pfaden + Live-Ticker. Claude nutzt diesen Pfad NICHT (Hook-
+            # basiert) → keine Regression.
+            self.state.status = RUNNING
+            tool_name = str(event.raw.get("name") or "")
+            tool_input = event.raw.get("input") if isinstance(event.raw.get("input"), dict) else {}
+            self.watchdog.note_progress()
+            self._emit_activity(tool_name, tool_input)
+            prospective = abc_phases.detect_phase_signal(
+                tool_name, tool_input,
+                phase=self.state.abc_phase,
+                reached=self.state.abc_phase_reached,
+                feature=self.state.abc_feature,
+            )
+            self._apply_phase(tool_name, tool_input, prospective)
+
         elif event.type == "result":
             self._apply_usage(event)
             self.state.num_turns = int(event.raw.get("num_turns", self.state.num_turns) or 0)
@@ -542,6 +574,11 @@ class SessionRuntime:
         if event.type == "result":
             # Das modellabhängige Kontextfenster liefert nur das result-Event (modelUsage).
             self._ctx_window = usage.context_window
+            # PROJ-48: Engines, deren result-Usage den AKTUELLEN Turn-Prompt abbildet
+            # (z. B. Codex' turn.completed) statt kumulativ wie Claude, füllen damit auch
+            # den Kontext-Füllstand — sie liefern keine assistant-Usage je Turn.
+            if event.raw.get("context_is_per_turn"):
+                self._ctx_occupancy = usage.context_used_tokens
             self.state.tokens_used += usage.billed_tokens
             # PROJ-19 (#27): Cache-Treffer kumulieren (sichtbar im Dashboard/Tile).
             self.state.cache_read_tokens += usage.cache_read_input_tokens
@@ -1287,6 +1324,21 @@ class SessionManager:
             ticket_id=ticket_id,
             contract_pointer=contract_pointer,
         )
+        # PROJ-50: abc-Workflow auf Engines OHNE Claude-PreToolUse-Skill-Signal
+        # (generic_cli/Codex). Codex liefert kein Skill-Stream-Event (Spike), daher:
+        #  (a) für Description-Matching-Engines den reinen `/abc-…`-Trigger in eine die
+        #      Skill EINDEUTIG benennende Form umschreiben, damit Codex die Skill zieht;
+        #  (b) die Phase aus dem Anstoß-Prompt seeden (der Launcher kennt sie ohnehin) →
+        #      Kanban/Gantt zeigen die Phase ab Session-Start korrekt. Claude bleibt bei
+        #      der Hook-/Stream-Erkennung (is_claude) → keine Regression.
+        if profile.has_capability("abc") and not profile.is_claude:
+            initial_prompt = abc_phases.rewrite_trigger_for_engine(
+                initial_prompt, naming=True
+            )
+            seeded = abc_phases.seed_triple_from_prompt(initial_prompt)
+            if seeded[0] is not None:
+                state.abc_phase, state.abc_phase_reached, state.abc_feature = seeded
+
         driver = self._make_driver(profile)
         runtime = SessionRuntime(
             state, driver, on_done=self._write_session_log, on_persist=self._persist
@@ -1359,7 +1411,10 @@ class SessionManager:
             )
         # Beendete Session (Prozess ist weg) → vor der Eingabe per `claude --resume`
         # fortsetzen, damit der User auch an fertigen Sessions weiterarbeiten kann.
-        if not runtime.driver.is_alive:
+        # PROJ-48: Treiber, die sich selbst kontext-erhaltend fortsetzen (oneshot-CLIs mit
+        # Resume-argv, z. B. Codex), übernehmen das in ihrem `send_input` selbst — NICHT
+        # den frischen, kontextlosen `_resume`-Pfad auslösen.
+        if not runtime.driver.is_alive and not runtime.driver.supports_self_resume:
             await self._resume(runtime)
         await runtime.driver.send_input(text)
         runtime.transcript.append(TranscriptEntry("user", "text", text, _now().isoformat()))

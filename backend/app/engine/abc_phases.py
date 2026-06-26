@@ -175,6 +175,88 @@ def feature_from_path(path: object | None) -> str | None:
     return m.group(1) if m else None
 
 
+# --- PROJ-50: Codex/abc — Phasen-Anstoß & Seeding ohne Skill-Stream-Event -----
+# Spike-Befund (codex-cli 0.142.2): Codex emittiert KEIN Skill-Invocation-Event.
+# Daher (a) die Phase aus dem Anstoß-Prompt seeden (der Launcher kennt sie ohnehin)
+# und (b) für Engines mit Description-Matching den Prompt so formulieren, dass die
+# Skill eindeutig benannt ist (statt nur `/abc-…`, das Codex nicht zuverlässig zieht).
+
+# Findet eine abc-Skill-Erwähnung sowohl in `/abc-architecture 50` als auch in
+# Freitext „Nutze die Skill »abc-architecture« …". Erstes Match gewinnt.
+_SKILL_MENTION_RE = re.compile(r"abc-([a-z][a-z0-9-]*)", re.IGNORECASE)
+
+
+def phase_from_prompt(text: str | None) -> str | None:
+    """Phase aus einem Anstoß-Prompt ableiten (Launcher-Seeding, engine-agnostisch).
+
+    Erkennt jede abc-Workflow-Skill-Erwähnung (`/abc-architecture 50`,
+    „Nutze die Skill »abc-architecture« für Feature 50"). Nicht-Phasen-Skills
+    (abc-refactor/-challenge/…) und Freitext ohne abc-Skill → ``None``.
+    """
+    if not text:
+        return None
+    for m in _SKILL_MENTION_RE.finditer(text):
+        phase = SKILL_TO_PHASE.get("abc-" + m.group(1).lower())
+        if phase is not None:
+            return phase
+    return None
+
+
+def seed_triple_from_prompt(
+    text: str | None, *, reached: str | None = None
+) -> tuple[str | None, str | None, str | None]:
+    """Anfängliches ABC-Tripel ``(phase, reached, feature)`` aus dem Start-Prompt.
+
+    Für Engines ohne Claude-PreToolUse-Skill-Signal (generic_cli/Codex, PROJ-50):
+    der Launcher-Prompt nennt Phase + Feature, also seeden wir beide direkt beim
+    Session-Start. Kein abc-Skill erkannt → ``(None, reached, None)`` (kein Seeding).
+    """
+    phase = phase_from_prompt(text)
+    if phase is None:
+        return None, reached, None
+    return phase, max_phase(reached, phase), feature_from_args(text)
+
+
+def phase_trigger_prompt(skill: str, feature: object, *, naming: bool) -> str:
+    """Baut den Phasen-Anstoß-Prompt — engine-bewusst (PROJ-50).
+
+    ``naming=False`` (Claude & Co.): die bewährte Slash-Form ``/abc-architecture 50``.
+    ``naming=True`` (Description-Matching-Engines wie Codex): die Skill **eindeutig
+    benennen**, weil `/slash` dort die Skill nicht zuverlässig auswählt.
+    """
+    num = str(feature).strip()
+    if naming:
+        return (
+            f"Nutze die Skill »{skill}« für Feature {num} und arbeite ihre "
+            f"SKILL.md-Anweisungen Schritt für Schritt ab."
+        )
+    return f"/{skill} {num}".strip()
+
+
+# Reiner Slash-Trigger (genau `/abc-architecture 50`, evtl. mit Whitespace). Freitext,
+# der die Skill nur erwähnt, ist KEIN reiner Trigger und bleibt unangetastet.
+_SLASH_TRIGGER_RE = re.compile(r"^\s*/(abc-[a-z0-9-]+)\s*(\S+)?\s*$", re.IGNORECASE)
+
+
+def rewrite_trigger_for_engine(prompt: str | None, *, naming: bool) -> str | None:
+    """Schreibt einen REINEN Slash-Trigger `/abc-x N` in die engine-passende Form um.
+
+    ``naming=True`` (Codex/Description-Matching) → Skill-benennende Form; sonst und bei
+    Freitext (kein reiner Trigger) bleibt der Prompt unverändert. So bleibt Claude
+    (naming=False) bei `/abc-…` und der Nutzer kann beliebigen Eigen-Text frei schicken.
+    """
+    if not naming or not prompt:
+        return prompt
+    m = _SLASH_TRIGGER_RE.match(prompt)
+    if not m:
+        return prompt
+    skill = m.group(1).lower()
+    if skill not in SKILL_TO_PHASE:
+        return prompt
+    feat = feature_from_args(m.group(2) or "")
+    return phase_trigger_prompt(skill, feat or "", naming=True)
+
+
 def detect_phase_signal(
     tool_name: str,
     tool_input: dict | None,

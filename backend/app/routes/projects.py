@@ -23,8 +23,9 @@ def _launcher(request: Request) -> LauncherService:
 async def suggestion(
     request: Request,
     project_path: str = Query(..., min_length=1, description="Projektpfad innerhalb der erlaubten Roots."),
+    engine: str | None = Query(None, description="Gewählte Engine (PROJ-50): formt den Anstoß-Prompt engine-bewusst (Codex: Skill-benennend)."),
 ) -> dict:
     try:
-        return _launcher(request).suggest(project_path)
+        return _launcher(request).suggest(project_path, engine)
     except ValueError as exc:  # Pfad außerhalb der Roots / kein Verzeichnis
         raise HTTPException(status_code=400, detail=str(exc)) from exc
