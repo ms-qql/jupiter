@@ -14,14 +14,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi import Depends
+
 from .config import settings
 from .db import (
     SessionIndexRepository,
     VideoSummaryRepository,
+    build_auth_repo,
     build_session_index_repo,
     build_video_summary_repo,
 )
+from .deps import get_current_user
 from .engine import liveness
+from .engine.auth import AuthService
 from .engine.base import EngineDriver
 from .engine.challenge import ChallengeService
 from .engine.consumers import consumer_registry
@@ -40,6 +45,7 @@ from .engine.vault import VaultService
 from .engine.video_summary import VideoSummaryWorker
 from .routes import (
     agents,
+    auth as auth_routes,
     challenge,
     constitution,
     coordinator,
@@ -141,11 +147,18 @@ def create_app(
     repo = session_index_repo or build_session_index_repo(settings)
     # PROJ-41: Warteschlangen-Repo der Video-Summary-Micro-App (eigene SQLite-Datei).
     vs_repo = video_summary_repo or build_video_summary_repo(settings)
+    # PROJ-25: Auth-Persistenz (Konten + Refresh-Register) auf derselben SQLite-Datei.
+    auth_repo = build_auth_repo(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # PROJ-14: Persistenz-Seam öffnen + Live-Index rehydrieren (verwaiste
         # Sessions markieren), damit die Übersicht einen Restart übersteht.
+        # PROJ-25: Auth-Schema anlegen (Konten/Tokens müssen den Neustart überleben).
+        try:
+            await auth_repo.init()
+        except Exception:  # noqa: BLE001 — Auth-Init defensiv; App startet trotzdem.
+            logger.warning("Auth-Persistenz-Init fehlgeschlagen.", exc_info=True)
         try:
             await repo.init()
             await app.state.manager.rehydrate()
@@ -187,6 +200,7 @@ def create_app(
                 pass
             await repo.close()
             await vs_repo.close()  # PROJ-41
+            await auth_repo.close()  # PROJ-25
 
     app = FastAPI(title="Jupiter", version="0.1.0", lifespan=lifespan)
     # CORS für das Browser-Frontend (PROJ-3 Cockpit). Origins via JUPITER_CORS_ORIGINS
@@ -198,6 +212,14 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # PROJ-25: Auth-Dienst (JWT-Login + Refresh-Rotation + Bootstrap).
+    app.state.auth_repo = auth_repo
+    app.state.auth = AuthService(auth_repo, settings)
+    if settings.jwt_secret.startswith("dev-only-insecure"):
+        logger.warning(
+            "JUPITER_JWT_SECRET nicht gesetzt — unsicherer Dev-Default aktiv. "
+            "In Prod ein zufälliges Secret (≥ 32 Byte) setzen."
+        )
     vault_service = vault_service or VaultService()
     app.state.vault = vault_service
     # PROJ-24: Konsumenten-Registry des geteilten Vault-Dienstes (id+key+Scope, live aus YAML).
@@ -231,26 +253,32 @@ def create_app(
     app.state.coordinator = CoordinatorService(app.state.manager, vault_service)
     # PROJ-23: Cross-Agent-Review — Challenge eines Artefakts durch eine andere Engine.
     app.state.challenge = ChallengeService(app.state.manager, vault_service)
-    app.include_router(sessions.router)
-    app.include_router(constitution.router)
-    app.include_router(vault.router)
-    app.include_router(vault_v1.router)  # PROJ-24: geteilter, versionierter Vault-Dienst
-    app.include_router(md.router)
-    app.include_router(metrics.router)
-    app.include_router(permission.router)
-    app.include_router(settings_routes.router)
-    app.include_router(files.router)
-    app.include_router(git.router)
-    app.include_router(projects.router)
-    app.include_router(recovery.router)
-    app.include_router(engines.router)
-    app.include_router(usage.router)
-    app.include_router(agents.router)
-    app.include_router(transcription.router)
-    app.include_router(video_summary.router)
-    app.include_router(coordinator.router)
-    app.include_router(challenge.router)
-    app.include_router(terminal.router)
+    # PROJ-25: geschützte Router verlangen ein gültiges Token (Soft-Gate in
+    # ``get_current_user``: vor dem Bootstrap anonym, danach scharf). Ausgenommen:
+    # ``/auth`` (eigene Auth), ``/internal`` (Hook-Token), ``/vault/v1`` (Consumer-Key)
+    # und ``/sessions`` (per-Route geschützt wegen WebSocket-Stream + Owner-Scope).
+    auth_gate = [Depends(get_current_user)]
+    app.include_router(auth_routes.router)  # PROJ-25: Login/Refresh/Bootstrap/…
+    app.include_router(sessions.router)  # per-Route geschützt (siehe routes/sessions.py)
+    app.include_router(constitution.router, dependencies=auth_gate)
+    app.include_router(vault.router, dependencies=auth_gate)
+    app.include_router(vault_v1.router)  # PROJ-24: geteilter Dienst (eigener Consumer-Key)
+    app.include_router(md.router, dependencies=auth_gate)
+    app.include_router(metrics.router, dependencies=auth_gate)
+    app.include_router(permission.router)  # interner Hook (localhost + hook_token)
+    app.include_router(settings_routes.router, dependencies=auth_gate)
+    app.include_router(files.router, dependencies=auth_gate)
+    app.include_router(git.router, dependencies=auth_gate)
+    app.include_router(projects.router, dependencies=auth_gate)
+    app.include_router(recovery.router, dependencies=auth_gate)
+    app.include_router(engines.router, dependencies=auth_gate)
+    app.include_router(usage.router, dependencies=auth_gate)
+    app.include_router(agents.router, dependencies=auth_gate)
+    app.include_router(transcription.router, dependencies=auth_gate)
+    app.include_router(video_summary.router, dependencies=auth_gate)
+    app.include_router(coordinator.router, dependencies=auth_gate)
+    app.include_router(challenge.router, dependencies=auth_gate)
+    app.include_router(terminal.router, dependencies=auth_gate)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

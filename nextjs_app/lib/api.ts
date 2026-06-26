@@ -633,7 +633,12 @@ export function streamUrl(id: string): string {
   } else {
     base = API_BASE; // SSR-Fallback (Browser nutzt den window-Pfad zur Laufzeit)
   }
-  return `${base}/sessions/${id}/stream`;
+  // PROJ-25: Browser-WebSockets können keinen Authorization-Header setzen → der
+  // Access-Token reist als Query-Param; das Backend löst die Identität daraus auf
+  // und beschränkt den Stream auf die eigene Session.
+  const token = getAccessToken();
+  const auth = token ? `?access_token=${encodeURIComponent(token)}` : "";
+  return `${base}/sessions/${id}/stream${auth}`;
 }
 
 // --- PROJ-11: Fileexplorer + Clipboard -------------------------------------

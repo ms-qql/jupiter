@@ -97,7 +97,31 @@ class Settings(BaseSettings):
     default_permission_mode: str = "default"
 
     # Single-User-MVP: kein JWT — der Owner wird serverseitig gestempelt (#21).
+    # PROJ-25: bleibt der Owner-Wert des Bootstrap-Accounts (= ``user_id`` des ersten
+    # Nutzers), damit vor dem Auth angelegte Artefakte (``owner="dev"``) nahtlos diesem
+    # Account gehören (Migration ohne Datenverlust). Solange keine Nutzerbasis existiert,
+    # ist es auch der Anonym-Owner (rückwärtskompatibler Single-User-Betrieb).
     default_owner: str = "dev"
+
+    # --- Auth / JWT (PROJ-25) --------------------------------------------
+    # JWT HS256. Das Secret MUSS in Prod via JUPITER_JWT_SECRET (≥ 32 Byte zufällig)
+    # gesetzt werden — der Default ist NUR für lokale Dev gedacht und wird beim Start
+    # mit einer Warnung quittiert. Ein Wechsel des Secrets invalidiert alle Tokens.
+    jwt_secret: str = "dev-only-insecure-change-me-jupiter-jwt-secret-0123456789"
+    jwt_algorithm: str = "HS256"
+    # Kurzer Access-Token (Minuten) begrenzt den Schaden eines Leaks; langer Refresh
+    # (Tage) hält den Login bequem. Stack-Konvention: 15 min / 7 d.
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 7
+    # httpOnly-Refresh-Cookie. ``secure``/``samesite`` sind dev-tauglich vorbelegt
+    # (cross-site :3000→:8000 braucht im Dev http → samesite="lax" + secure=False).
+    # In Prod (gleiche Origin hinter TLS) via Env auf secure=True/samesite="strict".
+    refresh_cookie_name: str = "jupiter_refresh"
+    refresh_cookie_secure: bool = False
+    refresh_cookie_samesite: str = "lax"
+    refresh_cookie_path: str = "/auth"
+    # Mindestlänge für Bootstrap-/Login-Passwörter (Eingabe-Validierung).
+    password_min_length: int = 8
 
     # CORS-Origins für das Browser-Frontend (PROJ-3 Cockpit). Dev-Default = Next.js
     # auf :3000. In Prod via JUPITER_CORS_ORIGINS (JSON-Liste) überschreiben.

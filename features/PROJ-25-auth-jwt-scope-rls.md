@@ -170,6 +170,35 @@ Erwartete Endpunkte (alle Antworten deutsch, `owner` immer aus dem Token):
 - `POST /auth/logout` (geschützt) → Refresh-Cookie widerrufen; 204.
 - CORS muss `allow_credentials=true` + konkrete Origin (nicht `*`) führen — Cookie-Flow.
 
+## Backend-Umsetzung (Developer)
+**Datum:** 2026-06-26 · **Branch:** dev · **Stack:** FastAPI + SQLite (`session_index.db`)
+
+Implementiert ist die komplette **Auth-/Scope-Schicht** (Frontend war bereits gebaut):
+
+**Neue Bausteine**
+- `app/engine/auth.py` — `AuthService`: JWT HS256 (`python-jose`), Passwort-Hash via **`bcrypt` direkt** (umgeht die passlib/bcrypt-4.x-Inkompatibilität), Refresh-**Rotation/Widerruf**, Bootstrap, `create_account` (2. Nutzer), Token-Auflösung.
+- `app/db/auth_store.py` — `SqliteAuthRepository` (Tabellen `users` + `refresh_tokens`) in **derselben** SQLite-Datei wie der Live-Index. Lese-Ops tolerant gegenüber fehlendem Schema; Schreib-Ops idempotent self-init.
+- `app/deps.py` — `get_current_user` mit **Soft-Gate**: Token gültig → Identität; Token ungültig/abgelaufen → 401; kein Token + Nutzer vorhanden → 401; kein Token + **leere Nutzerbasis** → anonymer `default_owner` (rückwärtskompatibel + Migration).
+- `app/routes/auth.py` — `POST /auth/{login,refresh,bootstrap,logout,users}`, `GET /auth/{status,me}`. Refresh als **httpOnly-Cookie** (Pfad `/auth`), Access im Body.
+- `app/schemas/auth.py`, `tests/test_proj25_auth.py` (15 Tests).
+
+**Scope-Durchsetzung (Service-Scoping, kein DB-RLS — SQLite)**
+- **Owner IMMER aus dem Token**: `create_session` stempelt `owner=user.user_id`, Client-Payload-`owner` wird ignoriert (Test belegt).
+- `GET /sessions` filtert auf den eigenen Owner; alle `/sessions/{id}/*` prüfen Eigentum → **404 für fremd/unbekannt** (kein Existenz-Leak). `cleanup_terminal(owner=…)` räumt nur eigene Sessions.
+- **WebSocket-Stream** (`/sessions/{id}/stream`): Token als `?access_token=` (Browser-WS kann keinen Bearer-Header setzen) → Identität + Owner-Check serverseitig; Frontend `streamUrl()` hängt den Token an.
+- Geschützte Router (constitution, vault, md, metrics, settings, files, git, projects, recovery, engines, usage, agents, transcription, video_summary, coordinator, challenge, terminal) tragen `Depends(get_current_user)`. **Ausgenommen:** `/auth`, `/internal` (Hook-Token), `/vault/v1` (Consumer-Key, PROJ-24).
+- **Vault-Write** stempelt `owner` aus dem Token (Audit/Scope-Vertrag). Read/Search-Scoping des Datei-Vaults reitet bewusst auf PROJ-24 (geteilter Dienst) — der `owner`-Pflichtparameter ist verdrahtet.
+
+**Migration:** Bootstrap-Account erhält `user_id = default_owner` ("dev") → vor dem Auth angelegte `owner="dev"`-Artefakte gehören nahtlos dem ersten Nutzer (Test belegt). Kein Datenbank-Umzug nötig.
+
+**Config/Secrets:** `JUPITER_JWT_SECRET` (+ TTLs, Cookie-Flags) via `pydantic-settings`; Dev-Default mit Start-Warnung; in `.env.example` dokumentiert. Deps: `python-jose[cryptography]`, `bcrypt`.
+
+**Abweichung vom Tech-Design:** `POST /auth/users` (geschützt) ergänzt — die ursprüngliche API-Shape (nur Bootstrap+Login) bot keinen Weg, einen **zweiten** Nutzer anzulegen (AC „teamfähig").
+
+**Tests:** `pytest tests/test_proj25_auth.py` → 15 grün; volle Suite **785 passed, 2 xfailed** (keine Regression — Soft-Gate ist vor dem Bootstrap rückwärtskompatibel).
+
+**Offen für QA / Folge-PRs:** Rate-Limiting (`slowapi`) auf `/auth/*` (security.md-Empfehlung, noch nicht im Stack); Read-Scoping des Datei-Vaults nach Owner (PROJ-24).
+
 ## QA Test Results
 _To be added by /abc-qa_
 
