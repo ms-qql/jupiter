@@ -1,6 +1,6 @@
 # PROJ-47: Stream-Reader-Stall — verwaister Subprozess & eingefrorene Session-Anzeige
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -59,7 +59,7 @@ Der **stdout-Stream-Leser** einer Session bleibt stehen, während der Subprozess
 
 ## Zweitbefund — WebSocket-Flapping zum Browser (separat scope-bar)
 Im selben Vorfall flappte die **WebSocket Backend→Browser** für **beide** laufenden Sessions (`3e16cb4a` und `5a2969fc`) im ~15-30-s-Takt (`WebSocket … [accepted]` wiederholt im Backend-Log) mit GET-Re-Polling. Bei jedem Reconnect bekommt der neue Subscriber **nur** ab Verbindungszeit Events — verpasste `message`-Broadcasts werden **nicht nachgeliefert** → veraltetes Transkript im UI, selbst wenn das Backend die Daten hat.
-**Empfehlung:** als eigenes Ticket behandeln (Delivery-Layer: WS-Stabilität + Replay/Resync der verpassten Events bei Reconnect), da mechanistisch getrennt vom Reader-Stall (Backend↔Subprozess). Falls /abc-architecture es zusammenfassen will, hier andocken; sonst PROJ-48 dafür.
+**→ Eigenes Ticket: [PROJ-49](PROJ-49-websocket-flapping-event-replay.md)** (Delivery-Layer: WS-Stabilität + Replay/Resync der verpassten Events bei Reconnect), mechanistisch getrennt vom Reader-Stall hier (Backend↔Subprozess vs. Backend↔Browser).
 
 ## Betroffene Features (Cross-Feature-Impact — explizit)
 | Feature | Wirkung dieses Fixes |
@@ -78,4 +78,140 @@ Im selben Vorfall flappte die **WebSocket Backend→Browser** für **beide** lau
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-26 · **Stack:** Backend-only (FastAPI/Python, Engine-Treiber) — keine Frontend-/DB-Änderung · **Branch:** dev
+
+### Befund: exakter Code-Defekt bestätigt — Spec-Hypothese korrigiert
+Die Spec vermutete eine **Kopplung stdin-Write ↔ stdout-Read** („ein Write während des Turns bringt den Reader zum Stehen"). **Das trägt im Code nicht:**
+- `send_input` ([claude_driver.py:108](backend/app/engine/claude_driver.py#L108)) schreibt nur `stdin.write()` + `await stdin.drain()` — **kein** geteilter Lock, **keine** Reader-Cancellation. Auch der Manager-Pfad ([manager.py:1364](backend/app/engine/manager.py#L1364)) hält keinen mit dem Reader geteilten Lock. stdin und stdout laufen in asyncio bereits über **getrennte Transports/Tasks** — ein Write kann den `readline()` mechanistisch nicht anhalten.
+
+**Der echte, belegbare Defekt** sitzt im Reader selbst, [`_read_stdout` claude_driver.py:154–166](backend/app/engine/claude_driver.py#L154):
+1. **Ungeschützte Leseschleife:** `await stream.readline()` (Z. 158) läuft **ohne `try/except`**. `asyncio`-Subprozess-Streams haben ein **Default-Zeilenlimit von 64 KiB** (`create_subprocess_exec` ohne `limit=`, [Z. 95](backend/app/engine/claude_driver.py#L95)). Eine stream-json-Zeile, die das überschreitet (großer Assistenten-Turn, großes Tool-Result — genau was bei abgeschlossener, committeter Arbeit anfällt), lässt `readline()` ein **`ValueError`/`LimitOverrunError`** werfen.
+2. **Stiller Tod:** Diese Exception killt den `_reader_task` lautlos. Der Task wird in [`start()` Z. 102](backend/app/engine/claude_driver.py#L102) per `create_task` erzeugt und **nie überwacht/awaited** (erst in `stop()`). Es gibt **keinen Done-/Exception-Callback** → der Manager erfährt nie, dass der Reader tot ist. Kein Traceback im Log — exakt wie im Belegfall.
+3. **Folge = das beobachtete Bild:** Subprozess lebt + produziert weiter, Jupiter ingestiert nichts mehr → `num_turns/cost` bleiben 0 (nie ein `result`-Event verarbeitet, [manager.py:486](backend/app/engine/manager.py#L486)), Status klemmt auf `running` ([manager.py:463](backend/app/engine/manager.py#L463)), die Progress-Uhr ([watchdog.py:191](backend/app/engine/watchdog.py#L191)) bewegt sich nicht → nach 180 s falsch „hängt".
+
+Die starke Korrelation „Stall beim Dazwischenfunken" ist **Koinzidenz**: ein arbeitsreicher Turn (fertig + committet + geantwortet) erzeugt große Ausgabezeilen — eine davon sprengt die 64-KiB-Grenze. Der Input war nicht die Ursache, nur der zeitliche Nachbar.
+
+### Komponenten-Impact (kein UI, keine neuen Endpoints, keine DB)
+```
+ClaudeCodeDriver  (backend/app/engine/claude_driver.py)   ← Kern des Fixes
+├── create_subprocess_exec(limit=…)   große stream-json-Zeilen nicht mehr fatal
+├── _read_stdout()                    try/except um die Leseschleife
+│   ├── ValueError/LimitOverrunError  → Zeile robust überlesen statt Task-Tod
+│   └── sonstige Exception            → Traceback loggen + Fehler-Event emittieren
+└── Reader-Aufsicht (Done-Callback)   Reader endet unerwartet → Log + Status-Signal
+SessionRuntime    (backend/app/engine/manager.py)
+└── Reader-Stall als diagnostischer Zustand (Prozess lebt, Reader tot) — über die
+    vorhandene Status-/Uhr-Logik, KEINE zweite Fortschritts-Buchhaltung (PROJ-27-Prinzip)
+```
+
+### Tech-Entscheidungen (WARUM)
+- **Zeilenlimit anheben statt ignorieren.** Die Subprozess-Streams bekommen ein großzügiges, konfigurierbares `limit` (Default mehrere MiB). Grund: stream-json packt einen ganzen Assistenten-Turn/Tool-Result in **eine** Zeile; 64 KiB ist für Agent-Output schlicht zu klein. Das beseitigt den häufigsten Auslöser an der Wurzel.
+- **Reader übersteht trotzdem jede Zeile.** Auch über dem (höheren) Limit darf der Reader **nicht sterben**: `ValueError` wird gefangen, die betroffene Zeile geloggt + übersprungen, die Schleife läuft weiter. Robustheit vor Vollständigkeit einer Monsterzeile.
+- **Kein stiller Tod — Aufsicht statt Hoffnung.** Ein Done-/Exception-Callback auf `_reader_task` macht jeden unerwarteten Reader-Tod sichtbar (deutscher Traceback im Log) und setzt den Session-Status, statt zu verwaisen. Deckt die AC „Kein stiller Tod" und „Reader-Stall-Erkennung" gemeinsam ab.
+- **Reader-Stall ist ein eigener Zustand.** „Prozess lebt (PID + Stream offen) **aber** Reader-Task beendet" wird diagnostisch klar markiert — nicht als „aktiv" oder pauschal „hängt" fehletikettiert. Bewusst **konservativ** und getrennt vom legitimen langen Turn (PROJ-32) bzw. der Reanimierung (PROJ-45).
+- **Keine zweite Uhr.** Liveness-Konsequenzen laufen über die bestehende Watchdog-Progress-Uhr ([watchdog.py:237](backend/app/engine/watchdog.py#L237)) / `derive_liveness` ([manager.py:374](backend/app/engine/manager.py#L374)) — Leitprinzip PROJ-27, kein paralleles Accounting.
+- **Recovery bleibt wie gehabt.** Stop + „Fortsetzen" (`--resume`, [manager.py:1360](backend/app/engine/manager.py#L1360)) hängt einen frischen Reader an — funktioniert schon; der Fix sorgt dafür, dass es gar nicht erst nötig wird.
+
+### Datenmodell / API
+- **Keine** neuen Tabellen, **keine** MinIO-Nutzung, **keine** neuen/geänderten HTTP-Endpoints. Reiner Treiber-/Manager-Fix. Persistierter Live-Index (PROJ-14) spiegelt durch den Fix wieder reale `status/num_turns/cost`.
+
+### Abhängigkeiten (Pakete)
+- **Keine neuen.** `asyncio` (stdlib). Test nutzt den vorhandenen `FakeDriver` ([backend/tests/fakes.py:12](backend/tests/fakes.py#L12)) bzw. einen kleinen Stream-Stub.
+
+### Test-Strategie (deckt die ACs)
+- **Stream-Stub-Test** speist eine **über dem alten 64-KiB-Limit liegende** stream-json-Zeile gefolgt von einem `result`-Event ein und beweist: Reader stirbt nicht, `result` wird verarbeitet, Status `running → wartet`, `num_turns/cost > 0` → AC 1+2.
+- **„Input mitten im Turn"**: zwei `send_input` während laufendem Output → alle nachfolgenden Events (inkl. `result`) kommen weiter an → AC 1.
+- **Reader-Tod-Test**: erzwungene Exception im Reader → Done-Callback loggt Traceback + setzt Status (kein Verwaisen) → AC „Kein stiller Tod" + „Reader-Stall-Erkennung".
+- **Idle-Wartestellung**: Turn beendet, keine Eingabe → `wartet`/liveness aktiv, **nicht** nach 180 s „hängt" → AC 3.
+- **Regression**: bestehende `test_manager.py` / `test_proj33_is_alive.py` grün → keine Regression PROJ-1/14/27.
+
+### AC-Abdeckung (Mapping)
+| AC | Mechanismus |
+|---|---|
+| Input killt Reader nicht | `limit`-Anhebung + `try/except` in `_read_stdout` |
+| `result` → korrekter Endzustand | Reader lebt → `result`-Pfad [manager.py:486](backend/app/engine/manager.py#L486) greift |
+| Kein falsches „hängt" bei Idle | bestehende Watchdog-Uhr; `wartet`-Übergang intakt |
+| Reader-Stall-Erkennung | Done-Callback + „Prozess lebt, Reader tot"-Diagnose |
+| Sauberes Recovery | `--resume`-Pfad re-attached Reader (unverändert) |
+| Kein stiller Tod | `try/except` + Traceback-Log + Status-Set |
+
+### Offene Design-Fragen — Entscheidungen
+1. **Stall-Mechanismus:** ✅ bestätigt = ungeschützter Reader + 64-KiB-Limit + fehlende Aufsicht (nicht die vermutete stdin-Kopplung).
+2. **Stall-Schwelle:** „Prozess lebt + Reader-Task beendet" ist ein **deterministisches** Signal (kein Timeout-Raten) — sauberer als eine Sekunden-Schwelle; konservativ und klar von PROJ-32/45 getrennt.
+3. **WS-Flapping (Zweitbefund):** **getrennt** als **PROJ-49** ([Spec](PROJ-49-websocket-flapping-event-replay.md), Delivery-Layer ≠ Subprozess-Pump).
+
+> **Hinweis an Backend-Dev:** Beim Bau zusätzlich kurz prüfen, ob `send_input` ([manager.py:1366](backend/app/engine/manager.py#L1366)) den Status mitten im Turn fälschlich auf `RUNNING` zurücksetzt (Edge „Input exakt im Moment des `result`") — falls ja, minimal absichern. Kernfix bleibt der Reader.
+
+## Implementierung (Backend-Dev · 2026-06-26)
+**Branch:** dev · Reiner Treiber-/Config-Fix, keine DB/Route/Schema.
+
+**Geändert:**
+- [`backend/app/config.py`](backend/app/config.py) — neue Einstellung `claude_stream_limit_bytes` (Default **8 MiB**, via `JUPITER_CLAUDE_STREAM_LIMIT_BYTES`). Ersetzt den asyncio-Default von 64 KiB.
+- [`backend/app/engine/claude_driver.py`](backend/app/engine/claude_driver.py):
+  1. `create_subprocess_exec(..., limit=settings.claude_stream_limit_bytes)` → große stream-json-Zeilen sprengen den Reader nicht mehr.
+  2. `_read_stdout` umschließt die Leseschleife mit `try/except`: `ValueError`/`LimitOverrunError` (überlange Zeile) → **loggen + überspringen**, Reader liest weiter; jede sonstige Ausnahme → `log.exception` (Traceback) **+** `system/error`-Event nach oben → Session wird `ERROR` statt verwaist „läuft". `CancelledError` wird sauber durchgereicht (Stop ≠ Fehler).
+  3. Neuer `_on_reader_done`-Callback (via `add_done_callback`): Reader-Task endet mit Ausnahme → Log; endet regulär, obwohl der Subprozess noch lebt und kein Stop läuft → **diagnostischer „Reader-Stall"-Log** (kein stilles Verwaisen).
+- [`backend/tests/test_proj47_reader_stall.py`](backend/tests/test_proj47_reader_stall.py) — 6 neue Tests (Stream-Stub).
+
+**Befund-Bestätigung:** Die stdin/stdout-Entkopplung war bereits sauber (getrennte Tasks, kein geteilter Lock) — die Spec-Hypothese „Write blockiert Read" trug nicht. Der echte Defekt war der ungeschützte, unbeaufsichtigte Reader + 64-KiB-Limit. Der `send_input`→`RUNNING`-Edge wurde geprüft: unkritisch, da der Reader nun verlässlich weiterläuft und das `result` den Status korrekt nach `WAITING` führt — keine zusätzliche Absicherung nötig.
+
+**AC-Status (Eigenprüfung, finale QA via /abc-qa):**
+- [x] Input/große Zeile mitten im Turn killt den Reader nicht (`test_reader_skips_overlong_line_and_keeps_result`).
+- [x] `result` → `running→wartet`, Turns/Kosten > 0 (`test_result_event_sets_wartet_with_turns_and_cost`).
+- [x] Kein falsches „hängt" bei Idle: unveränderte Watchdog-Uhr; `derive_liveness` führt `WAITING`→`LIVENESS_ACTIVE` (Regression PROJ-27 grün).
+- [x] Reader-Stall-Erkennung (`test_done_callback_flags_stall_while_process_alive`).
+- [x] Sauberes Recovery: `--resume`-Pfad unverändert (Regression PROJ-33 grün).
+- [x] Kein stiller Tod (`test_reader_crash_emits_error_event_not_silent`, `test_done_callback_logs_reader_exception`).
+- [x] Deutsche Logs/Texte; volle Suite grün (**859 passed**); keine Regression PROJ-1/14/27.
+
+**Offen / Folgeticket:** WS-Flapping (Zweitbefund) bleibt separat → **PROJ-49** ([Spec](PROJ-49-websocket-flapping-event-replay.md)).
+
+---
+
+## QA Test Results (QA Engineer · 2026-06-26)
+
+**Getesteter Branch:** dev · **Status nach QA:** Approved
+
+### Test-Ausführung
+
+| Suite | Ergebnis |
+|---|---|
+| `test_proj47_reader_stall.py` (6 neue Tests) | ✅ 6/6 passed |
+| Vollständige Test-Suite | ✅ 859 passed, 1 warning |
+| PROJ-27 Regression (`test_proj27_liveness.py`, `test_proj27_qa.py`) | ✅ 19/19 passed |
+| PROJ-33 Regression (`test_proj33_qa.py`) | ✅ 7/7 passed |
+| PROJ-1/14 Regression (`test_proj1_qa.py`, `test_proj14_haertung.py`) | ✅ 30/30 passed |
+
+### Acceptance Criteria — Ergebnisse
+
+| AC | Ergebnis | Verifikation |
+|---|---|---|
+| Input/große Zeile killt Reader nicht | ✅ PASS | `test_reader_skips_overlong_line_and_keeps_result`; Verhalten in Python 3.10 bestätigt: `ValueError` wird geworfen, Zeile wird aus dem Buffer konsumiert, nächster `readline()`-Aufruf liest weiter. |
+| `result` → `running→wartet`, Turns/Kosten > 0 | ✅ PASS | `test_result_event_sets_wartet_with_turns_and_cost`; `handle_event` setzt `WAITING` + Turns/Cost korrekt. |
+| Kein falsches „hängt" bei Idle | ✅ PASS | `derive_liveness` liefert `LIVENESS_ACTIVE` für `WAITING` (manager.py:363-364); PROJ-27-Regression grün. |
+| Reader-Stall-Erkennung (Log-Eintrag) | ✅ PASS | `test_done_callback_flags_stall_while_process_alive`; `_on_reader_done` loggt auf ERROR-Level "Reader-Stall" wenn Prozess lebt. |
+| Sauberes Recovery (Stop + Fortsetzen) | ✅ PASS | `--resume`-Pfad unverändert; PROJ-33-Regression grün. |
+| Kein stiller Tod | ✅ PASS | `test_reader_crash_emits_error_event_not_silent`, `test_done_callback_logs_reader_exception`; Exception → Traceback + `system/error`-Event → Session `ERROR`. |
+| Deutsche Logs, keine Regression PROJ-1/14/27 | ✅ PASS | Alle Log-Meldungen deutsch verifiziert; 859 Tests grün. |
+
+### Bugs gefunden
+
+Keine Critical- oder High-Bugs. Zwei Low-Findings (kein Deployment-Blocker):
+
+**LOW-1: Kein dedizierter Test für „zwei send_inputs während aktivem Turn"**
+- Im Tech-Design als eigenständiger Testfall beschrieben; implementiert wurde stattdessen der Überlange-Zeile-Test (deckt die gleiche Wurzelursache ab).
+- Kein funktionaler Defekt — die stdin/stdout-Entkopplung war schon vor PROJ-47 korrekt; der Root-Cause-Fix macht den Scenario-Test hinfällig.
+- Vorschlag: optionaler Nachzug-Test wenn Belegfall-Reproduzierbarkeit formell gefordert wird.
+
+**LOW-2: `_on_reader_done` bei „clean exit, Prozess lebt" nur Log, kein Status-Wechsel**
+- Wenn der Reader-Task ohne Exception, aber während der Prozess noch lebt, endet, loggt `_on_reader_done` auf ERROR — setzt den Session-Status aber nicht sofort (bleibt `RUNNING` bis Watchdog nach 180 s „hängt" setzt).
+- Das ist ein Edge-Case-Sicherheitsnetz; der eigentliche Fix (Limit + except) stellt sicher, dass dieser Pfad in der Praxis nicht mehr eintritt.
+- Akzeptabler Kompromiss; keine zusätzliche Buchhaltung per PROJ-27-Leitprinzip.
+
+### Sicherheits-Audit
+
+Keine neuen Angriffsflächen: rein interner Treiber-Fix, keine neuen HTTP-Endpoints, keine DB-Änderungen, keine Auth-Änderungen. Log-Meldungen enthalten keine sensitiven Daten (nur PID — OS-öffentlich; Limit-Wert aus Config). ✅ SAUBER
+
+### Produktionsreife
+
+**✅ PRODUCTION READY** — keine Critical/High-Bugs, alle 7 ACs bestanden, 859 Tests grün.
