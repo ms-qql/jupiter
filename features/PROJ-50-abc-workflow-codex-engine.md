@@ -1,6 +1,6 @@
 # PROJ-50: abc-Workflow für die Codex-Engine (portierte Skills + Phasen-Signal)
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -75,4 +75,98 @@ Der Nutzer will den **abc-Workflow** (`/abc-requirements`, `/abc-architecture`, 
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-06-26 · **Stack:** Backend FastAPI (Engine-Adapter + Launcher) · Skill-Generator (Python-Skript/Make-Target) · Frontend nur Hinweis-Anzeige (überwiegend aus PROJ-48) · **Branch:** dev
+
+### Leitidee (in einem Satz)
+Codex bekommt **eigene, gepflegte Varianten der abc-Skills** (kein Symlink), der **Codex-Adapter übersetzt** Codex' Skill-Aufruf-Event in dasselbe interne `Skill`-Signal, und der **Smart Launcher** formuliert den Phasen-Anstoß so, dass Codex die richtige Skill **per Description** zieht — alles über die bereits engine-agnostische Phasen-Logik, ohne sie zu verändern.
+
+### Architektur-Befund, der das Design trägt (am Live-Code geprüft)
+- Die Phasen-Erkennung (`detect_phase_signal` / `phase_for_skill`) ist **engine-agnostisch** und bleibt **unverändert**. Sie erwartet ein Tool-Signal der Form *Tool-Name `Skill` + `tool_input.skill = "abc-…"`* (+ optionales Feature-Argument).
+- **Aber:** dieses Signal wird heute **nur im PreToolUse-Gate** ausgewertet (`manager.py:633`, im `_handle_tool`-Pfad). Diesen Hook hat **nur Claude**. Der generische Stream-Pfad `handle_event` (`manager.py:445`) verarbeitet bisher nur `system/assistant/result/rate_limit` — **kein Tool-/Skill-Event**.
+- Folgerung: Für Codex (und alle generic_cli-Engines) muss das Phasen-Signal aus dem **Output-Stream** gespeist werden. Das ist die zentrale neue Verdrahtung dieses Features — und sie verallgemeinert sauber auf alle stream-basierten Engines, nicht nur Codex.
+- Adapter-Muster steht bereit: ein Adapter ist genau eine Funktion `Zeile → StreamEvent | None` (`adapters.py`, Registry `claude/jsonl/plaintext`). PROJ-48 liefert den `codex`-Adapter; PROJ-50 erweitert ihn um die Skill-Event-Übersetzung.
+- `EngineProfile` hat bereits ein `capabilities`-Feld + `has_capability()` (`registry.py:26/102`) — heute z. B. `[usage, multi_turn]`. Eine `abc`-Capability ist **nur Konfiguration + eine Launcher-Abfrage**, keine neue Infrastruktur.
+- Der Launcher baut den Anstoß-Prompt in `_feature_suggestion` (`launcher.py:188`) heute **engine-blind** als `"/abc-{phase} {nr}"`.
+
+### A) Bausteine & Verantwortung (was wird gebaut)
+```
+1. Skill-Generator (Tooling, Backend-Dev)
+   scripts/gen_codex_skills.py  +  scripts/codex_skill_rules.yaml
+   └── liest  ~/.claude/skills/abc-*/SKILL.md   (Quelle der Wahrheit)
+   └── transformiert Claude-Ismen → Codex-tauglich (Regelwerk + Overlay)
+   └── schreibt ~/.codex/skills/abc-*/SKILL.md   (gültiges Frontmatter)
+   └── Make-/CLI-Target „codex-skills“ (reproduzierbar, idempotent)
+
+2. Codex-Adapter-Erweiterung (Backend-Dev)
+   backend/app/engine/adapters.py   (codex-Adapter aus PROJ-48)
+   └── erkennt Codex' Skill-Invocation-Item  →  emittiert ein internes
+       „Skill“-Signal (Name + Feature-Arg)
+   └── normalisiert Codex' Datei-Schreib-Tool  →  Write/Edit  (Fallback-Pfad)
+
+3. Stream-seitige Phasen-Verdrahtung (Backend-Dev)
+   backend/app/engine/manager.py  (handle_event)
+   └── NEU: bei Skill-/Tool-Signal aus dem Stream  →  detect_phase_signal()
+       + _apply_phase()  (dieselbe Logik wie im Gate, nur anderer Einspeise-Punkt)
+
+4. Engine-bewusster Launcher (Backend-Dev)
+   backend/app/engine/launcher.py  (_feature_suggestion)
+   └── Engine hat capability „abc“  →  prompt-Variante je Engine:
+       Claude  : "/abc-architecture 50"          (unverändert)
+       Codex   : "Nutze die Skill »abc-architecture« für Feature 50 …"
+
+5. Capability-Konfig (Backend-Dev)
+   backend/config/engines.yaml
+   └── claude: capabilities += [abc]    codex: capabilities += [abc]
+
+6. Degradations-Hinweis (Frontend, minimal)
+   └── „Diese Engine: keine Decision Cards / kein Gate / kein Watchdog“
+       — möglichst denselben generic_cli-Hinweis wie PROJ-48 wiederverwenden.
+```
+
+### B) Datenfluss (Phase landet im Kanban)
+```
+Smart Launcher  ──(capability abc?)──►  engine-bewusster Anstoß-Prompt
+        │                                   │
+        ▼                                   ▼
+   Claude: /abc-…                     Codex wählt Skill per Description
+        │                                   │  arbeitet ~/.codex/skills/abc-…/SKILL.md ab
+   PreToolUse-Gate                     Codex-Stream-Item „skill invoked: abc-architecture“
+   (Skill-Signal)                            │
+        │                              codex-Adapter übersetzt → internes Skill-Signal
+        ▼                                   ▼
+   detect_phase_signal  ◄───────────────────┘   (EINE engine-agnostische Funktion)
+        │
+        ▼
+   _apply_phase  →  Kanban/Gantt zeigen „architecture“  (PROJ-8/30, unverändert)
+```
+Fallback, falls Codex kein eindeutiges Skill-Item liefert: Datei-Touch auf `features/PROJ-X-*.md` (vorhandener Write/Edit-Zweig in `detect_phase_signal`) — dafür normalisiert der Adapter Codex' Schreib-Tool-Namen auf `Write/Edit`.
+
+### C) Keine neuen Schnittstellen / DB / MinIO
+- **Keine** neuen HTTP-Endpunkte, **keine** DB-Tabellen, **kein** MinIO. Reine Engine-/Tooling-Änderung hinter den bestehenden Session-APIs.
+- Externe Berührungspunkte: das Dateisystem `~/.codex/skills/` (Generator-Output) und Codex' Stream-Format (vom Adapter gelesen).
+
+### D) Entscheidungen zu den offenen Design-Fragen
+1. **Sync-Strategie Claude→Codex (Frage 1): Generator-Skript mit Regelwerk + Overlay.** Quelle der Wahrheit bleiben die Claude-Originale (`~/.claude/skills/abc-*`). Ein Generator wendet ein **Regelwerk** an (absolute `/home/dev/.claude/...`-Pfade neutralisieren, Claude-Tool-Referenzen `Agent`/`Explore`/`AskUserQuestion`/`Skill`-Chaining übersetzen oder als „in Codex nicht verfügbar“ markieren) und mischt pro Skill ein optionales **Overlay** (Hand-Patch für Stellen, die echte Umformulierung brauchen — z. B. Explore→Shell-Suche). Begründung: ein reiner Automat übersetzt die Claude-Ismen nicht zuverlässig, reine Handarbeit driftet; das Overlay kapselt nur das Nicht-Automatisierbare. (Verworfen: einmalig manuell — laut Spec doppelte Pflege.)
+2. **Phasen-Signal-Quelle (Frage 2): primär Codex-Skill-Event, Fallback Datei-Touch.** Primär das übersetzte Skill-Signal aus dem Stream; Fallback der vorhandene `Write/Edit`+`features/PROJ-X-*.md`-Zweig. Beide laufen über **dieselbe** `detect_phase_signal` — kein Zweitpfad in der Logik.
+3. **Capability-Gate `abc` (Frage 3): einführen.** `capabilities: [abc]` an Codex **und** Claude; der Launcher entscheidet datengetrieben (`has_capability("abc")`), ob/wie er den Phasen-Anstoß formuliert — statt unconditional. Engines ohne `abc` (z. B. reine Chat-Engines) bekommen keinen abc-Anstoß mehr aufgedrängt.
+
+### E) Architektur-Spike ZUERST (riskantester Unbekannter)
+Bevor Adapter-Mapping gebaut wird, in einem kleinen Spike **am Live-Codex verifizieren**, welches konkrete Stream-Item Codex beim Lauf einer Skill emittiert (trägt es den Skill-Namen? in welchem Feld?). Erst dieses Schema entscheidet, ob das primäre Skill-Signal sauber andockt oder der Datei-Touch-Fallback die Hauptlast trägt. Ergebnis als Notiz in „Verifizierte Befunde“ der Spec festhalten. (Entspricht dem ⚠️-Punkt der Befunde.)
+
+### F) Bewusste Grenzen (Degradation — wie generic_cli/PROJ-48)
+Kein PreToolUse-Hook bei Codex → **keine** Decision Cards (PROJ-4), **kein** Phasen-Gate (PROJ-10/30-Gate), **kein** Tool-Gate-Watchdog (PROJ-16). Human-in-the-Loop greift nur über das **Selbst-Pausieren** des Modells (abc-Checkpoints als Klartext-Rückfrage, dank Multi-Turn aus PROJ-48); Sandbox `workspace-write` bleibt die harte Leitplanke. Das UI macht diese Grenze sichtbar (selber Hinweis wie PROJ-48).
+
+### G) Abhängigkeiten / Pakete
+- **Keine neuen Python-Pakete.** Generator nutzt Standardbibliothek (+ ggf. das bereits vorhandene YAML) für das Regelwerk.
+- Voraussetzung: PROJ-48 ist gebaut (codex-Adapter + Multi-Turn vorhanden). PROJ-50 setzt darauf auf.
+
+### H) Bau-Reihenfolge & Routing
+1. **Spike** (Codex-Stream-Item-Schema) → *Backend-Dev*  ⟵ Gate für alles Weitere
+2. **Skill-Generator** + Regelwerk/Overlay + Make-Target → *Backend-Dev (Tooling)*
+3. **Codex-Adapter**: Skill-Event-Übersetzung + Schreib-Tool-Normalisierung → *Backend-Dev*
+4. **handle_event**-Verdrahtung (Stream → `detect_phase_signal`) → *Backend-Dev*
+5. **Launcher** engine-bewusst + **engines.yaml** `capabilities:[abc]` → *Backend-Dev*
+6. **Frontend**: Degradations-Hinweis (falls nicht schon aus PROJ-48 da) → *Frontend-Dev (minimal)*
+7. **QA/E2E**: eine Phase (`abc-architecture` oder `abc-document`) end-to-end mit Codex; Regression Claude/hermes/ollama → *QA-Engineer*
+
+> Schwerpunkt **Backend**; Frontend nur ein kleiner Hinweis. Kein UI-Feature im engeren Sinn → `/abc-frontend` entfällt fast vollständig, direkt `/abc-backend`.
