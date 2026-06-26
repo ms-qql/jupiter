@@ -1,8 +1,18 @@
 # PROJ-49: WebSocket-Flapping zum Browser — Stabilität + Event-Replay bei Reconnect
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
+
+## Deployment
+- **Produktion:** https://jupiter.auxevo.tech · **Deployed:** 2026-06-26 · **Version:** 0.21.0 · **Tag:** `v0.21.0-PROJ-49`
+- **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend` + Caddy TLS), Promotion `dev → main` → GitHub-Webhook-Auto-Deploy (`reset --hard` + `npm ci && build` + `pip install` + Service-Restart → kein Stale-Build).
+- **Geliefert:** Snapshot-Resync (Transkript im Connect-Snapshot + `liveText`-Reset), Keepalive-Ping (20 s), Reconnect-Backoff, „getrennt"-Banner, A3-Close-Code-Diagnoselog.
+- **A2 verifiziert:** Caddy `/api/*`-`reverse_proxy` hat keinen expliziten Timeout → streamt WS unbegrenzt; 20-s-Keepalive liegt darunter. Flapping war **nicht** Caddy. Kein Caddyfile-Change.
+- **Post-Deploy-Smoke (Live, AC 1 & 6 — nach hartem Reload):**
+  - [ ] WS bleibt über ≥ 10 min `● live`; im Backend-Log **keine** wiederholten `[accepted]` derselben Session.
+  - [ ] Erzwungener Reconnect (Netz/Tab) → Resync stellt Transkript + Status her (kein „eingefrorenes" UI).
+  - [ ] A3: Browser-Devtools/Backend-Log auf Close-Codes prüfen → Flapping-Trigger final einordnen (oder als behoben bestätigen).
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit) — besitzt die WebSocket-Anbindung Frontend↔Backend (`/api/sessions/{id}/stream`) und den Subscriber-Fan-out (`manager.subscribe`/`_broadcast`).
