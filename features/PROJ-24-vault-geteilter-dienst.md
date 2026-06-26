@@ -140,6 +140,9 @@ Backend vollständig umgesetzt, 32 neue Tests + volle Suite (770) grün.
 **Deviationen vom Design:** Path-Resolution für Schreibzugriffe nutzt die vault-weite Traversal-Härtung (`_resolve_read`); die Bereichsgrenze kommt nun aus dem **Consumer-Scope** (nicht mehr fix aus dem Jupiter-Subdir) — so kann ein Konsument gezielt auf einen Teilbereich beschränkt werden. `.md`-Pflicht für Schreibzugriffe (offenes MD bleibt Wahrheit). Interne in-process-Aufrufer (challenge/coordinator/recovery/manager/scout) bleiben auf der direkten `VaultService`-API (eine Quelle der Wahrheit) — sie über HTTP `/vault/v1` zu zwingen wäre falsch; der versionierte Vertrag ist die **externe** Schicht.
 
 ## QA Test Results
+**Re-Test 2026-06-26 (2. Durchlauf):** Kein PROJ-24-Fix seit dem 1. Durchlauf — PROJ-25 fasste nur `routes/vault.py` (alter interner Router, owner-Stempel) an, **nicht** das Scope-Gate (`consumers.py`/`vault_v1.py`/`engine/vault.py`). **BUG-24-1 (Critical) besteht unverändert** (Live-Repro + beide `xfail(strict)`-Tests weiter rot). Volle Suite 785 passed + 2 xfailed — keine Regression. **Verdikt unverändert: NICHT produktionsreif.**
+
+---
 **Getestet:** 2026-06-26 · **Tester:** QA Engineer (`/abc-qa`) · **Branch:** `dev`
 **Methode:** AC-Matrix + Red-Team (Code-Review + empirische Repros gegen `VaultService`/`ConsumerRegistry`) + volle pytest-Suite.
 
