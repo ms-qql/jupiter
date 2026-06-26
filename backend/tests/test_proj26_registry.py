@@ -284,3 +284,49 @@ def test_owner_comes_from_server_not_client(client: TestClient):
 
 def test_unknown_type_rejected(client: TestClient):
     assert client.get("/registry/banane/x").status_code == 404
+
+
+# ===========================================================================
+# Red-Team — dokumentierte offene Befunde (xfail bis Backend-Fix)
+# ===========================================================================
+
+@pytest.mark.xfail(reason="BUG-26-1: kein Dekomprimierungs-Limit (.jupkg-Zip-Bombe)", strict=False)
+def test_decompression_bomb_rejected(client: TestClient):
+    """Ein kleines, stark komprimiertes Paket darf den Server nicht über die
+    entpackte Größe fluten. Edge Case ‚Manipuliertes Paket': Validierung muss greifen.
+    Aktuell prüft nur die KOMPRIMIERTE Upload-Größe (2 MB) — die entpackte
+    definition.md ist ungedeckelt. Erwartet: Ablehnung (413/400)."""
+    bomb = _jupkg(definition="A" * (4 * 1024 * 1024))  # ~4 MB entpackt, wenige KB auf der Leitung
+    assert len(bomb) < 2 * 1024 * 1024  # umgeht den Upload-Cap
+    r = _preview(client, bomb)
+    assert r.status_code in (400, 413), "Zip-Bombe wurde nicht abgewiesen"
+
+
+@pytest.mark.xfail(reason="BUG-26-2: 409-Abbruch hinterlässt Teil-Installation + Staging-Leak", strict=False)
+def test_foreign_collision_409_leaves_no_partial_entry(client: TestClient):
+    """Wird die Aktivierung wegen einer fremden Resolver-Datei mit 409 abgebrochen,
+    darf KEIN halber Katalog-Eintrag zurückbleiben (und das Staging soll aufräumen).
+    Aktuell bleibt der Eintrag als ‚installed' im Katalog stehen."""
+    import os
+
+    roles_dir = os.path.join(settings.constitution_dir, "roles")
+    os.makedirs(roles_dir, exist_ok=True)
+    with open(os.path.join(roles_dir, "architect.md"), "w", encoding="utf-8") as fh:
+        fh.write("HANDGEPFLEGT")
+    prev = _preview(client, _jupkg(entry_id="architect", typ="role"))
+    r = client.post("/registry/import/confirm", json={"token": prev.json()["token"]})
+    assert r.status_code == 409
+    assert client.get("/registry/catalog").json()["entries"] == [], "Teil-Installation blieb zurück"
+
+
+@pytest.mark.xfail(reason="BUG-26-3: nicht bestätigte Vorschauen lecken Staging-Pakete (kein TTL/Cleanup)", strict=False)
+def test_unconfirmed_previews_do_not_leak_staging(client: TestClient, tmp_path):
+    """Jede Vorschau ohne Confirm legt dauerhaft ein .jupkg im Staging ab.
+    Erwartet: gedeckelte/aufgeräumte Staging-Ablage statt unbegrenztem Wachstum."""
+    import os
+
+    for i in range(8):
+        _preview(client, _jupkg(entry_id=f"ghost-{i}"))
+    staging = os.path.join(str(tmp_path / "registry"), "packages", "_staging")
+    leaked = os.listdir(staging) if os.path.isdir(staging) else []
+    assert len(leaked) <= 1, f"{len(leaked)} verwaiste Staging-Pakete"

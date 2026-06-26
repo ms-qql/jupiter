@@ -1,6 +1,6 @@
 # PROJ-26: Marktplatz/Registry für Rollen/Skills/Agenten
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-26
 **Baustein:** — (Roadmap-Erweiterung, Phase 2)
@@ -194,8 +194,76 @@ Durchsuchbarer Katalog + Status · Install/Toggle (aktiv=Resolver-Datei) · Expo
 - **`verified`** ist für importierte Pakete immer `false` (keine PROJ-25-Signatur/Trust-Chain) — Vorschau warnt „Quelle nicht verifiziert".
 - **Staging** der Import-Pakete liegt unter `packages/_staging/<token>.jupkg`; eine abgelaufene/unbekannte Vorschau → 404 mit Hinweis „erneut hochladen".
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (abc-qa, 2026-06-26)
+**Branch:** dev · **Tester:** QA Engineer / Red-Team · **Build:** Backend `bf385a1`
+
+### Zusammenfassung
+- **Akzeptanzkriterien:** 9/9 bestanden (1 mit Sicherheits-Caveat — siehe BUG-26-1).
+- **Edge Cases:** 7/8 bestanden, 1 teilweise (manipuliertes Paket: Validierung greift, aber Zip-Bombe nicht abgefangen).
+- **Automatisierte Tests:** `backend/tests/test_proj26_registry.py` — **22 passed, 3 xfailed** (xfail = dokumentierte offene Befunde). Volle Suite: **809 passed, 3 xfailed, keine Regression**.
+- **Bugs:** 0 Critical · 0 High · 1 Medium · 2 Low.
+- **Production-Ready:** ✅ **READY** (keine Critical/High) — **Empfehlung:** BUG-26-1 vor dem Deploy fixen, da der Import-Pfad bewusst Fremd-Pakete annimmt.
+
+### Akzeptanzkriterien (pass/fail)
+| # | Kriterium | Ergebnis | Beleg |
+|---|---|---|---|
+| 1 | Durchsuchbarer Katalog + Status (installiert/aktiv/inaktiv) | ✅ PASS | `test_catalog_*`, Filter Typ/Status/Query |
+| 2 | Install/aktivieren/deaktivieren; aktiv steht Sessions/Launcher zur Verfügung | ✅ PASS | `test_toggle_*`, `test_install_*` + `list_roles()` sieht aktive Rolle |
+| 3 | Export portierbares Paket; Import liest zurück | ✅ PASS | `test_export_roundtrip` |
+| 4 | Capability-/Policy-Vorschau vor Aktivierung (Human-in-the-Loop) | ✅ PASS | `test_import_preview_does_not_activate`, `test_import_confirm_activates` |
+| 5 | Versioniert; frühere Version wiederherstellbar | ✅ PASS | `test_rollback_restores_previous_version` |
+| 6 | Default-Trust-Policy konservativ (card/deny — nie auto-allow) | ✅ PASS | `test_readonly_caps_get_card_policy`, `test_unknown_dangerous_tool_gets_deny_and_limited` |
+| 7 | owner PROJ-25-kompatibel; Teilen als Ausbaustufe markiert | ✅ PASS | `test_owner_comes_from_server_not_client` (owner serverseitig) |
+| 8 | Defektes/inkompatibles Paket abgewiesen, ohne System zu beschädigen | ⚠️ PASS* | `test_corrupt_package_rejected`, `test_incompatible_schema_version_rejected`, `test_missing_definition_rejected` — *aber Zip-Bombe umgeht die Validierung → BUG-26-1 |
+| 9 | Alle Texte/Fehlermeldungen deutsch | ✅ PASS | alle `detail`-Strings deutsch |
+
+### Edge Cases
+| Edge Case | Ergebnis |
+|---|---|
+| Namens-/ID-Kollision → neue Version statt Überschreiben | ✅ `test_id_collision_creates_new_version_not_overwrite` |
+| Inkompatible Schema-Version → Ablehnung, kein Teil-Import | ✅ `test_incompatible_schema_version_rejected` |
+| Fordert unbekannte/gefährliche Tools → Vorschau warnt, Default deny | ✅ `test_unknown_dangerous_tool_gets_deny_and_limited` |
+| Aktive Rolle deaktiviert während laufender Session → läuft weiter | ✅ by design (toggle wirkt nur auf Resolver-Datei; geladener Prompt der Session unberührt) |
+| Manipuliertes Paket → Validierung + „Quelle nicht verifiziert" | ⚠️ teilweise — Validierung/Warnung vorhanden, aber **Dekomprimierungs-Bombe** nicht abgefangen (BUG-26-1) |
+| Rollback auf Version mit fehlendem Tool → Hinweis statt Crash, „eingeschränkt lauffähig" | ✅ `limited`-Flag live abgeleitet, kein Crash |
+| Leerer Katalog / Erststart → Empty-State | ✅ `test_catalog_empty_on_first_start` |
+
+### Security Audit (Red-Team)
+| Vektor | Befund |
+|---|---|
+| Path-Traversal über `id`/`typ`/`token` | ✅ blockiert — Regex-Validierung (`_VALID_ID`, `VALID_TYPES`, Token-Pattern) |
+| Zip-Slip über `.jupkg` (bösartige Pfade im Zip) | ✅ kein Risiko — nur feste Namen `manifest.yaml`/`definition.md` gelesen, Rest ignoriert |
+| YAML-Deserialisierung (Code-Exec) | ✅ `yaml.safe_load` überall |
+| Überschreiben von Hand-gepflegten Konstitutions-Rollen (PROJ-6) | ✅ **gut verteidigt** — fremde Resolver-Datei → 409, `resolver_placed`-Tracking; `test_foreign_resolver_file_not_overwritten` |
+| Auth / owner-Spoofing | ✅ Router hinter `auth_gate`; `owner` aus Token, nie aus Client-Payload |
+| **Dekomprimierungs-Bombe (DoS)** | ❌ **BUG-26-1** — kleines Paket (<2 MB komprimiert) entpackt unbegrenzt (verifiziert: 61 KB → 60 MB RAM + Platte) |
+| Staging-Storage-Leak | ❌ **BUG-26-3** — nicht bestätigte Vorschauen lassen `.jupkg` dauerhaft liegen (kein TTL/Cleanup) |
+
+### Gefundene Bugs
+
+**BUG-26-1 — Dekomprimierungs-Bombe beim Import (Medium, DoS)**
+- *Beschreibung:* Der Upload-Cap (`MAX_PACKAGE_BYTES = 2 MB`) prüft nur die **komprimierte** Größe. `import_preview`/`_read_package` rufen `zf.read("definition.md")` ohne Größenlimit → ein wenige KB großes `.jupkg` kann zig/hunderte MB in RAM und (bei Confirm) auf die Platte schreiben.
+- *Repro:* `.jupkg` mit `definition.md` = `"A"*60MB` → 61 KB auf der Leitung → `import_preview` akzeptiert, `import_confirm` schreibt 60 MB nach `installed/roles/r/definition.md`. (Empirisch verifiziert.)
+- *Deckt Spec-Edge-Case „Manipuliertes Paket" nur unvollständig ab.*
+- *Fix-Vorschlag (Backend):* entpackte Größe deckeln — `ZipInfo.file_size` vor `read` prüfen (z. B. Definition ≤ 1 MB, Manifest ≤ 64 KB) und Zahl der Zip-Einträge begrenzen; Überschreitung → 413.
+- *Test:* `test_decompression_bomb_rejected` (xfail).
+
+**BUG-26-2 — 409-Abbruch hinterlässt Teil-Installation (Low)**
+- *Beschreibung:* Kollidiert eine zu aktivierende Rolle mit einer fremden Resolver-Datei, legt `import_confirm` zuerst den Eintrag (`status=installed`) an und wirft **erst danach** beim `_place_resolver` 409. Die fremde Datei bleibt korrekt geschützt, aber ein halber Katalog-Eintrag „architect/installed" bleibt zurück.
+- *Repro:* Hand-Rolle `architect.md` anlegen → gleichnamiges Paket importieren+confirm → 409, danach `GET /registry/catalog` zeigt `architect/installed`. (Verifiziert.)
+- *Fix-Vorschlag:* Resolver-Kollision vor dem Anlegen des Eintrags prüfen, oder bei 409 das angelegte Verzeichnis zurückrollen (transaktional).
+- *Test:* `test_foreign_collision_409_leaves_no_partial_entry` (xfail).
+
+**BUG-26-3 — Staging-Pakete lecken (Low, Storage)**
+- *Beschreibung:* Jede `POST /registry/import`-Vorschau legt ein `.jupkg` unter `packages/_staging/<token>.jupkg` ab; ohne anschließendes `import/confirm` wird es nie entfernt (kein TTL/GC). Wiederholte Vorschauen → unbegrenztes Plattenwachstum (verschärft BUG-26-1).
+- *Fix-Vorschlag:* TTL-basiertes Aufräumen alter Staging-Dateien (z. B. beim nächsten Import) oder In-Memory-Staging mit Ablauf.
+- *Test:* `test_unconfirmed_previews_do_not_leak_staging` (xfail).
+
+### Regression
+Keine. Volle Backend-Suite **809 passed** nach der Änderung (`config.py`/`main.py` berührt); verwandte Features PROJ-6/10/25 grün.
+
+### Empfehlung
+**READY** (keine Critical/High). Vor `/abc-deploy` jedoch **BUG-26-1 (Medium) fixen** — der Import-Pfad nimmt per Design Fremd-Pakete an, daher gehört das Dekomprimierungs-Limit zur Kern-Sicherheitslinie der Spec. BUG-26-2/-3 (Low) können nachgezogen werden.
 
 ## Deployment
 _To be added by /abc-deploy_
