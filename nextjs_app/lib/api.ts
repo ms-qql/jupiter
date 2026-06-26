@@ -57,6 +57,7 @@ import type {
   VideoSummaryQueue,
   VideoSummaryAddResult,
   VideoSummarySettings,
+  VideoSummaryLibraryItem,
   MetricsSnapshot,
   MetricsStatus,
   TerminalInfo,
@@ -946,6 +947,19 @@ export function patchVideoSummarySettings(
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+/** PROJ-44: Bibliothek — alle bereits umgewandelten Notizen im Standard-Ordner
+ *  (Vault-Scan, neueste zuerst). Unabhängig von der DB-Queue. */
+export function getVideoSummaryLibrary(
+  signal?: AbortSignal,
+): Promise<VideoSummaryLibraryItem[]> {
+  return request<VideoSummaryLibraryItem[]>("/video-summary/library", { signal });
+}
+
+/** PROJ-44: Deeplink, der eine Vault-Notiz im MD-Reader (PROJ-7) öffnet. */
+export function mdReaderUrl(absolutePath: string): string {
+  return `/doku?source=vault&path=${encodeURIComponent(absolutePath)}`;
 }
 
 // --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------

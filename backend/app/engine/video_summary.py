@@ -16,6 +16,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 from urllib.parse import urlparse
 
 from ..config import settings
@@ -79,18 +80,23 @@ def _is_valid_url(url: str) -> bool:
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
-def build_prompt(url: str) -> str:
+def build_prompt(url: str, output_subdir: str) -> str:
     """Initial-Prompt der Verarbeitungs-Session: ruft den Skill auf + erzwingt
-    nicht-interaktive Kategorie-Wahl und einen maschinenlesbaren Abschlussbericht.
+    einen **festen Zielordner** (statt Auto-Kategorie, PROJ-44), Nicht-Interaktivität
+    und einen maschinenlesbaren Abschlussbericht.
 
     Der Skill selbst bleibt **unverändert** — wir steuern nur sein Verhalten über
-    den Prompt (headless kann kein ``AskUserQuestion`` bedienen)."""
+    den Prompt (headless kann kein ``AskUserQuestion`` bedienen). ``output_subdir``
+    ist relativ zum cwd/Vault-Root (z. B. ``04 Resources/Video Summaries``)."""
+    subdir = output_subdir.strip().strip("/")
     return (
         f"/hal-video-summary {url}\n\n"
         "Wichtige Rahmenbedingungen (headless, KEINE Rueckfragen moeglich):\n"
-        "- Waehle die best passende Zielkategorie unter 04 Resources/ selbst. "
+        f"- Speichere die Markdown-Notiz UND das PDF AUSSCHLIESSLICH im festen Ordner "
+        f"\"{subdir}/\" (relativ zum Vault-Root). Lege diesen Ordner an, falls er fehlt.\n"
+        "- Waehle KEINE Kategorie selbst und verschiebe nichts in Unterordner. "
         "Stelle KEINE Rueckfragen, nutze KEIN AskUserQuestion.\n"
-        "- Wenn keine bestehende Kategorie passt, lege eine sinnvolle neue an.\n"
+        "- Bild-/Anhang-Dateien duerfen wie gewohnt unter \"07 Attachments/<slug>/\" liegen.\n"
         "- Gib GANZ AM ENDE deiner Arbeit exakt diesen Block aus (jeder Pfad in "
         "einer eigenen Zeile, absolute Pfade):\n"
         f"{_RESULT_MARKER}\n"
@@ -142,6 +148,7 @@ class VideoSummaryWorker:
         self._cooldown_minutes = settings.video_summary_default_cooldown_minutes
         self._batch_size = settings.video_summary_batch_size
         self._schedule = ""
+        self._model = settings.video_summary_model  # PROJ-44: persistiert wählbar
         self._next_scheduled_run: datetime | None = None
 
     # --- Lifecycle ---------------------------------------------------------
@@ -158,6 +165,7 @@ class VideoSummaryWorker:
         self._cooldown_minutes = int(cfg.get("cooldown_minutes") or self._cooldown_minutes)
         self._batch_size = max(1, int(cfg.get("batch_size") or self._batch_size))
         self._schedule = (cfg.get("schedule") or "").strip()
+        self._model = (cfg.get("model") or self._model).strip()
         self._recompute_schedule()
 
     # --- Öffentliche Steuerung (von den Routen aufgerufen) -----------------
@@ -227,20 +235,55 @@ class VideoSummaryWorker:
             "cooldown_minutes": self._cooldown_minutes,
             "batch_size": self._batch_size,
             "schedule": self._schedule,
+            "model": self._model,
         }
 
     async def save_settings(
-        self, cooldown_minutes: int, batch_size: int, schedule: str
+        self, cooldown_minutes: int, batch_size: int, schedule: str, model: str
     ) -> dict:
-        saved = await self._repo.save_settings(cooldown_minutes, batch_size, schedule)
+        saved = await self._repo.save_settings(cooldown_minutes, batch_size, schedule, model)
         self._cooldown_minutes = int(saved["cooldown_minutes"])
         self._batch_size = max(1, int(saved["batch_size"]))
         self._schedule = (saved["schedule"] or "").strip()
+        self._model = (saved["model"] or self._model).strip()
         self._recompute_schedule()
         return await self.get_settings()
 
     async def list_queue(self) -> list[dict]:
         return await self._repo.list_queue()
+
+    async def list_library(self) -> list[dict]:
+        """Bibliothek (PROJ-44): scannt den festen Standard-Ordner und liefert ALLE
+        ``.md``-Notizen darin (auch außerhalb der App erzeugte) — nicht die DB-Queue.
+        Der Vault ist die Wahrheit; ein fehlender Ordner → leere Liste (kein Fehler)."""
+        return await asyncio.to_thread(self._scan_library_sync)
+
+    def _scan_library_sync(self) -> list[dict]:
+        out_dir = Path(settings.video_summary_project_path) / settings.video_summary_output_subdir
+        if not out_dir.is_dir():
+            return []
+        items: list[dict] = []
+        for md in out_dir.glob("*.md"):
+            if not md.is_file():
+                continue
+            title = md.stem
+            # MOC-Datei des Ordners (gleichnamig zum Ordner) ausblenden.
+            if title == out_dir.name:
+                continue
+            pdf = md.with_suffix(".pdf")
+            try:
+                mtime = datetime.fromtimestamp(md.stat().st_mtime).isoformat()
+            except OSError:
+                mtime = None
+            items.append({
+                "title": title,
+                "md_path": str(md),
+                "pdf_path": str(pdf) if pdf.is_file() else None,
+                "mtime": mtime,
+            })
+        # Neueste zuerst (None-mtime ans Ende).
+        items.sort(key=lambda i: i["mtime"] or "", reverse=True)
+        return items
 
     def state(self) -> dict:
         """Worker-Laufzeit-Zustand für die UI (Leerlauf / Läuft / Pausiert bis …)."""
@@ -299,8 +342,10 @@ class VideoSummaryWorker:
         try:
             runtime = await self._manager.create(
                 project_path=settings.video_summary_project_path,
-                initial_prompt=build_prompt(row["url"]),
-                model=settings.video_summary_model,
+                initial_prompt=build_prompt(
+                    row["url"], settings.video_summary_output_subdir
+                ),
+                model=self._model,
                 permission_mode=settings.video_summary_permission_mode,
                 owner=settings.default_owner,
                 project_name="Video Summary",

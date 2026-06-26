@@ -1,6 +1,6 @@
 # PROJ-44: Video Summary — Standard-Ordner, Bibliotheks-Kachel & Modellwahl
 
-## Status: Architected
+## Status: Approved
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -149,8 +149,97 @@ Alle übrigen PROJ-41-Routen (queue, run-now, retry, delete) **unverändert**.
 - MD-Reader-Deeplink: `nextjs_app/app/(cockpit)/doku/page.tsx` (`?source=&path=` / `?source=vault&rel=`; lädt absolute Pfade via `readMdFile`)
 - Frontend-App + Client: `nextjs_app/components/microapps/video_summary/video-summary-app.tsx`, `nextjs_app/lib/api.ts`, `nextjs_app/lib/types.ts`
 
-## QA Test Results
-_To be added by /qa_
+## Implementation Notes (Backend — /abc-backend, 2026-06-26)
+
+**Branch:** `dev`. Backend vollständig; Frontend (Bibliotheks-Kachel + Modell-Dropdown) ist der nächste Hand-off. **834/834 Tests grün, keine Regression.**
+
+### Geänderte/neue Dateien
+- `backend/app/config.py` — neuer Wert `video_summary_output_subdir` (Default `04 Resources/Video Summaries`); `video_summary_model` bleibt als **Fallback-Default**.
+- `backend/app/engine/video_summary.py` —
+  - **Block A:** `build_prompt(url, output_subdir)` schreibt den **festen Ordner** vor („Speichere Notiz UND PDF AUSSCHLIESSLICH im Ordner `<subdir>/`, lege ihn an, wähle KEINE Kategorie"). `_start` übergibt `output_subdir` + `model=self._model`.
+  - **Block C:** Worker cached `self._model`, lädt es in `_load_settings`, gibt es in `get_settings` aus, persistiert es in `save_settings(...)` (Signatur um `model` erweitert).
+  - **Block B:** neue Methode `list_library()` + `_scan_library_sync()` — scannt `project_path/output_subdir`, liefert `[{title, md_path, pdf_path?, mtime}]`, neueste zuerst; filtert MOC (`<Ordnername>.md`) + Nicht-`.md`; fehlender Ordner → `[]` (via `asyncio.to_thread`).
+- `backend/app/db/video_summary_queue.py` — `video_summary_settings` um Spalte `model` (Default `sonnet`) erweitert; **idempotente `ALTER TABLE`-Migration** für Alt-DBs (`_MIGRATIONS`); `get/save_settings` + Protocol + Async-Fassade um `model` ergänzt.
+- `backend/app/schemas/video_summary.py` — `model` in `…SettingsRead`/`…SettingsPatch`; **Whitelist** `VALID_MODELS = ("haiku","sonnet","opus")`; neues `VideoSummaryLibraryItem`.
+- `backend/app/routes/video_summary.py` — neue Route `GET /video-summary/library`; `PATCH /settings` akzeptiert `model` + validiert gegen Whitelist (ungültig → **400** deutsch).
+- Tests: `backend/tests/test_proj44_video_summary_extensions.py` (20 neue Tests: Prompt-Ordner, Modell-Persistenz+Migration, Library-Scan/Sortierung/Filter/leerer Ordner, API library+model-Validierung). PROJ-41-Tests an die neue Signatur angepasst.
+
+### API-Vertrag (für Frontend, Deltas zu PROJ-41)
+```
+GET   /video-summary/library   → [{title, md_path (absolut), pdf_path|null, mtime (ISO|null)}]  (neueste zuerst)
+GET   /video-summary/settings  → {cooldown_minutes, batch_size, schedule, model}   ← model NEU
+PATCH /video-summary/settings  → akzeptiert zusätzlich {model?}; ungültig → 400 „Ungueltiges Modell. Erlaubt: haiku, sonnet, opus."
+```
+- **MD-Reader öffnen:** Frontend baut `/doku?source=vault&path=<md_path>` (absoluter Pfad; Reader lädt jeden Pfad in `allowed_roots ⊇ /home/dev/tools`). PDF optional via vorhandenem `fileDownloadUrl(pdf_path)`.
+- **Modell-Dropdown:** Werte `haiku`/`sonnet`/`opus`, Default aus `GET /settings`; speichern via `PATCH /settings {model}`.
+
+### Offener Hand-off (Frontend, /abc-frontend)
+- Bibliotheks-Kachel „Bibliothek" in `nextjs_app/components/microapps/video_summary/video-summary-app.tsx` (Liste aus `GET /library`, Klick → MD-Reader, optional PDF-Verweis, EmptyState/Lade-/Fehlerzustand, deutsch).
+- Modell-Dropdown im Einstellungs-Dialog; `model` in den Settings-Typen + Client-Funktion `getVideoSummaryLibrary` in `nextjs_app/lib/api.ts` + Typ `VideoSummaryLibraryItem` in `lib/types.ts`.
+
+## Implementation Notes (Frontend — /abc-frontend, 2026-06-26)
+
+**Branch:** `dev`. Stack: Next.js (Erweiterung der bestehenden nativen Micro-App). **eslint 0 Fehler · tsc keine Fehler · `next build` erfolgreich.**
+
+### Geänderte Dateien
+- `nextjs_app/lib/types.ts` — `model: string` in `VideoSummarySettings`; neuer Typ `VideoSummaryLibraryItem {title, md_path, pdf_path|null, mtime|null}`.
+- `nextjs_app/lib/api.ts` — `getVideoSummaryLibrary()` (`GET /video-summary/library`) + Helper `mdReaderUrl(absPath)` → `/doku?source=vault&path=<encoded>`; Typ-Import ergänzt.
+- `nextjs_app/components/microapps/video_summary/video-summary-app.tsx` —
+  - **Block B:** neue `LibrarySection` (eigene Karte „Bibliothek") — pollt `GET /library` alle 10 s; Liste mit Titel + Datum (`fmtDate`), Klick auf Titel/„Notiz" → MD-Reader, optional „PDF" via `fileDownloadUrl`; EmptyState („Noch keine umgewandelten Videos"), Lade- + Fehlerzustand, Count-Badge. Alles deutsch.
+  - **Block B (Queue):** Ergebnis-Link „Notiz öffnen" der Warteschlange öffnet jetzt den **MD-Reader** (`mdReaderUrl`) statt Download; PDF bleibt Download.
+  - **Block C:** Modell-Dropdown (`Select`, shadcn/ui) im Einstellungs-Dialog mit `MODEL_CHOICES` Haiku/Sonnet/Opus (deutsche Labels), lädt/speichert `model` über `GET/PATCH /settings`; Default Sonnet.
+
+### Entscheidungen
+- **MD-Reader via `?path=<absolut>`:** der Reader (`/doku`) lädt jeden Pfad in `allowed_roots ⊇ /home/dev/tools` über `readMdFile` — unabhängig vom Sidebar-Source-Baum; keine Änderung an der `/doku`-Seite nötig.
+- **Bibliothek pollt eigenständig (10 s):** Verarbeitung läuft serverseitig; ein Vault-Dir-Scan ist günstig, neue Notizen erscheinen ohne Reload.
+- **shadcn/ui `Select`** wie in `policy-control.tsx`; Loading/Empty/Error explizit.
+
+## QA Test Results (/abc-qa, 2026-06-26)
+
+**Branch:** `dev` · **Ergebnis: PRODUCTION-READY** (keine Critical/High/Medium-Bugs).
+
+### Automatisierte Tests
+- **Backend:** `test_proj44_video_summary_extensions.py` (20) + `test_proj44_qa.py` (4) = **24 PROJ-44-Tests grün**. Volle Suite **838 passed**, keine Regression (PROJ-41-Tests an die neue Signatur angepasst, grün).
+- **Frontend:** `eslint` 0 Fehler · `tsc --noEmit` keine Fehler · **`next build` erfolgreich** (`/apps/[key]` + `/doku` kompiliert).
+
+### Acceptance Criteria — Matrix
+| # | Kriterium | Status | Beleg |
+|---|-----------|--------|-------|
+| A1 | Notiz+PDF in festen Ordner `04 Resources/Video Summaries/` | ✅ (by design) | `build_prompt` erzwingt Ordner; runtime instruction-based (s. Hinweis) |
+| A2 | Prompt verbietet Auto-Kategorie | ✅ | `test_build_prompt_pins_fixed_folder_no_category` |
+| A3 | Ordner wird angelegt falls fehlend | ✅ (by design) | Prompt-Anweisung „lege an, falls fehlt" |
+| A4 | Anhänge dürfen unter `07 Attachments/` bleiben | ✅ (by design) | Prompt erlaubt explizit |
+| A5 | Zielordner konfigurierbar | ✅ | `video_summary_output_subdir` (Config) |
+| B1 | Kachel „Bibliothek" vorhanden | ✅ | `LibrarySection` (build ok) |
+| B2 | Liste aus Vault-Scan, nicht DB-Queue | ✅ | `list_library`/`_scan_library_sync`; `test_library_scans_fixed_folder` |
+| B3 | Titel + Datum, neueste zuerst | ✅ | `test_library_sorted_newest_first`; `fmtDate` |
+| B4 | Klick öffnet `.md` im MD-Reader | ✅ | `mdReaderUrl` → `/doku?path=`; `/md/file` lädt jeden Pfad in `allowed_roots` |
+| B5 | Optionaler PDF-Verweis | ✅ | `pdf_path` + `fileDownloadUrl`; `test_library_scans_fixed_folder` |
+| B6 | EmptyState bei leerem Ordner | ✅ | `test_library_missing_folder_returns_empty` + Frontend EmptyState |
+| B7 | Lade-/Fehlerzustand | ✅ | Frontend (Lädt…/„nicht erreichbar") |
+| C1 | Modell-Dropdown im Dialog | ✅ | shadcn `Select` + `MODEL_CHOICES` |
+| C2 | Haiku/Sonnet/Opus wählbar | ✅ | `MODEL_CHOICES` / `VALID_MODELS` |
+| C3 | Default Sonnet | ✅ | `test_default_model_is_sonnet`, `test_api_settings_exposes_model_default` |
+| C4 | Auswahl persistiert (Neustart) | ✅ | `test_model_survives_restart` |
+| C5 | Neue Umwandlungen nutzen gewähltes Modell | ✅ | Worker `self._model` → `_start(model=…)` (Code verifiziert) |
+| C6 | Ungültiges Modell → 400 (deutsch) | ✅ | `test_api_patch_model_invalid_rejected` |
+| Q1 | Alle Texte deutsch | ✅ | UI + Fehlermeldungen deutsch |
+| Q2 | Keine Regression (PROJ-41) | ✅ | 838 passed |
+
+### Edge Cases (Spec) — abgedeckt
+Verstreute Alt-Notizen erscheinen nicht (Scan nur fester Ordner) · fehlender Ordner → `[]` (test) · MOC-/Nicht-`.md` gefiltert (test) · gleicher Titel zweimal → beide gelistet (glob) · **kein Subfolder-Leak** (`test_library_does_not_recurse_into_subfolders`) · gelöschte Notiz → MD-Reader **404**, kein Crash (`test_reader_returns_404_for_deleted_note`) · ungültiges persistiertes Modell unmöglich (Write-Whitelist + Legacy-Migration→`sonnet`, `test_migration_adds_model_column_to_legacy_db`) · viele Notizen → nur Dir-Listing.
+
+### Security-Audit (Red-Team)
+- **Auth:** `/video-summary/library` liegt auf demselben Router ohne Sonder-Dependency → identischer Auth-Perimeter wie `/queue`/`/settings` (PROJ-25). Raw-Aufruf ohne Token → **401** verifiziert. Keine neue Exposition. ✅
+- **Pfad-Scope:** Scan-Wurzel ist **server-config** (`project_path/output_subdir`), kein User-Input → keine Traversal. `glob("*.md")` ist **nicht-rekursiv** → kein Leak aus Geschwister-Kategorien/`07 Attachments` (test). Rückgabe-Pfade liegen in `allowed_roots` (test); Reader/Download erzwingen `allowed_roots` zusätzlich. ✅
+- **SQL-Injection:** `model` parametrisiert + Whitelist; keine dynamischen Spalten. ✅
+- **Modell-Injection:** Server-Whitelist `{haiku,sonnet,opus}` verhindert beliebige `--model`-Slugs (PROJ-18-Slug-Falle). ✅
+
+### Bugs
+Keine Critical/High/Medium.
+- **Hinweis (Low, akzeptiert):** A1/A3/A4 sind **instruction-based** (der unveränderte `hal-video-summary`-Skill folgt dem Prompt) und im QA nicht via Live-Claude-Session ausgeführt — gleiche akzeptierte Risikoklasse wie PROJ-41 (4C). Empfehlung: ein realer End-to-End-Lauf nach dem Deploy (ein Video umwandeln → erscheint in der Bibliothek).
+
+**Production-Ready: JA.**
 
 ## Deployment
 _To be added by /deploy_

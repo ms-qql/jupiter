@@ -12,9 +12,11 @@ from fastapi import APIRouter, HTTPException, Request
 
 from ..engine.video_summary import VideoSummaryWorker
 from ..schemas.video_summary import (
+    VALID_MODELS,
     QueueAddRequest,
     QueueAddResult,
     QueueRead,
+    VideoSummaryLibraryItem,
     VideoSummarySettingsPatch,
     VideoSummarySettingsRead,
 )
@@ -78,6 +80,13 @@ async def run_now(request: Request) -> dict:
     return {"items": await worker.list_queue(), "state": worker.state()}
 
 
+@router.get("/library", response_model=list[VideoSummaryLibraryItem])
+async def get_library(request: Request) -> list[dict]:
+    """Bibliothek: alle bereits umgewandelten Notizen im Standard-Ordner (Vault-Scan,
+    nicht die DB-Queue). Leerer/fehlender Ordner → leere Liste."""
+    return await _worker(request).list_library()
+
+
 @router.get("/settings", response_model=VideoSummarySettingsRead)
 async def get_settings_route(request: Request) -> dict:
     return await _worker(request).get_settings()
@@ -85,7 +94,7 @@ async def get_settings_route(request: Request) -> dict:
 
 @router.patch("/settings", response_model=VideoSummarySettingsRead)
 async def patch_settings_route(request: Request, payload: VideoSummarySettingsPatch) -> dict:
-    """Cooldown / Batch-Größe / Zeitplan ändern (persistiert). Nur angegebene Felder."""
+    """Cooldown / Batch-Größe / Zeitplan / Modell ändern (persistiert). Nur angegebene Felder."""
     worker = _worker(request)
     current = await worker.get_settings()
     cooldown = payload.cooldown_minutes if payload.cooldown_minutes is not None else current["cooldown_minutes"]
@@ -97,4 +106,11 @@ async def patch_settings_route(request: Request, payload: VideoSummarySettingsPa
             status_code=400,
             detail="Ungueltiger Zeitplan. Format HH:MM (24h) oder leer fuer nur manuell.",
         )
-    return await worker.save_settings(cooldown, batch, schedule)
+    model = payload.model if payload.model is not None else current["model"]
+    model = (model or "").strip()
+    if model not in VALID_MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ungueltiges Modell. Erlaubt: {', '.join(VALID_MODELS)}.",
+        )
+    return await worker.save_settings(cooldown, batch, schedule, model)

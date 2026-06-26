@@ -317,6 +317,10 @@ class Settings(BaseSettings):
     # Arbeitsverzeichnis (cwd/Scope) der Verarbeitungs-Sessions. Default = Hal-Vault,
     # in dem der Skill ohnehin schreibt. MUSS innerhalb allowed_roots liegen + existieren.
     video_summary_project_path: str = "/home/dev/tools/Hal"
+    # Fester Ziel-Unterordner (relativ zum Vault/Project-Root) für Notiz + PDF (PROJ-44).
+    # Ersetzt die frühere Auto-Kategorie-Wahl: ALLE Zusammenfassungen landen hier, damit
+    # der Nutzer sie immer am selben Ort findet. Speist auch die Bibliotheks-Kachel.
+    video_summary_output_subdir: str = "04 Resources/Video Summaries"
 
     # --- VPS-Admin Metriken (PROJ-42) ------------------------------------
     # Read-only Host-Metriken (CPU/RAM/Disk/Load/Swap/Netz/Uptime/Prozesse) +

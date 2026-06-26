@@ -16,6 +16,7 @@ import {
   FileTextIcon,
   FileIcon,
   PlusIcon,
+  LibraryIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -33,23 +34,40 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   ApiError,
   addVideoSummaryUrls,
   deleteVideoSummaryItem,
   fileDownloadUrl,
+  getVideoSummaryLibrary,
   getVideoSummaryQueue,
   getVideoSummarySettings,
+  mdReaderUrl,
   patchVideoSummarySettings,
   retryVideoSummaryItem,
   runVideoSummaryNow,
 } from "@/lib/api";
 import type {
   VideoSummaryItem,
+  VideoSummaryLibraryItem,
   VideoSummaryQueue,
   VideoSummarySettings,
   VideoSummaryStatus,
   VideoSummaryWorkerState,
 } from "@/lib/types";
+
+// PROJ-44: auswählbare Umwandlungs-Modelle (Backend-Whitelist: haiku/sonnet/opus).
+const MODEL_CHOICES: { value: string; label: string }[] = [
+  { value: "haiku", label: "Haiku (schnell & günstig)" },
+  { value: "sonnet", label: "Sonnet (ausgewogen, Standard)" },
+  { value: "opus", label: "Opus (höchste Qualität)" },
+];
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -59,6 +77,20 @@ function fmtTime(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** ISO-Zeit → lokales „TT.MM.JJJJ, HH:MM" (für die Bibliothek). */
+function fmtDate(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 const STATUS_LABEL: Record<VideoSummaryStatus, string> = {
@@ -257,7 +289,103 @@ export default function VideoSummaryApp() {
           </ul>
         )}
       </section>
+
+      {/* Bibliothek — alle bereits umgewandelten Videos (Vault-Scan) */}
+      <LibrarySection />
     </div>
+  );
+}
+
+const LIBRARY_POLL_MS = 10000;
+
+function LibrarySection() {
+  const [items, setItems] = useState<VideoSummaryLibraryItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const tick = () => {
+      getVideoSummaryLibrary(ctrl.signal)
+        .then((list) => {
+          setItems(list);
+          setError(null);
+        })
+        .catch((err) => {
+          if (ctrl.signal.aborted) return;
+          setError(err instanceof ApiError ? err.message : "Nicht erreichbar");
+        });
+    };
+    tick();
+    const t = setInterval(tick, LIBRARY_POLL_MS);
+    return () => {
+      ctrl.abort();
+      clearInterval(t);
+    };
+  }, []);
+
+  return (
+    <section className="rounded-xl border border-border bg-card">
+      <header className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <LibraryIcon className="size-4 text-muted-foreground" />
+        <h2 className="text-sm font-medium">Bibliothek</h2>
+        <span className="text-xs text-muted-foreground">
+          Bereits umgewandelte Videos im Standard-Ordner
+        </span>
+        {items && (
+          <Badge variant="outline" className="ml-auto">
+            {items.length}
+          </Badge>
+        )}
+      </header>
+
+      {error && !items ? (
+        <p className="px-4 py-6 text-sm text-red-400">Bibliothek nicht erreichbar ({error}).</p>
+      ) : items === null ? (
+        <p className="px-4 py-6 text-sm text-muted-foreground">Lädt…</p>
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+          <FileTextIcon className="size-6 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Noch keine umgewandelten Videos.</p>
+        </div>
+      ) : (
+        <ul className="divide-y divide-border">
+          {items.map((item) => (
+            <li key={item.md_path} className="flex items-center gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <a
+                  href={mdReaderUrl(item.md_path)}
+                  className="block truncate text-sm font-medium text-foreground underline-offset-2 hover:text-primary hover:underline"
+                  title={item.title}
+                >
+                  {item.title}
+                </a>
+                {item.mtime && (
+                  <p className="mt-0.5 text-xs text-muted-foreground">{fmtDate(item.mtime)}</p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-3 text-xs">
+                <a
+                  href={mdReaderUrl(item.md_path)}
+                  className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
+                >
+                  <FileTextIcon className="size-3.5" /> Notiz
+                </a>
+                {item.pdf_path && (
+                  <a
+                    href={fileDownloadUrl(item.pdf_path)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
+                  >
+                    <FileIcon className="size-3.5" /> PDF
+                  </a>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -280,9 +408,7 @@ function VideoRow({
           <div className="mt-1 flex flex-wrap gap-3 text-xs">
             {item.result_note_path && (
               <a
-                href={fileDownloadUrl(item.result_note_path)}
-                target="_blank"
-                rel="noreferrer"
+                href={mdReaderUrl(item.result_note_path)}
                 className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
               >
                 <FileTextIcon className="size-3.5" /> Notiz öffnen
@@ -332,6 +458,7 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
   const [cooldown, setCooldown] = useState("30");
   const [batch, setBatch] = useState("4");
   const [schedule, setSchedule] = useState("");
+  const [model, setModel] = useState("sonnet");
   const loaded = useRef(false);
 
   async function handleOpenChange(next: boolean) {
@@ -343,6 +470,7 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
       setCooldown(String(s.cooldown_minutes));
       setBatch(String(s.batch_size));
       setSchedule(s.schedule);
+      setModel(s.model);
       loaded.current = true;
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Einstellungen nicht ladbar");
@@ -360,11 +488,13 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
         cooldown_minutes: Number(cooldown) || 0,
         batch_size: Math.max(1, Number(batch) || 1),
         schedule: schedule.trim(),
+        model,
       };
       const s = await patchVideoSummarySettings(patch);
       setCooldown(String(s.cooldown_minutes));
       setBatch(String(s.batch_size));
       setSchedule(s.schedule);
+      setModel(s.model);
       toast.success("Einstellungen gespeichert");
       onSaved();
       setOpen(false);
@@ -421,6 +551,24 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
                 value={batch}
                 onChange={(e) => setBatch(e.target.value)}
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="vs_model">Modell der Umwandlung</Label>
+              <Select value={model} onValueChange={(v) => setModel(v ?? "sonnet")}>
+                <SelectTrigger id="vs_model" aria-label="Modell der Umwandlung">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MODEL_CHOICES.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Einfachere Modelle (z. B. Haiku) sind schneller und günstiger.
+              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="vs_schedule">Zeitplan (täglich, HH:MM — leer = nur manuell)</Label>

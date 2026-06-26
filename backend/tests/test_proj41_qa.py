@@ -88,7 +88,7 @@ async def test_settings_survive_restart(tmp_path, monkeypatch):
         SessionManager(driver_factory=lambda: FakeDriver()), SqliteVideoSummaryRepository(db)
     )
     await w1.startup()
-    await w1.save_settings(cooldown_minutes=15, batch_size=2, schedule="03:00")
+    await w1.save_settings(cooldown_minutes=15, batch_size=2, schedule="03:00", model="opus")
 
     # „Neustart": neuer Worker, dieselbe DB.
     w2 = VideoSummaryWorker(
@@ -96,7 +96,7 @@ async def test_settings_survive_restart(tmp_path, monkeypatch):
     )
     await w2.startup()
     s = await w2.get_settings()
-    assert s == {"cooldown_minutes": 15, "batch_size": 2, "schedule": "03:00"}
+    assert s == {"cooldown_minutes": 15, "batch_size": 2, "schedule": "03:00", "model": "opus"}
     # Zeitplan ist nach dem Neustart aktiv (nächster Lauf berechnet).
     assert w2._next_scheduled_run is not None
 

@@ -735,6 +735,16 @@ export interface VideoSummarySettings {
   cooldown_minutes: number;
   batch_size: number;
   schedule: string;
+  /** PROJ-44: Umwandlungs-Modell (haiku | sonnet | opus). */
+  model: string;
+}
+
+/** PROJ-44: eine bereits umgewandelte Notiz im Standard-Ordner (Vault-Scan). */
+export interface VideoSummaryLibraryItem {
+  title: string;
+  md_path: string;
+  pdf_path: string | null;
+  mtime: string | null;
 }
 
 // --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------
