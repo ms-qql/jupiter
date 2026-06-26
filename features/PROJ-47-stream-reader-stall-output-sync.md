@@ -1,6 +1,6 @@
 # PROJ-47: Stream-Reader-Stall — verwaister Subprozess & eingefrorene Session-Anzeige
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
