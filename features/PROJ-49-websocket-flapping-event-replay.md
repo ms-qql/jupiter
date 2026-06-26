@@ -148,3 +148,17 @@ Keine neuen Pakete. Reine Verträge-/Verhaltensänderung auf vorhandenem WS-Stac
 - Connect-Snapshot: `{"kind":"state", …, transcript:[{role,kind,text,ts}, …]}` → als **Baseline** verwenden, `liveText` zurücksetzen.
 - `{"kind":"ping"}` → ignorieren (kein UI-Effekt).
 - Offen für Frontend: Snapshot-Transkript ins Render übernehmen + `liveText`-Reset; sichtbarer „getrennt"-Hinweis an `connected`; A3-Diagnose des Remount-Auslösers.
+
+## Implementierung — Frontend (2026-06-26, Branch `dev`)
+**Dateien:** `nextjs_app/hooks/use-session-stream.ts`, `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx`.
+
+- **B — Resync im Hook:** `useSessionStream` gibt jetzt zusätzlich `transcript: TranscriptEntry[] | null` zurück. Trägt ein `kind:"state"`-Frame ein `transcript`-Array (nur der **Connect-Snapshot**, nicht die Live-`state`-Broadcasts), wird es als **Baseline** übernommen **und `liveText` geleert** → idempotenter, verlustfreier Resync nach jedem (Re-)Connect, kein Doppeln.
+- **Render:** Die Detailseite rendert das Transkript aus `liveTranscript ?? detail.transcript ?? []` (Snapshot bevorzugt, REST-Load als Fallback bis zum ersten Snapshot). Scroll-Trigger auf `transcript.length` + `liveText`.
+- **A1 — `ping` ignorieren:** expliziter No-op-Zweig für `kind:"ping"` (Keepalive ohne UI-Effekt).
+- **A — Reconnect-Backoff (statt Tight-Loop):** exponentiell mit Jitter (1 s → max 15 s), bei `onopen` zurückgesetzt. Bremst einen Flapping-Sturm und übersteht kurze Netz-/Proxy-Aussetzer.
+- **A3 — Diagnose-Instrumentierung:** `onclose` loggt (nur außerhalb Production) `code`/`reason` + Reconnect-Zähler → erlaubt, Client- vs. Server- vs. Proxy-seitigen Close beim nächsten Live-Vorfall eindeutig zu unterscheiden. Effekt-Deps des Hooks sind sauber `[id]` (kein Re-Init pro Render/Poll); Leitverdacht für (A) bleibt ein Remount/aktives Schließen — final per Live-Log (QA) festzunageln.
+- **Verbindungs-Status sichtbar:** Bei `everConnected && !connected` zeigt ein amber Banner „Verbindung getrennt — verbinde neu … (Stand wird beim Reconnect nachgeladen)". Gegen Initial-Flash gegated (erst nach dem ersten erfolgreichen Connect). Der bestehende `● live / ○ getrennt`-Indikator im Header bleibt.
+
+**Checks:** `npm run lint` sauber, `npm run build` grün, `vitest` 169 passed. Vorbestehender, PROJ-49-fremder `tsc`-Fehler in `lib/md-tree.test.ts` (Testdatei, nicht im Build-Pfad) bleibt unberührt.
+
+**Noch offen:** A2 (Caddy-WS-Idle-Timeout prüfen/setzen, Infra/human-gated bei `/abc-deploy`); A3-Finalbefund am Live-Log (QA).

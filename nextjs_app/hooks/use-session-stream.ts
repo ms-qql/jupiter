@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { streamUrl } from "@/lib/api";
-import type { Session } from "@/lib/types";
+import type { Session, TranscriptEntry } from "@/lib/types";
 
 /** Server-Notice (PROJ-5): einmaliger Auto-Vorschlag beim Schwellen-Überschreiten. */
 export interface ThresholdNotice {
@@ -27,7 +27,13 @@ export interface LiveActivity {
 interface StreamResult {
   /** Letzter State-Snapshot vom Server (live, ohne Polling). */
   state: Session | null;
-  /** Seit Verbindungsaufbau gestreamter Assistenten-Text. */
+  /**
+   * PROJ-49 B: Transkript-Baseline aus dem Connect-Snapshot. Nach JEDEM (Re-)Connect
+   * liefert der Server den Vollzustand inkl. Transkript → verlustfreier Resync ohne
+   * Re-Polling. `null`, bis der erste Snapshot eintraf (dann zählt `detail` der Seite).
+   */
+  transcript: TranscriptEntry[] | null;
+  /** Seit dem letzten Snapshot gestreamter Assistenten-Text (wird beim Resync geleert). */
   liveText: string;
   /** PROJ-46: jüngste Tool-Aktion (transient); `null`, solange noch keine kam. */
   lastActivity: LiveActivity | null;
@@ -41,6 +47,7 @@ interface StreamOptions {
 
 export function useSessionStream(id: string, opts?: StreamOptions): StreamResult {
   const [state, setState] = useState<Session | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptEntry[] | null>(null);
   const [liveText, setLiveText] = useState("");
   const [lastActivity, setLastActivity] = useState<LiveActivity | null>(null);
   const [connected, setConnected] = useState(false);
@@ -55,11 +62,17 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
     closedByUs.current = false;
     let ws: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
+    // PROJ-49 A: Reconnect-Versuche zählen → Backoff statt Tight-Loop; bei `onopen`
+    // zurückgesetzt, damit nach einer stabilen Phase wieder schnell reconnectet wird.
+    let attempt = 0;
 
     const connect = () => {
       ws = new WebSocket(streamUrl(id));
 
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => {
+        attempt = 0;
+        setConnected(true);
+      };
 
       ws.onmessage = (ev) => {
         let msg: {
@@ -70,6 +83,7 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
           tool?: string | null;
           target?: string;
           ts?: string | null;
+          transcript?: TranscriptEntry[];
         } & Partial<Session>;
         try {
           msg = JSON.parse(ev.data);
@@ -78,6 +92,16 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
         }
         if (msg.kind === "state") {
           setState(msg as Session);
+          // PROJ-49 B: Nur der Connect-Snapshot trägt `transcript` (Live-`state`-
+          // Broadcasts nicht) → als Baseline übernehmen und den seit-Snapshot-Strom
+          // leeren. Idempotent: verpasste Chunks stecken bereits im Transkript,
+          // also kein Verlust und keine Doppelung beim Reconnect.
+          if (Array.isArray(msg.transcript)) {
+            setTranscript(msg.transcript);
+            setLiveText("");
+          }
+        } else if (msg.kind === "ping") {
+          // PROJ-49 A1: Keepalive vom Server — bewusst ignorieren (kein UI-Effekt).
         } else if (msg.kind === "message" && msg.role === "assistant" && msg.text) {
           setLiveText((prev) => prev + msg.text);
         } else if (msg.kind === "activity") {
@@ -92,11 +116,21 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         setConnected(false);
-        if (!closedByUs.current) {
-          retry = setTimeout(connect, 2000);
+        if (closedByUs.current) return;
+        // PROJ-49 A3: Schließgrund protokollieren, um den Flapping-Auslöser
+        // einzugrenzen (Client- vs. Server- vs. Proxy-seitiger Close anhand des Codes).
+        if (process.env.NODE_ENV !== "production") {
+          console.debug(
+            `[ws ${id}] closed code=${ev.code} reason=${ev.reason || "—"} → reconnect #${attempt + 1}`,
+          );
         }
+        // Exponentieller Backoff mit Jitter (1s → max 15s) statt fixem Tight-Loop:
+        // bremst einen Flapping-Sturm und übersteht kurze Netz-/Proxy-Aussetzer.
+        const delay = Math.min(1000 * 2 ** attempt, 15000) + Math.random() * 500;
+        attempt += 1;
+        retry = setTimeout(connect, delay);
       };
 
       ws.onerror = () => ws?.close();
@@ -111,5 +145,5 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
     };
   }, [id]);
 
-  return { state, liveText, lastActivity, connected };
+  return { state, transcript, liveText, lastActivity, connected };
 }

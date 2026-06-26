@@ -43,7 +43,13 @@ export default function SessionDetailPage({
 }) {
   const { id } = use(params);
   const now = useNow();
-  const { state: liveState, liveText, lastActivity, connected } = useSessionStream(id, {
+  const {
+    state: liveState,
+    transcript: liveTranscript,
+    liveText,
+    lastActivity,
+    connected,
+  } = useSessionStream(id, {
     onNotice: (n) => {
       if (n.event === "threshold_reached") {
         toast.warning(
@@ -92,10 +98,19 @@ export default function SessionDetailPage({
 
   // Header bevorzugt den Live-State, fällt sonst auf den initialen Detail-Load.
   const head = liveState ?? detail;
+  // PROJ-49 B: Transkript bevorzugt aus dem WS-Snapshot (resync-fest nach jedem
+  // Reconnect), Fallback auf den initialen REST-Load bis der erste Snapshot da ist.
+  const transcript = liveTranscript ?? detail?.transcript ?? [];
+
+  // PROJ-49: „getrennt"-Hinweis erst zeigen, wenn die WS schon einmal stand —
+  // unterdrückt den kurzen Flash beim allerersten Verbindungsaufbau. State-Anpassung
+  // beim Wechsel während des Renders (mit Guard, kein Effect) — wie im SessionsProvider.
+  const [everConnected, setEverConnected] = useState(false);
+  if (connected && !everConnected) setEverConnected(true);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-  }, [liveText, detail]);
+  }, [liveText, transcript.length]);
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -284,12 +299,24 @@ export default function SessionDetailPage({
         </p>
       )}
 
+      {/* PROJ-49: Verbindungs-Status sichtbar — statt stiller, veralteter Anzeige.
+          Erst nach dem ersten erfolgreichen Connect, damit kein Initial-Flash stört. */}
+      {everConnected && !connected && (
+        <div
+          role="status"
+          className="my-1 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-700 dark:text-amber-400"
+        >
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+          Verbindung getrennt — verbinde neu … (Stand wird beim Reconnect nachgeladen)
+        </div>
+      )}
+
       <div
         ref={logRef}
         className="my-3 flex-1 overflow-y-auto rounded-lg border border-border bg-card/30 p-4 font-mono text-sm leading-relaxed"
       >
-        {detail?.transcript?.length ? (
-          detail.transcript.map((t, i) => (
+        {transcript.length ? (
+          transcript.map((t, i) => (
             <div key={i} className="mb-3">
               <span className="text-xs uppercase tracking-wide text-muted-foreground">
                 {t.role}
