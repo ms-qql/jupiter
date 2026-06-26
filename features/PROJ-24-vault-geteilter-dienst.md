@@ -1,8 +1,8 @@
 # PROJ-24: Vault als geteilter Dienst (auch für eingebettete Apps)
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-06-23
-**Last Updated:** 2026-06-25
+**Last Updated:** 2026-06-26
 **Baustein:** #14
 **Prio:** P2 (Phase 2 — Skalierung)
 
@@ -140,7 +140,53 @@ Backend vollständig umgesetzt, 32 neue Tests + volle Suite (770) grün.
 **Deviationen vom Design:** Path-Resolution für Schreibzugriffe nutzt die vault-weite Traversal-Härtung (`_resolve_read`); die Bereichsgrenze kommt nun aus dem **Consumer-Scope** (nicht mehr fix aus dem Jupiter-Subdir) — so kann ein Konsument gezielt auf einen Teilbereich beschränkt werden. `.md`-Pflicht für Schreibzugriffe (offenes MD bleibt Wahrheit). Interne in-process-Aufrufer (challenge/coordinator/recovery/manager/scout) bleiben auf der direkten `VaultService`-API (eine Quelle der Wahrheit) — sie über HTTP `/vault/v1` zu zwingen wäre falsch; der versionierte Vertrag ist die **externe** Schicht.
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-06-26 · **Tester:** QA Engineer (`/abc-qa`) · **Branch:** `dev`
+**Methode:** AC-Matrix + Red-Team (Code-Review + empirische Repros gegen `VaultService`/`ConsumerRegistry`) + volle pytest-Suite.
+
+### Produktionsreife: **NICHT BEREIT** — 1 Critical-Bug
+Volle Suite **770 + 2 grün** (`test_proj24_vault_shared.py`: 32 passed, 2 xfailed = Red-Team-Regression für BUG-24-1). Funktional ist der Dienst vollständig; das **Kern-Sicherheitsversprechen (Scope-Grenze) ist jedoch umgehbar**.
+
+### Akzeptanzkriterien
+| # | Kriterium | Ergebnis |
+|---|---|---|
+| 1 | Eigenständiger Dienst: read/write/search/resolve | ✅ PASS (`/vault/v1`, 4 Endpunkte) |
+| 2 | API versioniert (`/vault/v1`) | ✅ PASS |
+| 3 | Eingebettete Apps nutzbar + Beispiel-Setup | ⚠️ TEILWEISE — `consumers.example.yaml` vorhanden; ein **dokumentiertes** iFrame-Konsumenten-Beispiel in `docs/` (laut Design F) fehlt noch |
+| 4 | Scope pro Konsument, **kein Vollzugriff per Default** | ❌ **FAIL → BUG-24-1** — Default-deny greift (leerer Scope = kein Zugriff ✓), aber die Scope-Grenze ist via `..` umgehbar |
+| 5 | Schreibzugriffe tragen Herkunft (Audit) | ✅ PASS (Append-only JSONL, `consumer`+Pfad+Version) |
+| 6 | Offenes MD, keine Black-Box | ✅ PASS (`.md`-Pflicht, Audit als offenes JSONL) |
+| 7 | Pointer/Ausschnitt statt Volltext | ✅ PASS (`read mode=excerpt`, `search`, `resolve`) |
+| 8 | Gleichzeitige Schreibzugriffe konfliktsicher | ✅ PASS (create→409, overwrite ohne/falsche `base_version`→409, append atomar+Lock) — siehe BUG-24-2 (Low) |
+| 9 | Alle Texte/Fehler deutsch | ✅ PASS |
+
+### Bugs
+
+**BUG-24-1 — Scope-Bypass über `..`-Pfadsegmente · Severity: CRITICAL**
+Das Scope-Gate (`Consumer.can_read`/`can_write` → `_norm`) prüft den **rohen** Pfad-String und kollabiert `..` **nicht**. Die anschließende Datei-Auflösung (`VaultService.write_at`/`read_at` → `_resolve_read` → `os.path.realpath`) löst `..` jedoch auf. Die Vault-Traversal-Härtung blockt nur das Verlassen des **Vault-Roots**, nicht das Verlassen des **Scopes** — und beim geteilten Dienst ist der Scope die einzige Grenze (`write_at` nutzt `_resolve_read` = ganzer Vault als Basis, nicht den Jupiter-Unterbaum).
+
+*Reproduktion (verifiziert):* Konsument mit `read`/`write: ["Agentic OS/Jupiter/Shared/**"]`
+- liest **und überschreibt** `Agentic OS/Jupiter/Shared/../Knowledge/secret.md` → faktisch `…/Jupiter/Knowledge/secret.md` (ausserhalb Scope) ✗
+- legt via `Agentic OS/Jupiter/Shared/../../../04 Resources/fremd.md` eine Datei in einem **fremden Top-Level-Ordner** ausserhalb des Jupiter-Bereichs an ✗
+
+*Wirkung:* Jeder externe Konsument mit beliebigem `X/**`-Scope kann den **gesamten Vault lesen** (`X/../..`) und überall im Vault `.md` **schreiben/überschreiben** → AC 4 gebrochen, Scope wirkungslos. Genau das Bedrohungsmodell, gegen das PROJ-24 schützen soll (eingebettete Fremd-App soll „nicht den ganzen Vault aufmachen").
+
+*Fix-Richtung (Backend):* Scope-Prüfung auf demselben normalisierten Pfad ausführen, den die Datei-Auflösung verwendet — entweder `os.path.normpath` vor dem Glob-Match und jeden `..`-Rest ablehnen, **oder** zuerst realpath auflösen, vault-relativen Pfad zurückrechnen und **diesen** gegen den Scope prüfen. Zusätzlich erwägen: `write_at` an `_resolve_write` (Jupiter-Unterbaum) statt `_resolve_read` binden, damit ein externer Konsument konstruktiv nie ausserhalb des Jupiter-Bereichs schreiben kann.
+
+*Regression:* `test_consumer_scope_no_dotdot_escape` + `test_api_read_scope_escape_via_dotdot_403` (beide `xfail(strict=True)` → werden nach dem Fix XPASS; Marker dann entfernen).
+
+**BUG-24-2 — TOCTOU bei `mode=overwrite` · Severity: LOW**
+Die optimistische Versionsprüfung (`base_version` vs. `file_version`) und das `_atomic_write` sind nicht unter einem gemeinsamen Lock. Zwei gleichzeitige `overwrite` mit identischer `base_version` bestehen beide die Prüfung → das spätere gewinnt, das frühere Update geht **still** verloren (kein 409). Keine Korruption (Write bleibt atomar), nur ein verlorenes Update; im Single-User-Brücken-Betrieb sehr unwahrscheinlich. Optional härtbar via Lock über Prüf-+Schreibfenster oder `O_EXCL`-Rename-Schema.
+
+### Security-Audit (Red-Team)
+- **Auth:** Header-Pflicht, fehlend/falsch → 401 ✓; Key konstantzeit (`hmac.compare_digest`) ✓; reservierte `id "jupiter"` aus YAML gesperrt ✓; interner Voll-Scope-Konsument nur bei gesetztem Key ✓.
+- **Vault-Root-Traversal:** `../../etc/passwd` → 400/403 (realpath-Härtung greift) ✓.
+- **Scope-Traversal:** ✗ siehe **BUG-24-1** (Scope-interner `..`-Ausbruch).
+- **Search-Leak:** `search`/`search_curated` filtern Treffer per `can_read` auf bereits aufgelöste Pfade (kein `..`) → kein Scope-Leck über die Suche ✓.
+- **DoS:** Such-/RAG-Obergrenzen (`_MAX_FILE_BYTES`, Hit-Caps), Lese-Limit `vault_max_read_bytes`→413 ✓.
+- **Audit-Integrität:** zeichnet den **aufgelösten** Zielpfad auf (forensisch korrekt, auch bei `..`-Missbrauch), best-effort (rollt Write nicht zurück) ✓.
+
+### Regression
+Volle Backend-Suite (770) unverändert grün — keine Regression in bestehenden Features.
 
 ## Deployment
 _To be added by /abc-deploy_

@@ -299,3 +299,38 @@ def test_api_write_records_audit(client: TestClient):
     assert os.path.exists(audit)
     entry = json.loads(open(audit, encoding="utf-8").read().strip().splitlines()[-1])
     assert entry["consumer"] == "writer" and entry["path"] == f"{JUP}/Shared/a.md"
+
+
+# --- Red-Team (QA PROJ-24): Scope-Bypass über ``..`` ------------------------
+# BUG-24-1 (Critical): Das Scope-Gate prüft den ROHEN Pfad-String (``_norm`` kollabiert
+# ``..`` nicht), während die Datei-Auflösung (``_resolve_read`` → realpath) ``..`` auflöst.
+# Ein auf ``Shared/**`` beschränkter Konsument kann damit über
+# ``Shared/../Knowledge/secret.md`` Pfade ausserhalb seines Scopes lesen/schreiben —
+# die einzige Grenze des geteilten Dienstes ist umgehbar.
+# Diese Tests schreiben den SICHEREN Vertrag fest; xfail(strict) → schlägt nach dem Fix
+# als XPASS an (Marker dann entfernen).
+
+@pytest.mark.xfail(strict=True, reason="BUG-24-1: Scope-Gate kollabiert `..` nicht (Scope-Bypass)")
+def test_consumer_scope_no_dotdot_escape():
+    c = Consumer(id="x", api_key="k",
+                 read=[f"{JUP}/Shared/**"], write=[f"{JUP}/Shared/**"])
+    assert not c.can_read(f"{JUP}/Shared/../Knowledge/secret.md")
+    assert not c.can_write(f"{JUP}/Shared/../Knowledge/secret.md")
+    # komplett aus dem Jupiter-Bereich heraus in einen fremden Top-Level-Ordner
+    assert not c.can_write(f"{JUP}/Shared/../../../04 Resources/fremd.md")
+
+
+@pytest.mark.xfail(strict=True, reason="BUG-24-1: API lässt Scope-Bypass via `..` durch")
+def test_api_read_scope_escape_via_dotdot_403(client: TestClient):
+    # Knowledge-Datei direkt anlegen; writer darf laut Scope nur Shared/ schreiben,
+    # liest sie aber über Shared/../Knowledge/ aus → muss 403 sein, nicht 200.
+    client.app.state.vault.write_at(f"{JUP}/Knowledge/secret.md", "GEHEIM", mode="create")
+    r = client.get("/vault/v1/read",
+                   params={"path": f"{JUP}/Shared/../Knowledge/secret.md"},
+                   headers=_h("reader", "rkey"))  # reader: read nur Knowledge → hier irrelevant
+    # Kern: writer (write=Shared) darf Knowledge NICHT schreiben, auch nicht via ..:
+    w = client.post("/vault/v1/write",
+                    json={"path": f"{JUP}/Shared/../Knowledge/secret.md",
+                          "content": "x", "mode": "overwrite", "base_version": None},
+                    headers=_h("writer", "wkey"))
+    assert w.status_code == 403
