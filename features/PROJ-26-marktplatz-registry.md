@@ -1,6 +1,6 @@
 # PROJ-26: Marktplatz/Registry für Rollen/Skills/Agenten
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-26
 **Baustein:** — (Roadmap-Erweiterung, Phase 2)
@@ -273,6 +273,27 @@ Alle drei QA-Befunde behoben in `backend/app/engine/marketplace.py`:
 - **BUG-26-3 (Low, behoben):** `_stage_package` ruft `_sweep_staging()` → nie bestätigte Staging-Pakete älter als `STAGING_TTL_SECONDS` (1 h) werden opportunistisch entfernt; frische Vorschauen bleiben (noch bestätigbar).
 
 **Re-Test:** `backend/tests/test_proj26_registry.py` — **26 passed** (inkl. 4 Regressionstests für die Fixes: `test_decompression_bomb_rejected`, `test_oversized_manifest_rejected`, `test_foreign_collision_409_leaves_no_partial_entry`, `test_stale_unconfirmed_staging_is_swept`). Volle Suite: **813 passed, keine Regression**. Keine offenen Critical/High/Medium/Low mehr → bereit für `/abc-qa`-Re-Pass (→ Approved) bzw. `/abc-deploy`.
+
+## QA Re-Test — 2. Durchlauf (abc-qa, 2026-06-26)
+**Branch:** dev · **Build:** Backend `403dbc3` · **Ergebnis: ✅ APPROVED**
+
+Alle drei Bugs erneut geprüft (manuell empirisch + automatisiert) — **alle behoben**:
+
+| Bug | Re-Test | Befund |
+|---|---|---|
+| BUG-26-1 (Medium, DoS) | 60-MB-Definition → **413**; **gefälschter Größen-Header** (claimt 5 B, real 10 MB) → **413**; übergroßes Manifest (>64 KB) → 413 | ✅ behoben — gestreamter Byte-Cap, header-unabhängig |
+| BUG-26-2 (Low) | 409 bei fremder Resolver-Datei → Katalog bleibt **leer**, Hand-Datei intakt | ✅ behoben — Prüfung vor Anlegen |
+| BUG-26-3 (Low) | Abgelaufenes Staging-Paket wird beim nächsten Stagen **gefegt**, frische Vorschau bleibt | ✅ behoben — TTL-Sweep |
+
+**Zusätzliche Security-Vertiefung (2. Durchlauf):**
+- Auth-Härtung: sobald ein Account existiert (scharfe Instanz), liefern `GET /registry/catalog` **und** `POST /registry/import` ohne Token **401** (`test_registry_requires_token_once_users_exist`).
+- owner-Integrität: `owner` stammt aus dem Token-`sub`, nie aus dem Client (`test_owner_taken_from_token_not_client`).
+- Re-geprüfte Sicherheitslinie (weiterhin grün): Path-Traversal-Blocker, kein Zip-Slip, `yaml.safe_load`, Schutz hand-gepflegter PROJ-6-Rollen (409).
+
+**Automatisierte Suite:** `test_proj26_registry.py` — **29 passed** · volle Backend-Suite **816 passed, keine Regression**.
+
+**Bugs offen:** 0 Critical · 0 High · 0 Medium · 0 Low.
+**Production-Ready: ✅ READY** → Status **Approved**. Nächster Schritt: `/abc-deploy`.
 
 ## Deployment
 _To be added by /abc-deploy_

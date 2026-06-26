@@ -353,3 +353,66 @@ def test_stale_unconfirmed_staging_is_swept(client: TestClient, tmp_path):
     remaining = os.listdir(staging)
     assert first[0] not in remaining, "abgelaufenes Staging-Paket nicht aufgeräumt"
     assert len(remaining) == 1, "frische Vorschau soll erhalten bleiben"
+
+
+def test_decompression_bomb_with_spoofed_size_header_rejected(client: TestClient):
+    """BUG-26-1 (Härtung): Ein Zip-Eintrag mit GEFÄLSCHTEM Größen-Header (claimt wenige
+    Bytes, entpackt viele MB) muss am gestreamten Byte-Cap scheitern — nicht am Header."""
+    import io
+    import zipfile
+
+    import yaml as _yaml
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zi = zipfile.ZipInfo("definition.md")
+        zi.file_size = 5  # gelogen
+        zf.writestr(zi, "B" * (8 * 1024 * 1024))  # real 8 MB
+        zf.writestr(
+            "manifest.yaml",
+            _yaml.safe_dump(
+                {"schema_version": "1.0", "id": "spoof", "typ": "role", "name": "x",
+                 "version": "1.0.0", "capabilities": ["Read"]}
+            ),
+        )
+    r = _preview(client, buf.getvalue())
+    assert r.status_code == 413
+
+
+# ===========================================================================
+# Security — Auth / owner aus Token (scharfe Instanz)
+# ===========================================================================
+
+def _bootstrap(client: TestClient, username="alice", password="geheim123") -> str:
+    r = client.post("/auth/bootstrap", json={"username": username, "password": password})
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
+
+
+def test_registry_requires_token_once_users_exist(client: TestClient):
+    """Sobald ein Account existiert (scharfe Instanz), verlangen die Registry-Endpunkte
+    ein gültiges Token (auth_gate) — kein anonymer Zugriff mehr."""
+    _bootstrap(client)
+    assert client.get("/registry/catalog").status_code == 401
+    r = client.post(
+        "/registry/import", files={"file": ("p.jupkg", _jupkg(), "application/octet-stream")}
+    )
+    assert r.status_code == 401
+
+
+def test_owner_taken_from_token_not_client(client: TestClient):
+    """AC-7: `owner` kommt aus dem Token (sub), nie aus dem Client-Payload."""
+    token = _bootstrap(client, username="alice")
+    auth = {"Authorization": f"Bearer {token}"}
+    me = client.get("/auth/me", headers=auth).json()
+    prev = client.post(
+        "/registry/import",
+        files={"file": ("p.jupkg", _jupkg(entry_id="owned"), "application/octet-stream")},
+        headers=auth,
+    )
+    assert prev.status_code == 200
+    entry = client.post(
+        "/registry/import/confirm", json={"token": prev.json()["token"]}, headers=auth
+    )
+    assert entry.status_code == 200
+    assert entry.json()["owner"] == me["user_id"]
