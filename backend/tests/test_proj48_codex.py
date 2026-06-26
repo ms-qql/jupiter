@@ -292,6 +292,94 @@ async def test_non_resumable_oneshot_still_closes(tmp_path):
     assert ("system", "closed") in _kinds(events)
 
 
+# Fake-„codex", das KEIN turn.completed liefert (Prozess endet sauber, aber ohne Turn-Ende).
+FAKE_CODEX_NO_RESULT = r'''
+import sys, json
+sys.stdin.read()
+print(json.dumps({"type": "thread.started", "thread_id": "TID-X"}))
+print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "halb"}}))
+'''
+
+
+@pytest.mark.asyncio
+async def test_manager_integration_status_and_usage_through_handle_event(tmp_path):
+    """Manager-Ebene (echter Treiber + handle_event): nach turn.completed steht der Status
+    auf WAITING (nicht DONE — Race-Sicherheit), Usage akkumuliert, Kontext-Gauge gefüllt,
+    Live-Text im Transkript. Folge-Turn (Resume) erhält den Kontext und bleibt WAITING."""
+    from app.engine.manager import DONE, RUNNING, WAITING, SessionRuntime, SessionState
+
+    prof = _fake_profile(tmp_path, resumable=True)
+    drv = GenericCliDriver(prof)
+    done_calls: list = []
+    state = SessionState(
+        session_id="s1", owner="dev", project_path=str(tmp_path),
+        model="gpt-5.5", permission_mode="default",
+    )
+    state.engine = "codex"
+    runtime = SessionRuntime(state, drv, on_done=lambda r: done_calls.append(r))
+
+    spec = LaunchSpec(
+        session_id="s1", project_path=str(tmp_path), model="gpt-5.5",
+        permission_mode="default", initial_prompt="erste",
+    )
+    await drv.start(spec, runtime.handle_event)
+    await drv._reader_task
+
+    # Turn-Ende → wartet (NICHT done); kein Vault-Log (on_done) ausgelöst.
+    assert state.status == WAITING, f"erwartet WAITING, war {state.status}"
+    assert done_calls == []
+    # Live-Text im Transkript.
+    assert any(e.text == "hi:erste" for e in runtime.transcript if e.kind == "text")
+    # Echte Usage: tokens_used > 0, Kontext-Gauge gefüllt (per-turn-Usage).
+    assert state.tokens_used > 0
+    assert state.context_known is True
+    assert state.context_fill_pct > 0
+    assert state.cache_read_tokens == 20  # cached_input aus Turn 1
+    tokens_after_t1 = state.tokens_used
+
+    # Folge-Turn wie der Manager: supports_self_resume → kein _resume, Treiber re-spawnt selbst.
+    assert drv.supports_self_resume is True and drv.is_alive is False
+    state.status = RUNNING
+    await drv.send_input("zweite")
+    await drv._reader_task
+
+    assert any(e.text == "resumed:zweite:TID-123" for e in runtime.transcript if e.kind == "text")
+    assert state.status == WAITING
+    assert state.tokens_used > tokens_after_t1  # Usage akkumuliert über Turns
+    assert done_calls == []  # weiterhin kein „done"
+
+
+@pytest.mark.asyncio
+async def test_clean_exit_without_turn_end_falls_back_to_done(tmp_path):
+    """Sicherheitskante: endet ein resumefähiger oneshot-Prozess sauber (rc 0), OHNE ein
+    Turn-Ende geliefert zu haben, darf die Session nicht ewig „arbeitet" bleiben → closed
+    (→ DONE), kein Steckenbleiben."""
+    from app.engine.manager import DONE, RUNNING, SessionRuntime, SessionState
+
+    script = tmp_path / "fake_codex_noresult.py"
+    script.write_text(FAKE_CODEX_NO_RESULT, encoding="utf-8")
+    prof = EngineProfile(
+        key="codex", label="Fake", driver="generic_cli", bin=sys.executable,
+        argv_template=[str(script), "exec", "--json", "-"],
+        resume_argv_template=[str(script), "exec", "--json", "resume", "{resume_id}", "-"],
+        adapter="codex", prompt_via="stdin", input_format="text", oneshot=True,
+    )
+    drv = GenericCliDriver(prof)
+    state = SessionState(
+        session_id="s1", owner="dev", project_path=str(tmp_path),
+        model="x", permission_mode="default",
+    )
+    runtime = SessionRuntime(state, drv)
+    state.status = RUNNING
+    spec = LaunchSpec(
+        session_id="s1", project_path=str(tmp_path), model="x",
+        permission_mode="default", initial_prompt="frage",
+    )
+    await drv.start(spec, runtime.handle_event)
+    await drv._reader_task
+    assert state.status == DONE
+
+
 @pytest.mark.asyncio
 async def test_resume_without_id_raises_clear_error(tmp_path):
     # Schutz: Resume-Template braucht eine resume_id; fehlt sie, klare deutsche Meldung

@@ -1,6 +1,6 @@
 # PROJ-48: Engine — OpenAI Codex CLI (Pro-Subscription) als Jupiter-Agent
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -197,3 +197,41 @@ Keine Decision Cards/Phasen-Gate/Watchdog/`tool_in_flight` (generic_cli ohne Pre
 
 ### Tests
 `conda run -n Dashboard --no-capture-output python -m pytest backend/tests` → **875 passed** (inkl. 12 neue PROJ-48-Tests; PROJ-18/26/40-Engine-Suites grün — keine Regression).
+
+---
+
+## QA Test Results (QA Engineer, 2026-06-26)
+
+**Branch:** `dev` · **Build:** Backend-pytest + Live-Verifikation gegen echtes `codex` (codex-cli 0.142.2, ChatGPT-Pro-Auth). Kein Frontend-Code (Cockpit/Launcher engine-agnostisch) → keine responsive/Browser-Matrix nötig.
+
+### Akzeptanzkriterien (10/10 bestanden)
+| # | Kriterium | Ergebnis | Nachweis |
+|---|---|---|---|
+| 1 | Codex wählbar + startbar | ✅ PASS | Registry lädt `codex`, `availability()=(True, None)`, keine Warnung; `default_model=gpt-5.5`. |
+| 2 | `codex`-Adapter (JSONL→StreamEvents) | ✅ PASS | `test_proj48_codex.py`: thread.started→resume_token, agent_message→Text, turn.completed→result+Usage, turn.started/unbekannt→None. |
+| 3 | Live-Text im Transkript | ✅ PASS | Manager-Integrationstest: `hi:erste` im Transkript; Live „OK"/„13". |
+| 4 | Turn-Ende/Status `running→wartet` | ✅ PASS | Manager-Test asserted `status==WAITING` (Race-sicher, nicht DONE); kein `closed` zwischen Turns. |
+| 5 | Token-/Kontext-Anzeige aus Usage | ✅ PASS | `tokens_used>0`, `context_known`, `context_fill_pct>0`, `cache_read_tokens` gefüllt; akkumuliert über Turns. |
+| 6 | Auth ohne Key | ✅ PASS | Kein `auth_env`; Live-Lauf nutzte Subscription-Auth (geerbtes HOME). |
+| 7 | Sandbox `workspace-write` | ✅ PASS | `-s workspace-write` im argv (initial + resume), sichtbar in `engines.yaml`. |
+| 8 | Degradation dokumentiert + sauber | ✅ PASS | Keine Cards/Gate/Watchdog (generic_cli), Session stabil; konsistent zu hermes/ollama. |
+| 9 | Multi-Turn via `resume` (Kontext ≥2 Turns) | ✅ PASS | Live: Turn 2 nach `resume <thread_id>` antwortete „13" (Merk-Zahl erhalten); Fake-CLI-Test echot resume_id zurück. |
+| 10 | Tests grün, deutsch, keine Regression | ✅ PASS | **877 passed** (14 PROJ-48 + Rest); PROJ-18/26/40 grün. |
+
+### Security / Red-Team
+- **Secret-Exposure:** `to_read()` (GET /engines) enthält **keine** Internals — `bin`/`argv_template`/`resume_argv_template`/`auth_env` werden nicht exponiert. ✅
+- **Kein API-Key im Repo:** Codex-Eintrag hat kein `auth_env`; `engines.yaml` gitignored. ✅
+- **Sandbox-Eingrenzung:** `-s workspace-write` (nicht `danger-full-access`) ist die einzige Leitplanke — bewusste, dokumentierte Entscheidung; bei generic_cli greifen Cards/Watchdog konstruktionsbedingt nicht. ✅
+- **Command-Injection:** argv wird als Liste (`create_subprocess_exec`, kein Shell) gebaut; Platzhalter-Substitution ohne Shell-Interpolation. Prompt geht via stdin, nicht als argv. ✅
+- **Tenant-Isolation:** für dieses Feature n/a (kein DB-/RLS-Pfad; reine Engine-Subprozess-Steuerung).
+
+### Gefundene Punkte (alle Low/Info — kein Blocker)
+- **[Low/UX] Liveness-Badge zeigt zwischen Turns „tot".** `derive_liveness` (manager.py:360) liefert DEAD, sobald der oneshot-Prozess endet — der Session-**Status** ist aber korrekt WAITING. Funktional unkritisch: `send_input` resumed mit Kontext; Auto-Reanimierung feuert **nur** bei HANGING (nicht DEAD) → **kein** stiller Kontextverlust. Anzeige-Inkonsistenz im Rahmen der dokumentierten generic_cli-Liveness-Grenze.
+- **[Low] Manuelles „Reaktivieren" zwischen Turns → kontextloser Neustart.** Da derive_liveness=DEAD (≠ ACTIVE), läuft `reanimate` durch und nutzt den claude-style `_resume` (frischer Codex-Thread ohne Kontext). Erwartetes Verhalten beim *expliziten* Reanimieren; der reguläre Weg (Nachricht senden) erhält den Kontext. Dokumentiert.
+- **[Info] Sandbox nicht als UI-Badge.** `to_read().sandbox` ist nur für iframe-Engines gesetzt; bei generic_cli steckt die Policy im argv (sichtbar in `engines.yaml`). AC erfüllt; ein optionales UI-Badge wäre ein späteres Nice-to-have.
+
+### Hinweis (Cross-Feature)
+PROJ-50 (abc-Workflow für Codex) wird **parallel** auf `dev` entwickelt und hat uncommittete Änderungen in `adapters.py` (file_change→tool_use), `manager.py`, `abc_phases.py` sowie die `abc`-Capability am Codex-Eintrag. Die volle Suite lief **mit** diesen Änderungen grün → keine Wechselwirkungs-Regression mit PROJ-48. Diese Dateien gehören zu PROJ-50 und sind **nicht** Teil dieses QA-Commits.
+
+### Production-Ready: **JA** (Approved)
+Keine Critical/High-Bugs. Die drei Low/Info-Punkte sind Anzeige-/UX-Feinheiten innerhalb der bewusst gewählten generic_cli-Grenzen. Empfehlung: deploybar via `/abc-deploy`.
