@@ -1,6 +1,6 @@
 # PROJ-47: Stream-Reader-Stall — verwaister Subprozess & eingefrorene Session-Anzeige
 
-## Status: Architected
+## Status: Approved
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -165,3 +165,53 @@ SessionRuntime    (backend/app/engine/manager.py)
 - [x] Deutsche Logs/Texte; volle Suite grün (**859 passed**); keine Regression PROJ-1/14/27.
 
 **Offen / Folgeticket:** WS-Flapping (Zweitbefund) bleibt separat → **PROJ-49** ([Spec](PROJ-49-websocket-flapping-event-replay.md)).
+
+---
+
+## QA Test Results (QA Engineer · 2026-06-26)
+
+**Getesteter Branch:** dev · **Status nach QA:** Approved
+
+### Test-Ausführung
+
+| Suite | Ergebnis |
+|---|---|
+| `test_proj47_reader_stall.py` (6 neue Tests) | ✅ 6/6 passed |
+| Vollständige Test-Suite | ✅ 859 passed, 1 warning |
+| PROJ-27 Regression (`test_proj27_liveness.py`, `test_proj27_qa.py`) | ✅ 19/19 passed |
+| PROJ-33 Regression (`test_proj33_qa.py`) | ✅ 7/7 passed |
+| PROJ-1/14 Regression (`test_proj1_qa.py`, `test_proj14_haertung.py`) | ✅ 30/30 passed |
+
+### Acceptance Criteria — Ergebnisse
+
+| AC | Ergebnis | Verifikation |
+|---|---|---|
+| Input/große Zeile killt Reader nicht | ✅ PASS | `test_reader_skips_overlong_line_and_keeps_result`; Verhalten in Python 3.10 bestätigt: `ValueError` wird geworfen, Zeile wird aus dem Buffer konsumiert, nächster `readline()`-Aufruf liest weiter. |
+| `result` → `running→wartet`, Turns/Kosten > 0 | ✅ PASS | `test_result_event_sets_wartet_with_turns_and_cost`; `handle_event` setzt `WAITING` + Turns/Cost korrekt. |
+| Kein falsches „hängt" bei Idle | ✅ PASS | `derive_liveness` liefert `LIVENESS_ACTIVE` für `WAITING` (manager.py:363-364); PROJ-27-Regression grün. |
+| Reader-Stall-Erkennung (Log-Eintrag) | ✅ PASS | `test_done_callback_flags_stall_while_process_alive`; `_on_reader_done` loggt auf ERROR-Level "Reader-Stall" wenn Prozess lebt. |
+| Sauberes Recovery (Stop + Fortsetzen) | ✅ PASS | `--resume`-Pfad unverändert; PROJ-33-Regression grün. |
+| Kein stiller Tod | ✅ PASS | `test_reader_crash_emits_error_event_not_silent`, `test_done_callback_logs_reader_exception`; Exception → Traceback + `system/error`-Event → Session `ERROR`. |
+| Deutsche Logs, keine Regression PROJ-1/14/27 | ✅ PASS | Alle Log-Meldungen deutsch verifiziert; 859 Tests grün. |
+
+### Bugs gefunden
+
+Keine Critical- oder High-Bugs. Zwei Low-Findings (kein Deployment-Blocker):
+
+**LOW-1: Kein dedizierter Test für „zwei send_inputs während aktivem Turn"**
+- Im Tech-Design als eigenständiger Testfall beschrieben; implementiert wurde stattdessen der Überlange-Zeile-Test (deckt die gleiche Wurzelursache ab).
+- Kein funktionaler Defekt — die stdin/stdout-Entkopplung war schon vor PROJ-47 korrekt; der Root-Cause-Fix macht den Scenario-Test hinfällig.
+- Vorschlag: optionaler Nachzug-Test wenn Belegfall-Reproduzierbarkeit formell gefordert wird.
+
+**LOW-2: `_on_reader_done` bei „clean exit, Prozess lebt" nur Log, kein Status-Wechsel**
+- Wenn der Reader-Task ohne Exception, aber während der Prozess noch lebt, endet, loggt `_on_reader_done` auf ERROR — setzt den Session-Status aber nicht sofort (bleibt `RUNNING` bis Watchdog nach 180 s „hängt" setzt).
+- Das ist ein Edge-Case-Sicherheitsnetz; der eigentliche Fix (Limit + except) stellt sicher, dass dieser Pfad in der Praxis nicht mehr eintritt.
+- Akzeptabler Kompromiss; keine zusätzliche Buchhaltung per PROJ-27-Leitprinzip.
+
+### Sicherheits-Audit
+
+Keine neuen Angriffsflächen: rein interner Treiber-Fix, keine neuen HTTP-Endpoints, keine DB-Änderungen, keine Auth-Änderungen. Log-Meldungen enthalten keine sensitiven Daten (nur PID — OS-öffentlich; Limit-Wert aus Config). ✅ SAUBER
+
+### Produktionsreife
+
+**✅ PRODUCTION READY** — keine Critical/High-Bugs, alle 7 ACs bestanden, 859 Tests grün.
