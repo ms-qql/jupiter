@@ -66,7 +66,7 @@ engines:
     oneshot: true                     # stdin nach Eingabe schließen (Single-Turn-CLI)
     models: [gpt-5.5]
     default_model: gpt-5.5            # am Live-System verifiziert (config.toml); gpt-5-codex ist veraltet
-    capabilities: [usage, resume, multi_turn]
+    capabilities: [usage, resume, multi_turn, abc]
 
   # Beispiel: lokales Ollama (kein Key nötig). Streamt Klartext → plaintext-Adapter
   # (eingeschränkte Live-Sicht, keine Token-Anzeige → „n/v").

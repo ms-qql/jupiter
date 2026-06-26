@@ -495,6 +495,26 @@ class SessionRuntime:
                 self.watchdog.note_progress()
             self._apply_usage(event)
 
+        elif event.type == "tool_use":
+            # PROJ-50: Tool-/Datei-Signal aus dem OUTPUT-Stream (generic_cli/Codex haben
+            # keinen PreToolUse-Hook → das Gate-Recognizer-Pfad bei manager.py:633 greift
+            # nicht). Hier wird DIESELBE engine-agnostische `detect_phase_signal` an einem
+            # zweiten Einspeise-Punkt genutzt: Feature-/Fortschritts-Erkennung aus den
+            # `file_change`-Pfaden + Live-Ticker. Claude nutzt diesen Pfad NICHT (Hook-
+            # basiert) → keine Regression.
+            self.state.status = RUNNING
+            tool_name = str(event.raw.get("name") or "")
+            tool_input = event.raw.get("input") if isinstance(event.raw.get("input"), dict) else {}
+            self.watchdog.note_progress()
+            self._emit_activity(tool_name, tool_input)
+            prospective = abc_phases.detect_phase_signal(
+                tool_name, tool_input,
+                phase=self.state.abc_phase,
+                reached=self.state.abc_phase_reached,
+                feature=self.state.abc_feature,
+            )
+            self._apply_phase(tool_name, tool_input, prospective)
+
         elif event.type == "result":
             self._apply_usage(event)
             self.state.num_turns = int(event.raw.get("num_turns", self.state.num_turns) or 0)
@@ -1304,6 +1324,21 @@ class SessionManager:
             ticket_id=ticket_id,
             contract_pointer=contract_pointer,
         )
+        # PROJ-50: abc-Workflow auf Engines OHNE Claude-PreToolUse-Skill-Signal
+        # (generic_cli/Codex). Codex liefert kein Skill-Stream-Event (Spike), daher:
+        #  (a) für Description-Matching-Engines den reinen `/abc-…`-Trigger in eine die
+        #      Skill EINDEUTIG benennende Form umschreiben, damit Codex die Skill zieht;
+        #  (b) die Phase aus dem Anstoß-Prompt seeden (der Launcher kennt sie ohnehin) →
+        #      Kanban/Gantt zeigen die Phase ab Session-Start korrekt. Claude bleibt bei
+        #      der Hook-/Stream-Erkennung (is_claude) → keine Regression.
+        if profile.has_capability("abc") and not profile.is_claude:
+            initial_prompt = abc_phases.rewrite_trigger_for_engine(
+                initial_prompt, naming=True
+            )
+            seeded = abc_phases.seed_triple_from_prompt(initial_prompt)
+            if seeded[0] is not None:
+                state.abc_phase, state.abc_phase_reached, state.abc_feature = seeded
+
         driver = self._make_driver(profile)
         runtime = SessionRuntime(
             state, driver, on_done=self._write_session_log, on_persist=self._persist

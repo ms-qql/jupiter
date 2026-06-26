@@ -181,6 +181,14 @@ def codex_parse_line(line: str) -> StreamEvent | None:
     if etype == "item.completed":
         item = obj.get("item")
         if isinstance(item, dict):
+            # PROJ-50: Datei-Änderungen tragen den berührten Pfad — Codex liefert KEIN
+            # Skill-Event (Spike), daher ist `file_change` die Stream-Quelle für die
+            # Feature-/Fortschritts-Erkennung. Auf ein generisches `tool_use`-Event
+            # mappen (Write/Edit), das `handle_event` an `detect_phase_signal` reicht.
+            if item.get("type") == "file_change":
+                ev = _codex_file_change_event(item)
+                if ev is not None:
+                    return ev
             text = item.get("text")
             if isinstance(text, str) and text.strip():
                 return _assistant_event(text)
@@ -188,6 +196,24 @@ def codex_parse_line(line: str) -> StreamEvent | None:
     if etype == "turn.completed":
         return _codex_result_event(obj.get("usage"))
     return None
+
+
+def _codex_file_change_event(item: dict) -> StreamEvent | None:
+    """Codex' ``file_change``-Item → Claude-förmiges ``tool_use``-Event (PROJ-50).
+
+    Trägt den ersten berührten Pfad als ``input.file_path`` (auch bei ``status:failed`` —
+    der Pfad steht im Stream); ``name`` = ``Write`` (neu) bzw. ``Edit`` (Änderung), damit
+    der engine-agnostische ``detect_phase_signal``-Fallback (``feature_from_path``) greift.
+    """
+    changes = item.get("changes")
+    if not isinstance(changes, list) or not changes:
+        return None
+    first = changes[0] if isinstance(changes[0], dict) else {}
+    path = first.get("path")
+    if not path:
+        return None
+    name = "Write" if first.get("kind") == "add" else "Edit"
+    return StreamEvent("tool_use", "file_change", {"name": name, "input": {"file_path": str(path)}})
 
 
 # Registry der bekannten Adapter. ``claude`` = die bestehende, real verifizierte Logik.

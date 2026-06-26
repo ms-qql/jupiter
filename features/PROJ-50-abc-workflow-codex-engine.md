@@ -1,8 +1,28 @@
 # PROJ-50: abc-Workflow für die Codex-Engine (portierte Skills + Phasen-Signal)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
+
+## Implementierungs-Notizen (Backend, 2026-06-26)
+Umgesetzt auf Branch `dev`, aufbauend auf PROJ-48 (codex-Adapter/Resume).
+
+**Was gebaut wurde**
+- **Skill-Generator** `scripts/gen_codex_skills.py` (+ optionale Overlays unter `scripts/codex_skill_overlays/`): leitet aus `~/.claude/skills/abc-*` reproduzierbar/idempotent **alle 15** Codex-Varianten nach `~/.codex/skills/abc-*` ab. Frontmatter bereinigt (Claude-only-Keys raus, `metadata.short-description` ergänzt), Claude-Ismen per Regelwerk ersetzt/markiert, Codex-Präambel vorangestellt, optionales Per-Skill-Overlay. Modi: `--check` (CI-Drift), `--dry-run`. **0 tote `/home/dev/.claude`-Pfade** in der Ausgabe.
+- **codex-Adapter** (`adapters.py`): `item.completed`/`file_change` → generisches **`tool_use`**-StreamEvent (`name=Write|Edit`, `input.file_path`), auch bei `status:failed` (Pfad steht im Stream).
+- **`handle_event`** (`manager.py`): neuer `tool_use`-Zweig speist die **unveränderte** engine-agnostische `detect_phase_signal`/`_apply_phase` an einem **zweiten** Punkt (Output-Stream statt Claude-PreToolUse-Gate) → Feature-Erkennung + Live-Ticker (PROJ-46) für alle stream-basierten Engines. Claude nutzt den Pfad nicht → keine Regression.
+- **Launcher-Seeding** (`manager.create`): für abc-Engines **ohne** Claude-Hook (Codex) wird ein reiner `/abc-…`-Trigger in die **Skill-benennende** Form umgeschrieben **und** die Phase aus dem Prompt geseedet (`abc_phase/_reached/_feature`) → Kanban/Gantt ab Start korrekt.
+- **Launcher engine-bewusst** (`launcher.py` + `GET /projects/suggestion?engine=`): Codex bekommt Skill-benennende Anstoß-Prompts, Claude unverändert `/abc-…`.
+- **Capability `abc`** an Codex (`engines.yaml`/`.example.yaml`) und builtin-Claude (`registry.py`).
+- Neue abc_phases-Helfer: `phase_from_prompt`, `seed_triple_from_prompt`, `phase_trigger_prompt`, `rewrite_trigger_for_engine`.
+
+**Spike-Ergebnis (entscheidend):** Codex emittiert **kein** Skill-Event → Phase via Launcher-Seeding, Feature/Fortschritt via `file_change`-Stream (s. „Verifizierte Befunde" + Tech-Design E).
+
+**Tests:** `backend/tests/test_proj50_codex_abc.py` (18 Tests: Adapter, handle_event-Phasenpfad, Seeding-/Trigger-Helfer, Launcher-Naming, Capability, Generator-Idempotenz/Frontmatter). **Volle Suite: 895 grün, keine Regression.**
+
+**Realer Codex-E2E (Stream-Pipeline):** Codex zieht die portierte `abc-document`-Skill per Name; `file_change`→`tool_use`→`detect_phase_signal` ergibt phase=document/feature=1. Datei-Schreiben scheiterte nur am **verschachtelten Sandkasten der Test-Shell** (bwrap-in-bwrap) — kein Produktdefekt; voller Cockpit-E2E gehört in `abc-qa` auf dem laufenden Backend.
+
+**Offen für QA/Deploy:** (1) voller Cockpit-Durchlauf einer Phase mit sichtbarem Kanban + geschriebener Spec/INDEX auf dem echten Backend; (2) Degradations-Hinweis im UI (überwiegend aus PROJ-48); (3) Generator-`--check` als optionaler CI-Schritt.
 
 ## Dependencies
 - Requires: **PROJ-48** (Engine — OpenAI Codex CLI) — liefert Codex als lauffähige Engine (generic_cli + `codex`-Adapter + Multi-Turn via resume). **Erst danach sinnvoll.**
@@ -21,7 +41,7 @@ Der Nutzer will den **abc-Workflow** (`/abc-requirements`, `/abc-architecture`, 
 - **Phasen-Erkennung ist im Prinzip engine-agnostisch:** `detect_phase_signal` keyt auf `tool_name == "Skill"` + `tool_input.skill` ([abc_phases.py:178](backend/app/engine/abc_phases.py#L178)), gemappt via `phase_for_skill()`. Sie braucht aber, dass die **Engine dieses Signal emittiert** — bei Codex muss der Adapter (PROJ-48) Codex' Skill-Invocation-Events darauf mappen.
 - **abc-Workflow ist nicht capability-gegated:** heute für alle Engines unconditional verfügbar; kein `has_capability("abc")`-Check.
 - **Modell:** Codex läuft auf `gpt-5.5` (aus `~/.codex/config.toml`, s. PROJ-48).
-- **⚠️ Noch zu verifizieren (Architektur-Spike):** welche konkreten `item`-Events Codex beim Lauf einer Skill emittiert (Skill-Name im Stream?), damit das Phasen-Signal sauber andocken kann.
+- **✅ Architektur-Spike aufgelöst (2026-06-26, codex-cli 0.142.2, `codex exec --json`):** Codex emittiert **KEIN** Skill-Invocation-Event. Der Stream kennt nur `thread.started`, `turn.started/completed` und `item.started/completed` mit `item.type ∈ {agent_message, file_change, …}`. Der Skill-Inhalt fließt unsichtbar in den Modell-Kontext; **der Skill-Name taucht nicht im Stream auf**. → Der im Spec angenommene primäre Skill-Event-Pfad ist **nicht realisierbar**. Verwertbar ist `item.completed` mit `item.type=file_change` (trägt `changes[].path`, sogar bei `status:failed`). Konsequenz (s. Tech-Design, Abschnitt „Spike-Korrektur"): **Phase = launcher-seeded** (Launcher kennt die angeforderte Phase ohnehin), **Feature/Fortschritt = aus `file_change`-Pfaden** des Streams.
 
 ## Geklärte Design-Entscheidungen (2026-06-26, mit Nutzer)
 1. **Skill-Quelle → eigene Codex-Variante** ✅ (gewählt). Es werden **gepflegte Codex-Varianten** der abc-Skills unter `~/.codex/skills/abc-*` angelegt — **kein** Symlink auf `~/.claude/skills`. Begründung: die Claude-Ismen (Agent/Explore, AskUserQuestion, Skill-Chaining, absolute `.claude`-Pfade) stören Codex; eine eigene Variante ist sauber an Codex' Tool-/Sub-Agent-Modell angepasst. (Verworfen: Symlink = eine Quelle, aber kaputte Tool-Referenzen.) **Trade-off bewusst akzeptiert:** doppelte Pflege der SKILL.md-Inhalte.
@@ -150,8 +170,11 @@ Fallback, falls Codex kein eindeutiges Skill-Item liefert: Datei-Touch auf `feat
 2. **Phasen-Signal-Quelle (Frage 2): primär Codex-Skill-Event, Fallback Datei-Touch.** Primär das übersetzte Skill-Signal aus dem Stream; Fallback der vorhandene `Write/Edit`+`features/PROJ-X-*.md`-Zweig. Beide laufen über **dieselbe** `detect_phase_signal` — kein Zweitpfad in der Logik.
 3. **Capability-Gate `abc` (Frage 3): einführen.** `capabilities: [abc]` an Codex **und** Claude; der Launcher entscheidet datengetrieben (`has_capability("abc")`), ob/wie er den Phasen-Anstoß formuliert — statt unconditional. Engines ohne `abc` (z. B. reine Chat-Engines) bekommen keinen abc-Anstoß mehr aufgedrängt.
 
-### E) Architektur-Spike ZUERST (riskantester Unbekannter)
-Bevor Adapter-Mapping gebaut wird, in einem kleinen Spike **am Live-Codex verifizieren**, welches konkrete Stream-Item Codex beim Lauf einer Skill emittiert (trägt es den Skill-Namen? in welchem Feld?). Erst dieses Schema entscheidet, ob das primäre Skill-Signal sauber andockt oder der Datei-Touch-Fallback die Hauptlast trägt. Ergebnis als Notiz in „Verifizierte Befunde“ der Spec festhalten. (Entspricht dem ⚠️-Punkt der Befunde.)
+### E) Spike-Korrektur (durchgeführt 2026-06-26) — Phasen-Signal real
+Der Spike (s. „Verifizierte Befunde") zeigt: **Codex liefert kein Skill-Event**. Das ursprüngliche „Adapter mappt Skill-Event → `Skill`-Signal" ist damit gegenstandslos. Realisiertes Design:
+- **Phase: launcher-seeded.** Der engine-bewusste Launcher kennt die angeforderte Phase (`abc-architecture` → `architecture`) und das Feature; `manager.create` **seedet** `abc_phase/_reached/_feature` direkt in den Session-State, sobald die Engine die `abc`-Capability hat und **kein** Claude-PreToolUse-Skill-Signal liefert (also generic_cli/Codex). Claude bleibt bei Stream/Hook-Erkennung — keine Regression.
+- **Feature/Fortschritt: aus dem Stream.** Der `codex`-Adapter mappt `item.completed`/`file_change` → ein generisches **`tool_use`-StreamEvent** (`name=Write`, `input.file_path`). `handle_event` bekommt einen neuen `tool_use`-Zweig, der den Aktivitäts-Ticker (PROJ-46) füttert **und** `detect_phase_signal`/`_apply_phase` aufruft → `feature_from_path` hält die Feature-Nummer frisch. Generalisiert sauber auf alle stream-basierten Engines; Claude nutzt diesen Pfad nicht (Hook-basiert) → keine Regression.
+- Das `Skill`-Signal-Mapping im Adapter entfällt; die engine-agnostische `detect_phase_signal` bleibt **unverändert** und wird nur an einem zweiten Punkt (Stream statt Gate) eingespeist.
 
 ### F) Bewusste Grenzen (Degradation — wie generic_cli/PROJ-48)
 Kein PreToolUse-Hook bei Codex → **keine** Decision Cards (PROJ-4), **kein** Phasen-Gate (PROJ-10/30-Gate), **kein** Tool-Gate-Watchdog (PROJ-16). Human-in-the-Loop greift nur über das **Selbst-Pausieren** des Modells (abc-Checkpoints als Klartext-Rückfrage, dank Multi-Turn aus PROJ-48); Sandbox `workspace-write` bleibt die harte Leitplanke. Das UI macht diese Grenze sichtbar (selber Hinweis wie PROJ-48).

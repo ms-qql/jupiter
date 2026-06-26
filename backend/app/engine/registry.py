@@ -162,7 +162,9 @@ def _builtin_claude() -> EngineProfile:
         models=sorted(VALID_MODELS),
         default_model=settings.default_model,
         context_window=DEFAULT_CONTEXT_WINDOW,
-        capabilities=["usage", "resume", "multi_turn", "tools"],
+        # PROJ-50: „abc" = Engine kann den abc-Workflow fahren. Claude über den
+        # PreToolUse-Skill-Hook, Codex über Launcher-Seeding + file_change-Stream.
+        capabilities=["usage", "resume", "multi_turn", "tools", "abc"],
     )
 
 
