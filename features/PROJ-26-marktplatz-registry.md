@@ -166,6 +166,34 @@ Durchsuchbarer Katalog + Status · Install/Toggle · Export/Import `.jupkg` · C
 - Toggle/Status laut Edge-Case (laufende Session behält geladene Version) ist serverseitige Semantik — UI zeigt nur den neuen Status.
 - **Backend fehlt noch:** `backend/app/routes/registry.py` + `backend/registry/`-Speichermodell + `.jupkg`-Validierung sind noch nicht gebaut. Bis dahin zeigt der Tab den Lade-Fehlzustand („Katalog nicht ladbar — Backend offline?"). Verifikation: `npm run build` ✓, `eslint` ✓, `tsc --noEmit` (nur vorbestehender, unabhängiger Fehler in `lib/md-tree.test.ts`).
 
+## Backend Implementation (abc-backend, 2026-06-26)
+**Branch:** dev · **Stack:** FastAPI · **Persistenz: file-first** (kein Postgres) — wie im Tech-Design.
+
+### Gebaut
+- **`backend/app/engine/marketplace.py`** — `RegistryStore` (Datei-basiert, Modul-Singleton `registry_store`).
+  Speichermodell `backend/registry/installed/<typ>s/<id>/{manifest.yaml,definition.md,versions/<v>/}` + `packages/_staging/`.
+  - **Katalog** aus dem Dateisystem abgeleitet (kein doppelter Index): `catalog(typ,status,query)` filtert serverseitig.
+  - **`.jupkg`** = Zip aus `manifest.yaml` + `definition.md`. `import_preview` validiert (Schema-Version-Kompatibilität per MAJOR, Struktur, ID) und **staged** das Paket unter einem `secrets.token_urlsafe`-Token → **aktiviert nichts**. `import_confirm(token, owner)` installiert + aktiviert (Human-in-the-Loop).
+  - **Capability-/Policy-Ableitung** (`assess_capabilities`): unbekannte/gefährliche Tools → `default_policy="deny"` + `limited=True` + Warnung; nur Lese-Tools → `card`. **Nie `auto-allow`** (PROJ-10). Bekannte-Tools-Set aus `policy.AUTO_ALLOW_TOOLS` ∪ Mutations-Tools.
+  - **Aktiv = Datei am Resolver-Pfad:** Rolle → `constitution_dir/roles/<id>.md` (wird von `resolve_constitution()`/`list_roles()` gelesen → Sessions/Launcher PROJ-9 sehen sie ohne Umbau). Skill/Agent → `registry_root/active/<typ>s/` (Best-Effort; Session-Start-Anbindung für Skills/Agenten ist Ausbaustufe).
+  - **Resolver-Schutz:** entfernt/überschreibt eine Resolver-Datei nur, wenn die Registry sie selbst gelegt hat (`resolver_placed`). Eine von Hand gepflegte Konstitutions-Rolle (PROJ-6) gleichen Namens → Aktivierung bricht mit **409** ab, statt sie zu überschreiben.
+  - **Versionierung/Rollback:** `versions/<v>/`-Archive + `rollback`; ID-Kollision beim Import → **neue Version** (`_bump_version`) statt stillem Überschreiben.
+  - **owner** kommt aus `get_current_user().user_id` (Token/Default-Owner, PROJ-25), nie aus dem Client.
+- **`backend/app/schemas/registry.py`** — Pydantic-v2 spiegelt den Frontend-Vertrag (`RegistryEntryRead`, `RegistryVersionRead`, `RegistryEntryDetailRead`, `RegistryCatalogRead`, `RegistryImportPreviewRead`, Rollback-/Confirm-Bodies).
+- **`backend/app/routes/registry.py`** — Router exakt nach Tech-Design-Vertrag: `GET /registry/catalog`, `GET/POST/PATCH/DELETE /registry/{typ}/{id}[/install|/toggle|/rollback|/export]`, `POST /registry/import` (Multipart → Vorschau, max 2 MB), `POST /registry/import/confirm`. Registriert in `main.py` mit `auth_gate`.
+- **`config.py`** — `registry_root` (Default `backend/registry/`). **`.gitignore`** → `backend/registry/` (Laufzeit-Daten).
+
+### Umgesetzte Akzeptanzkriterien (Backend)
+Durchsuchbarer Katalog + Status · Install/Toggle (aktiv=Resolver-Datei) · Export/Import `.jupkg` · zweistufige Capability-/Policy-Vorschau **vor** Aktivierung · Versionierung + Rollback · konservative Default-Policy (card/deny) · `owner` serverseitig · defektes/inkompatibles Paket abgewiesen (kein Teil-Import) · alle Fehlermeldungen deutsch.
+
+### Tests
+`backend/tests/test_proj26_registry.py` — **22 Tests grün**; volle Suite **809 passed**, keine Regression. Deckt: leerer Katalog, Filter, zweistufiger Import, Vorschau aktiviert nichts, card vs. deny+limited, defektes/inkompatibles/leeres/definitionsloses Paket → Ablehnung, Toggle-Roundtrip + Resolver-Entfernung, Resolver-Schutz fremder Dateien (409), Kollision→neue Version, Rollback, Export-Roundtrip, Delete, Detail-404, owner serverseitig.
+
+### Deviations / offen
+- **Skill/Agent-Aktivierung** legt die Definition in `registry_root/active/<typ>s/` ab — Jupiters Session-Start liest Skills aus `~/.claude/skills` (außerhalb des Repos); die Live-Anbindung für Skills/Agenten bleibt bewusst Ausbaustufe (Rollen sind voll verdrahtet).
+- **`verified`** ist für importierte Pakete immer `false` (keine PROJ-25-Signatur/Trust-Chain) — Vorschau warnt „Quelle nicht verifiziert".
+- **Staging** der Import-Pakete liegt unter `packages/_staging/<token>.jupkg`; eine abgelaufene/unbekannte Vorschau → 404 mit Hinweis „erneut hochladen".
+
 ## QA Test Results
 _To be added by /abc-qa_
 

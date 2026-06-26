@@ -57,6 +57,7 @@ from .routes import (
     permission,
     projects,
     recovery,
+    registry,
     sessions,
     settings as settings_routes,
     terminal,
@@ -279,6 +280,7 @@ def create_app(
     app.include_router(coordinator.router, dependencies=auth_gate)
     app.include_router(challenge.router, dependencies=auth_gate)
     app.include_router(terminal.router, dependencies=auth_gate)
+    app.include_router(registry.router, dependencies=auth_gate)  # PROJ-26: Marktplatz/Registry
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

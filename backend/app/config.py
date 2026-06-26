@@ -32,6 +32,11 @@ _DEFAULT_CONSUMERS_PATH = str(Path(__file__).resolve().parent.parent / "config" 
 # Auto-Reanimierung mit hartem Limit). Live mtime-geprüft wie Policy/Watchdog.
 _DEFAULT_LIVENESS_PATH = str(Path(__file__).resolve().parent.parent / "config" / "liveness.yaml")
 
+# Standard-Wurzel der Marktplatz/Registry (PROJ-26): backend/registry/. Dort liegen die
+# installierten Rollen/Skills/Agenten (manifest.yaml + definition.md + versions/) und das
+# Import/Export-Staging. Datei-first, kein DB-Zwang — git-versionierbar, von Hand prüfbar.
+_DEFAULT_REGISTRY_ROOT = str(Path(__file__).resolve().parent.parent / "registry")
+
 # Im MVP unterstützte Modell-Aliase (werden 1:1 an `claude --model` durchgereicht).
 VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
 
@@ -199,6 +204,10 @@ class Settings(BaseSettings):
     # Reanimierungs-Versuche/Backoff + globaler An/Aus-Schalter. Live mtime-geprüft;
     # fehlt/kaputt → konservative Defaults (nie „kein Liveness").
     liveness_config_path: str = _DEFAULT_LIVENESS_PATH
+
+    # Marktplatz/Registry-Wurzel (PROJ-26): installierte Rollen/Skills/Agenten +
+    # Import/Export-Staging. Wird bei Bedarf angelegt; leerer Ordner = leerer Katalog.
+    registry_root: str = _DEFAULT_REGISTRY_ROOT
 
     # Hal-Vault (PROJ-2): Lese-/Such-Wurzel = GANZER Vault; geschrieben wird NUR im
     # Jupiter-Unterbaum (Agentic OS/Jupiter), ohne die PARA-Struktur zu verändern.
