@@ -1,6 +1,6 @@
 # PROJ-46: Live-Aktivitäts-Ticker — sehen, was der Agent gerade tut (v. a. Bypass-Mode)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-06-26
 **Last Updated:** 2026-06-26
 
@@ -140,3 +140,25 @@ Frontend:
 | [nextjs_app/hooks/use-session-stream.ts](nextjs_app/hooks/use-session-stream.ts#L51) | `kind:"activity"`-Handler + `lastActivity`-State im `StreamResult`. |
 | nextjs_app/components/cockpit/activity-ticker.tsx (NEU) | Transiente Ticker-Komponente (Chip + Schnipsel + optional Historie). |
 | [nextjs_app/app/(cockpit)/sessions/[id]/page.tsx](nextjs_app/app/(cockpit)/sessions/[id]/page.tsx#L150) | Ticker neben/unter `HeartbeatDot` einhängen. |
+
+## Implementierungs-Notizen (2026-06-26)
+
+**Umgesetzt wie im Tech-Design (Quelle = `request_decision`-Hook, eigener `kind:"activity"`, transient).**
+
+### Backend — `backend/app/engine/manager.py`
+- **`sanitize_target(tool_name, tool_input)`** (Modul-Helfer): nimmt das erste sinnvolle Argument aus `file_path / path / notebook_path / command / pattern / query / url / prompt`, kollabiert Whitespace und kürzt **serverseitig auf ≤ 80 Zeichen** (Ellipse). Leer, wenn kein Feld passt → keine Roh-Payloads/Secrets ins UI.
+- **`SessionRuntime`**: flüchtige Felder `last_activity: dict | None` + `_activity_ring` (letzte 5). **Nicht** in `transcript`/Vault/`_write_session_log`.
+- **`_emit_activity()`**: setzt `last_activity` + Ring-Push, broadcastet `{kind:"activity", tool, target, ts}`. Aufruf in `request_decision` **direkt nach `_apply_phase`**, **vor** jedem Gate/Card und vor dem Bypass-Auto-Allow → sichtbar auch im Bypass; PROJ-4/10/16-Logik unverändert (rein additiv/lesend).
+- **`_clear_activity()`**: leert den Ticker bei `DONE`/`ERROR` in `handle_event` und broadcastet einen leeren Stand (`tool: null`) — genau einmal (idempotent).
+
+### Frontend
+- **`hooks/use-session-stream.ts`**: neuer `kind:"activity"`-Zweig → `lastActivity`-State (Typ `LiveActivity`); leerer Stand (`tool === null`) ⇒ `null` (Ticker löschen). Bestehende `state`/`message`/`notice`-Handler unberührt.
+- **`components/cockpit/activity-ticker.tsx` (NEU)**: einzeiliger Ticker (Tool-Chip `Edit · main.py` + jüngster Assistenten-Schnipsel aus `liveText`) + **aufklappbare Kurz-Historie der letzten ~5** (clientseitig aus aufeinanderfolgenden `lastActivity`-Ständen via Derived-State während Render — kein `useEffect`/Ref, erfüllt die strengen React-Compiler-Lint-Regeln). Friert bei Stille auf der letzten Aktion ein; leert bei terminaler Session. Alle Texte deutsch.
+- **`app/(cockpit)/sessions/[id]/page.tsx`**: Ticker unter `ContextGauge`, neben/unter dem `HeartbeatDot` eingehängt.
+
+### Tests
+- **`backend/tests/test_proj46_activity_ticker.py`** (9 Tests, grün): `sanitize_target` (Feld-Priorität, ≤80-Kürzung, Whitespace-Kollaps, leer), Tool-Start-Broadcast im Bypass (allow ohne Card, korrektes `activity`-Event), keine transcript-Persistenz, Ring hält letzte 5, Leeren + Leer-Broadcast bei terminal.
+- Regression grün: PROJ-4/16/27/32-Suites + `test_manager`/`test_sessions_api` (142 passed). Frontend: `vitest` 169 passed, ESLint der geänderten Dateien sauber.
+
+### Abweichungen
+- Keine fachlichen Abweichungen vom Design. Einzige Umsetzungsnotiz: Historie wird clientseitig akkumuliert (Backend-Ring nur als letzter Stand gebroadcastet) — bewusst, da transient und Spät-Verbinder ohnehin keine Historie nachladen sollen.

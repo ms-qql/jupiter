@@ -58,7 +58,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-43 | VPS-Admin — Terminal (ttyd-iFrame Shell-Zugriff) | P1 | Deployed | PROJ-42, PROJ-40, PROJ-3 | [Spec](PROJ-43-vps-admin-terminal.md) |
 | PROJ-44 | Video Summary — Standard-Ordner · Bibliotheks-Kachel · Modellwahl | P1 | Deployed | PROJ-41, PROJ-2, PROJ-7 | [Spec](PROJ-44-video-summary-standardordner-bibliothek-modellwahl.md) |
 | PROJ-45 | Auto-Reanimierungs-Budget — Endlosschleife & False-„hängt" abstellen (Token-Überspend) | P1 | Architected | PROJ-27, PROJ-32, PROJ-16 | [Spec](PROJ-45-reanimierung-budget-endlosschleife-fix.md) |
-| PROJ-46 | Live-Aktivitäts-Ticker — sehen, was der Agent gerade tut (Bypass-Mode) | P1 | Architected | PROJ-4, PROJ-1, PROJ-3, PROJ-27 | [Spec](PROJ-46-live-aktivitaets-ticker-bypass.md) |
+| PROJ-46 | Live-Aktivitäts-Ticker — sehen, was der Agent gerade tut (Bypass-Mode) | P1 | In Progress | PROJ-4, PROJ-1, PROJ-3, PROJ-27 | [Spec](PROJ-46-live-aktivitaets-ticker-bypass.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
