@@ -57,8 +57,8 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-42 | VPS-Admin — Dashboard (native Micro-App: Metriken + Sidebar-Ampel) | P1 | Deployed | PROJ-40, PROJ-3, PROJ-38 | [Spec](PROJ-42-vps-admin-dashboard.md) |
 | PROJ-43 | VPS-Admin — Terminal (ttyd-iFrame Shell-Zugriff) | P1 | Deployed | PROJ-42, PROJ-40, PROJ-3 | [Spec](PROJ-43-vps-admin-terminal.md) |
 | PROJ-44 | Video Summary — Standard-Ordner · Bibliotheks-Kachel · Modellwahl | P1 | Deployed | PROJ-41, PROJ-2, PROJ-7 | [Spec](PROJ-44-video-summary-standardordner-bibliothek-modellwahl.md) |
-| PROJ-45 | Auto-Reanimierungs-Budget — Endlosschleife & False-„hängt" abstellen (Token-Überspend) | P1 | Approved | PROJ-27, PROJ-32, PROJ-16 | [Spec](PROJ-45-reanimierung-budget-endlosschleife-fix.md) |
-| PROJ-46 | Live-Aktivitäts-Ticker — sehen, was der Agent gerade tut (Bypass-Mode) | P1 | Approved | PROJ-4, PROJ-1, PROJ-3, PROJ-27 | [Spec](PROJ-46-live-aktivitaets-ticker-bypass.md) |
+| PROJ-45 | Auto-Reanimierungs-Budget — Endlosschleife & False-„hängt" abstellen (Token-Überspend) | P1 | Deployed | PROJ-27, PROJ-32, PROJ-16 | [Spec](PROJ-45-reanimierung-budget-endlosschleife-fix.md) |
+| PROJ-46 | Live-Aktivitäts-Ticker — sehen, was der Agent gerade tut (Bypass-Mode) | P1 | Deployed | PROJ-4, PROJ-1, PROJ-3, PROJ-27 | [Spec](PROJ-46-live-aktivitaets-ticker-bypass.md) |
 | PROJ-47 | Stream-Reader-Stall — verwaister Subprozess & eingefrorene Session-Anzeige | P1 | Planned | PROJ-1, PROJ-14, PROJ-27 | [Spec](PROJ-47-stream-reader-stall-output-sync.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)

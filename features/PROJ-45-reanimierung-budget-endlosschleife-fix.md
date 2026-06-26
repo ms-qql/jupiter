@@ -1,8 +1,14 @@
 # PROJ-45: Auto-Reanimierungs-Budget — Endlosschleife & False-„hängt" abstellen
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-26
-**Last Updated:** 2026-06-26
+**Last Updated:** 2026-06-26 (Deploy)
+
+## Deployment
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-06-26 · **Version:** 0.19.0 · **Tag:** v0.19.0-PROJ-45-46
+- **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend`), GitHub-Webhook → `deploy.sh` (Push auf `main` → `git reset --hard` + `npm ci && build` + `systemctl restart`).
+- **Geliefert:** Reanimierungs-Budget (begrenzte Auto-Reanimierungen) gegen Endlosschleife + False-„hängt"; Backend-only, keine Migration.
 
 ## Dependencies
 - Requires: PROJ-27 (Liveness + Reanimieren) — enthält den Hintergrund-Poller (`evaluate_liveness_once`), die Auto-Reanimierung (`_auto_reanimate`/`_reanimate_once`) und das Budget-Objekt (`LivenessMonitor`), deren Logik hier korrigiert wird.
