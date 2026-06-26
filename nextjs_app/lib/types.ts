@@ -872,6 +872,28 @@ export interface CoordinatorFleet {
   queued: string[];
 }
 
+// --- PROJ-25: Auth (JWT) + owner-Scope -------------------------------------
+
+/** Angemeldete Identität. `user_id` ist zugleich der `owner`-Wert, gegen den
+ *  serverseitig bescoped wird (Sessions/Handovers/Wissensnotizen/Vault). */
+export interface AuthUser {
+  user_id: string;
+  username: string;
+}
+
+/** Antwort von POST /auth/login bzw. /auth/bootstrap. Der Refresh-Token wird
+ *  NICHT im Body geführt, sondern vom Backend als httpOnly-Cookie gesetzt. */
+export interface LoginResult {
+  access_token: string;
+  user: AuthUser;
+}
+
+/** Öffentlicher Status von GET /auth/status — steuert, ob die Login-Seite den
+ *  Bootstrap-Modus (erster Account) statt des normalen Logins zeigt. */
+export interface AuthStatus {
+  has_users: boolean;
+}
+
 // --- PROJ-43: VPS-Admin Terminal (ttyd-iFrame) -----------------------------
 
 /** Antwort von GET /terminal/info — Erreichbarkeit + einzubettende ttyd-URL.
@@ -882,4 +904,81 @@ export interface TerminalInfo {
   enabled: boolean;
   url: string | null;
   reachable: boolean;
+}
+
+// --- PROJ-26: Marktplatz/Registry für Rollen/Skills/Agenten ----------------
+
+/** Was die Registry verwaltet — bestimmt den Resolver-Pfad, an den eine aktive
+ *  Definition gelegt wird (Rolle/Skill/Agent). */
+export type RegistryType = "role" | "skill" | "agent";
+
+/** Lebenszyklus eines Katalog-Eintrags. `installed` = vorhanden, aber noch nicht
+ *  aktiviert (frisch importiert); `active`/`inactive` = vom Nutzer geschaltet.
+ *  Nur `active` steht Sessions/Launcher (PROJ-9) zur Verfügung. */
+export type RegistryStatus = "installed" | "active" | "inactive";
+
+/** Ein Katalog-Eintrag (GET /registry/catalog). `default_policy` ist die beim
+ *  Import konservativ vergebene Trust-Stufe (PROJ-10, nie auto-allow ungeprüft);
+ *  `capabilities` listet die von der Definition angeforderten Tools. */
+export interface RegistryEntry {
+  id: string;
+  typ: RegistryType;
+  name: string;
+  beschreibung: string;
+  status: RegistryStatus;
+  version: string;
+  /** PROJ-25-kompatibles Eigentümer-Feld; bis Auth da ist lokaler Single-User-Default. */
+  owner: string | null;
+  /** Angeforderte Tools (Capability-Vorschau / Risiko-Einschätzung). */
+  capabilities: string[];
+  /** Konservativ vergebene Trust-Default-Stufe (card/deny — nie auto-allow). */
+  default_policy: PolicyLevel;
+  /** false → Quelle nicht verifiziert (Import aus fremder Quelle, ohne PROJ-25). */
+  verified: boolean;
+  /** true → referenziert ein nicht mehr vorhandenes Tool → „eingeschränkt lauffähig". */
+  limited: boolean;
+}
+
+/** Eine frühere Version eines Eintrags (Rollback-Quelle). */
+export interface RegistryVersion {
+  version: string;
+  created_at: string;
+  note: string | null;
+  /** true → diese Version referenziert ein fehlendes Tool (Rollback nur eingeschränkt). */
+  limited: boolean;
+}
+
+/** Detail eines Eintrags (GET /registry/{typ}/{id}) inkl. Definition + Historie. */
+export interface RegistryEntryDetail extends RegistryEntry {
+  /** Der eigentliche Rollen-/Skill-/Agenten-Prompt (definition.md). */
+  definition: string;
+  /** Versions-Historie, neueste zuerst. */
+  versions: RegistryVersion[];
+}
+
+/** Antwort von GET /registry/catalog. */
+export interface RegistryCatalog {
+  entries: RegistryEntry[];
+}
+
+/** Capability-/Policy-Vorschau von POST /registry/import — das Paket ist hier
+ *  NOCH NICHT aktiv. `token` wird unverändert an /registry/import/confirm
+ *  zurückgegeben (Human-in-the-Loop). `collision` = ID existiert schon →
+ *  Import erzeugt eine neue Version statt zu überschreiben. */
+export interface RegistryImportPreview {
+  token: string;
+  id: string;
+  typ: RegistryType;
+  name: string;
+  beschreibung: string;
+  version: string;
+  owner: string | null;
+  /** Schema-Version des Pakets — bei Inkompatibilität wird der Import abgewiesen. */
+  schema_version: string;
+  capabilities: string[];
+  default_policy: PolicyLevel;
+  verified: boolean;
+  collision: boolean;
+  /** Warnungen (unbekannte/gefährliche Tools, „Quelle nicht verifiziert" …). */
+  warnings: string[];
 }

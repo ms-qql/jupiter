@@ -5,8 +5,9 @@ ganzen Vault (read-only). MVP single-user: kein JWT, ``owner`` serverseitig.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from ..deps import CurrentUser, get_current_user
 from ..engine.vault import VaultService
 from ..schemas.vault import (
     VaultFileInfo,
@@ -72,13 +73,17 @@ async def rag_preview(
 
 
 @router.post("/files", response_model=VaultWriteResult, status_code=201)
-async def write_file(payload: VaultWriteRequest, request: Request) -> dict:
+async def write_file(
+    payload: VaultWriteRequest, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
     try:
         result = _vault(request).write(
             type=payload.type,
             body=payload.body,
             title=payload.title,
             session_id=payload.session_id,
+            owner=user.user_id,  # PROJ-25: Herkunft IMMER aus dem Token (Audit/Scope-Vertrag).
             on_exists=payload.on_exists,
         )
     except ValueError as exc:

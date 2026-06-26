@@ -22,10 +22,20 @@ _DEFAULT_WATCHDOG_PATH = str(Path(__file__).resolve().parent.parent / "config" /
 # Codeänderung registriert (live editierbar, mtime-geprüft wie Policy/Watchdog).
 _DEFAULT_ENGINES_PATH = str(Path(__file__).resolve().parent.parent / "config" / "engines.yaml")
 
+# Standard-Ort der Konsumenten-Registry (PROJ-24): backend/config/consumers.yaml. Muss
+# NICHT existieren — fehlt/defekt → kein externer Konsument (nur der optionale interne
+# Voll-Scope-Konsument, falls ein Key gesetzt ist). Live mtime-geprüft wie engines.yaml.
+_DEFAULT_CONSUMERS_PATH = str(Path(__file__).resolve().parent.parent / "config" / "consumers.yaml")
+
 # Standard-Ort der Liveness-Schwellen (PROJ-27): backend/config/liveness.yaml. Muss
 # NICHT existieren — fehlt/defekt → eingebaute konservative Defaults (nie „kein Liveness";
 # Auto-Reanimierung mit hartem Limit). Live mtime-geprüft wie Policy/Watchdog.
 _DEFAULT_LIVENESS_PATH = str(Path(__file__).resolve().parent.parent / "config" / "liveness.yaml")
+
+# Standard-Wurzel der Marktplatz/Registry (PROJ-26): backend/registry/. Dort liegen die
+# installierten Rollen/Skills/Agenten (manifest.yaml + definition.md + versions/) und das
+# Import/Export-Staging. Datei-first, kein DB-Zwang — git-versionierbar, von Hand prüfbar.
+_DEFAULT_REGISTRY_ROOT = str(Path(__file__).resolve().parent.parent / "registry")
 
 # Im MVP unterstützte Modell-Aliase (werden 1:1 an `claude --model` durchgereicht).
 VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
@@ -92,7 +102,35 @@ class Settings(BaseSettings):
     default_permission_mode: str = "default"
 
     # Single-User-MVP: kein JWT — der Owner wird serverseitig gestempelt (#21).
+    # PROJ-25: bleibt der Owner-Wert des Bootstrap-Accounts (= ``user_id`` des ersten
+    # Nutzers), damit vor dem Auth angelegte Artefakte (``owner="dev"``) nahtlos diesem
+    # Account gehören (Migration ohne Datenverlust). Solange keine Nutzerbasis existiert,
+    # ist es auch der Anonym-Owner (rückwärtskompatibler Single-User-Betrieb).
     default_owner: str = "dev"
+
+    # --- Auth / JWT (PROJ-25) --------------------------------------------
+    # JWT HS256. Das Secret MUSS in Prod via JUPITER_JWT_SECRET (≥ 32 Byte zufällig)
+    # gesetzt werden — der Default ist NUR für lokale Dev gedacht und wird beim Start
+    # mit einer Warnung quittiert. Ein Wechsel des Secrets invalidiert alle Tokens.
+    jwt_secret: str = "dev-only-insecure-change-me-jupiter-jwt-secret-0123456789"
+    jwt_algorithm: str = "HS256"
+    # Kurzer Access-Token (Minuten) begrenzt den Schaden eines Leaks; langer Refresh
+    # (Tage) hält den Login bequem. Stack-Konvention: 15 min / 7 d.
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 7
+    # httpOnly-Refresh-Cookie. ``secure``/``samesite`` sind dev-tauglich vorbelegt
+    # (cross-site :3000→:8000 braucht im Dev http → samesite="lax" + secure=False).
+    # In Prod (gleiche Origin hinter TLS) via Env auf secure=True/samesite="strict".
+    refresh_cookie_name: str = "jupiter_refresh"
+    refresh_cookie_secure: bool = False
+    refresh_cookie_samesite: str = "lax"
+    refresh_cookie_path: str = "/auth"
+    # Mindestlänge für Bootstrap-/Login-Passwörter (Eingabe-Validierung).
+    password_min_length: int = 8
+    # Rate-Limiting der öffentlichen Auth-Endpunkte (Login/Bootstrap/Refresh) gegen
+    # Brute-Force — nötig, seit der Forward-Auth-Perimeter entfernt wurde und /auth/*
+    # direkt internet-exponiert ist. In Tests via conftest abgeschaltet.
+    auth_rate_limit_enabled: bool = True
 
     # CORS-Origins für das Browser-Frontend (PROJ-3 Cockpit). Dev-Default = Next.js
     # auf :3000. In Prod via JUPITER_CORS_ORIGINS (JSON-Liste) überschreiben.
@@ -167,12 +205,32 @@ class Settings(BaseSettings):
     # fehlt/kaputt → konservative Defaults (nie „kein Liveness").
     liveness_config_path: str = _DEFAULT_LIVENESS_PATH
 
+    # Marktplatz/Registry-Wurzel (PROJ-26): installierte Rollen/Skills/Agenten +
+    # Import/Export-Staging. Wird bei Bedarf angelegt; leerer Ordner = leerer Katalog.
+    registry_root: str = _DEFAULT_REGISTRY_ROOT
+
     # Hal-Vault (PROJ-2): Lese-/Such-Wurzel = GANZER Vault; geschrieben wird NUR im
     # Jupiter-Unterbaum (Agentic OS/Jupiter), ohne die PARA-Struktur zu verändern.
     vault_root: str = "/home/dev/tools/Hal"
     vault_jupiter_subdir: str = "Agentic OS/Jupiter"
     # Roh-Session-Logs beim Session-Ende automatisch in den Vault schreiben (Grundlage #8/#9).
     vault_autolog: bool = True
+
+    # --- Vault als geteilter Dienst (PROJ-24) ----------------------------
+    # Konsumenten-Registry (id + api_key + read/write-Scope-Globs). Live mtime-geprüft;
+    # fehlt/kaputt → kein externer Konsument (Dienst bleibt nutzbar, nur intern/leer).
+    # Secrets (api_key) NUR hier in der gitignored Datei, nie im Repo.
+    consumers_config_path: str = _DEFAULT_CONSUMERS_PATH
+    # Optionaler eingebauter Voll-Scope-Konsument „jupiter" für HTTP-Aufrufer (Lesen ganzer
+    # Vault, Schreiben im Jupiter-Bereich). Leer = AUS (kein impliziter HTTP-Vollzugriff).
+    # Single-User-Brücke bis PROJ-25 (JWT) — Key aus der Server-Umgebung.
+    vault_internal_consumer_key: str = ""
+    # Harte Obergrenze für Volltext-Lesen über /vault/v1/read?mode=full (Bytes). Größere
+    # Dateien → 413 mit Hinweis auf mode=excerpt (Edge Case „Große Datei").
+    vault_max_read_bytes: int = 1_000_000
+    # Pfad des Audit-Logs (Append-only JSONL) relativ zum Jupiter-Schreibbereich. Bleibt
+    # offen lesbar (keine Black-Box) und trägt Herkunft jedes Schreibzugriffs.
+    vault_audit_rel_path: str = "_audit/vault-writes.jsonl"
 
     # --- Kuratierung / Vault Stufe 3 (PROJ-15) ---------------------------
     # Ereignisgetriebene Wissens-Vorschläge: erkannte Marker (Bug gelöst / ADR /

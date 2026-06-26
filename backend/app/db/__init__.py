@@ -18,6 +18,7 @@ from .video_summary_queue import (
     VideoSummaryRepository,
     build_video_summary_repo,
 )
+from .auth_store import SqliteAuthRepository, build_auth_repo
 
 __all__ = [
     "SessionIndexRepository",
@@ -27,4 +28,6 @@ __all__ = [
     "VideoSummaryRepository",
     "SqliteVideoSummaryRepository",
     "build_video_summary_repo",
+    "SqliteAuthRepository",
+    "build_auth_repo",
 ]

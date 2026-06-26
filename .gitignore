@@ -44,3 +44,9 @@ backend/config/watchdog.yaml
 
 # PROJ-18: Laufzeit-Engine-Registry (deployment-lokal, box-spezifische URLs) — nicht versionieren.
 backend/config/engines.yaml
+
+# PROJ-24: Konsumenten-Registry des geteilten Vault-Dienstes (enthält api_keys) — nicht versionieren.
+backend/config/consumers.yaml
+
+# PROJ-26: Marktplatz/Registry — installierte Pakete + Import/Export-Staging (Laufzeit-Daten).
+backend/registry/

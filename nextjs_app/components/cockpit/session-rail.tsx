@@ -18,6 +18,7 @@ import {
 } from "@/lib/status";
 import type { Session } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
+import { UserMenu } from "@/components/auth/user-menu";
 import { microAppEngineKey, sectionLabel } from "@/lib/sidebar-config";
 import { Ampel } from "./ampel";
 import { DeleteSessionButton } from "./delete-session-button";
@@ -268,7 +269,7 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
         <div className="flex-1" />
       )}
 
-      <div className="border-t border-border px-4 py-2">
+      <div className="flex flex-col gap-2 border-t border-border px-4 py-2">
         <Link
           href="/"
           onClick={onItemClick}
@@ -276,6 +277,8 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
         >
           {hiddenCount > 0 ? `Alle anzeigen (+${hiddenCount}) →` : "Zum Board →"}
         </Link>
+        {/* PROJ-25: angemeldete Identität + Abmelden. */}
+        <UserMenu />
       </div>
     </aside>
   );

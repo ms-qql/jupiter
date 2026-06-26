@@ -1463,16 +1463,20 @@ class SessionManager:
         del self._sessions[session_id]
         await self._safe_delete(session_id)
 
-    async def cleanup_terminal(self) -> int:
+    async def cleanup_terminal(self, owner: str | None = None) -> int:
         """Alle terminalen Sessions (done/error/verwaist) auf einmal entfernen.
 
         Aktive Sessions werden **still übersprungen**. Gibt die Anzahl gelöschter
         Sessions zurück und wendet dieselbe Orphan-Kill-Regel je Session an.
+
+        PROJ-25: ``owner`` (aus dem Token) beschränkt das Aufräumen auf die eigenen
+        Sessions — kein Fremd-Löschen über den Sammel-Knopf.
         """
         terminal_ids = [
             sid
             for sid, r in self._sessions.items()
             if r.state.status not in ACTIVE_STATES
+            and (owner is None or r.state.owner == owner)
         ]
         deleted = 0
         for sid in terminal_ids:

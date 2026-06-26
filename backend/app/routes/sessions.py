@@ -1,18 +1,23 @@
 """Session-API — REST (steuern) + WebSocket (Live-Stream). PROJ-1.
 
-MVP single-user: kein JWT; der ``owner`` wird serverseitig gestempelt (#21).
+PROJ-25: ``owner`` kommt **immer aus dem Token** (``get_current_user``); jeder
+Zugriff ist auf die eigenen Sessions beschränkt. Fremde/unbekannte ``session_id``
+liefern einheitlich **404** (kein Existenz-Leak fürs ID-Raten).
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from ..config import clamp_threshold
+from ..deps import CurrentUser, get_current_user
+from ..engine.auth import AuthError
 from ..engine.manager import (
     EngineUnavailableError,
     SessionActiveError,
     SessionAliveError,
     SessionLimitError,
     SessionManager,
+    SessionRuntime,
 )
 from ..schemas.sessions import (
     ConstitutionRead,
@@ -35,8 +40,19 @@ def _manager(request: Request) -> SessionManager:
     return request.app.state.manager
 
 
+def _owned_or_404(manager: SessionManager, session_id: str, user: CurrentUser) -> SessionRuntime:
+    """Session DES NUTZERS holen oder 404 — fremde/unbekannte IDs sind ununterscheidbar
+    (kein Existenz-Leak fürs ID-Raten, PROJ-25 Red-Team)."""
+    runtime = manager.get(session_id)
+    if runtime is None or runtime.state.owner != user.user_id:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    return runtime
+
+
 @router.post("", response_model=SessionRead, status_code=201)
-async def create_session(payload: SessionCreate, request: Request) -> dict:
+async def create_session(
+    payload: SessionCreate, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
     try:
         runtime = await _manager(request).create(
             project_path=payload.project_path,
@@ -47,6 +63,7 @@ async def create_session(payload: SessionCreate, request: Request) -> dict:
             extra_system_prompt=payload.extra_system_prompt,
             project_name=payload.project_name,
             engine=payload.engine,
+            owner=user.user_id,  # PROJ-25: Owner IMMER aus dem Token, nie aus dem Payload.
         )
     except SessionLimitError as exc:  # PROJ-14: Limit aktiver Sessions erreicht.
         raise HTTPException(status_code=429, detail=str(exc)) from exc
@@ -62,43 +79,49 @@ async def create_session(payload: SessionCreate, request: Request) -> dict:
 
 
 @router.get("", response_model=list[SessionRead])
-async def list_sessions(request: Request) -> list[dict]:
-    return [r.to_read() for r in _manager(request).list()]
+async def list_sessions(request: Request, user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+    # PROJ-25: nur die eigenen Sessions (Scope auf owner aus dem Token).
+    return [r.to_read() for r in _manager(request).list() if r.state.owner == user.user_id]
 
 
 @router.get("/limits")
-async def session_limits(request: Request) -> dict:
-    """PROJ-14: Limit-Status für das Cockpit (max + aktuell aktive Sessions)."""
+async def session_limits(request: Request, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """PROJ-14: Limit-Status für das Cockpit (max + aktuell aktive Sessions).
+
+    ``active``/``max`` sind die GLOBALE VPS-Ressourcen-Obergrenze (single-worker),
+    bewusst instanzweit — nur ein gültiges Token ist nötig (PROJ-25)."""
     manager = _manager(request)
     return {"max_parallel_sessions": manager.max_parallel_sessions, "active": manager.active_count()}
 
 
 @router.post("/cleanup")
-async def cleanup_sessions(request: Request) -> dict:
+async def cleanup_sessions(request: Request, user: CurrentUser = Depends(get_current_user)) -> dict:
     """PROJ-21: alle terminalen Sessions (done/error/verwaist) auf einmal löschen.
 
-    Aktive Sessions werden serverseitig still übersprungen. Statisches Segment,
-    daher VOR der dynamischen ``/{session_id}``-Gruppe deklariert.
+    Aktive Sessions werden serverseitig still übersprungen. PROJ-25: nur die eigenen
+    Sessions des Nutzers. Statisches Segment, daher VOR ``/{session_id}`` deklariert.
     """
-    deleted = await _manager(request).cleanup_terminal()
+    deleted = await _manager(request).cleanup_terminal(owner=user.user_id)
     return {"deleted": deleted}
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
-async def get_session(session_id: str, request: Request) -> dict:
-    runtime = _manager(request).get(session_id)
-    if runtime is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+async def get_session(
+    session_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
+    runtime = _owned_or_404(_manager(request), session_id, user)
     data = runtime.to_read()
     data["transcript"] = [vars(e) for e in runtime.transcript]
     return data
 
 
 @router.post("/{session_id}/input", status_code=202)
-async def send_input(session_id: str, payload: SessionInput, request: Request) -> dict:
+async def send_input(
+    session_id: str, payload: SessionInput, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
     manager = _manager(request)
-    if manager.get(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    _owned_or_404(manager, session_id, user)
     try:
         await manager.send_input(session_id, payload.text)
     except RuntimeError as exc:  # pausiert / nicht aktiv
@@ -108,7 +131,8 @@ async def send_input(session_id: str, payload: SessionInput, request: Request) -
 
 @router.post("/{session_id}/decisions/{decision_id}", status_code=202)
 async def resolve_decision(
-    session_id: str, decision_id: str, payload: DecisionResolve, request: Request
+    session_id: str, decision_id: str, payload: DecisionResolve, request: Request,
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Decision Card entscheiden: Freigeben / Ablehnen / Mit Kommentar zurück (PROJ-4)
     bzw. Wissens-Vorschlag Freigeben / Editieren / Verwerfen (PROJ-15).
@@ -118,8 +142,7 @@ async def resolve_decision(
     geschrieben.
     """
     manager = _manager(request)
-    if manager.get(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    _owned_or_404(manager, session_id, user)
     try:
         card = manager.resolve_decision(
             session_id,
@@ -141,15 +164,16 @@ async def resolve_decision(
 
 
 @router.post("/{session_id}/reanimate", response_model=SessionRead)
-async def reanimate_session(session_id: str, request: Request) -> dict:
+async def reanimate_session(
+    session_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
     """PROJ-27: eine hängende/tote Session manuell reaktivieren (``claude --resume``-Pfad).
 
     404 unbekannt; 409 wenn die Session bereits läuft; 429 wenn das Session-Limit eine
     Reanimierung verbietet (kein Bypass); 503 wenn der Resume/das CLI fehlschlägt.
     """
     manager = _manager(request)
-    if manager.get(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    _owned_or_404(manager, session_id, user)
     try:
         runtime = await manager.reanimate(session_id)
     except SessionAliveError as exc:  # läuft bereits — nichts zu reanimieren
@@ -166,32 +190,38 @@ async def reanimate_session(session_id: str, request: Request) -> dict:
 
 
 @router.post("/{session_id}/pause")
-async def pause_session(session_id: str, request: Request) -> dict:
+async def pause_session(
+    session_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
     manager = _manager(request)
-    if manager.get(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    _owned_or_404(manager, session_id, user)
     await manager.pause(session_id)
     return {"ok": True}
 
 
 @router.post("/{session_id}/stop")
-async def stop_session(session_id: str, request: Request) -> dict:
+async def stop_session(
+    session_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
     manager = _manager(request)
-    if manager.get(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    _owned_or_404(manager, session_id, user)
     await manager.stop(session_id)
     return {"ok": True}
 
 
 @router.delete("/{session_id}", status_code=204, response_model=None)
-async def delete_session(session_id: str, request: Request) -> None:
+async def delete_session(
+    session_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> None:
     """PROJ-21: eine terminale Session aus dem Live-Index entfernen (204).
 
-    404 wenn unbekannt; 409 wenn die Session noch aktiv ist (zuerst stoppen).
+    404 wenn unbekannt/fremd; 409 wenn die Session noch aktiv ist (zuerst stoppen).
     Das Session-Log im Vault bleibt erhalten.
     """
+    manager = _manager(request)
+    _owned_or_404(manager, session_id, user)  # PROJ-25: kein Fremd-Löschen.
     try:
-        await _manager(request).delete(session_id)
+        await manager.delete(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Session nicht gefunden.") from exc
     except SessionActiveError as exc:
@@ -199,11 +229,11 @@ async def delete_session(session_id: str, request: Request) -> None:
 
 
 @router.get("/{session_id}/constitution", response_model=ConstitutionRead)
-async def get_session_constitution(session_id: str, request: Request) -> dict:
+async def get_session_constitution(
+    session_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
     """Effektive Konstitution DIESER Session (PROJ-6, AC: einsehbar)."""
-    runtime = _manager(request).get(session_id)
-    if runtime is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    runtime = _owned_or_404(_manager(request), session_id, user)
     return {
         "role": runtime.state.role,
         "source": runtime.state.constitution_source or "leer",
@@ -212,25 +242,28 @@ async def get_session_constitution(session_id: str, request: Request) -> dict:
 
 
 @router.post("/{session_id}/handover/generate", response_model=HandoverPreview)
-async def generate_handover(session_id: str, request: Request) -> dict:
+async def generate_handover(
+    session_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
     """Handover-INHALT erzeugen (Vorschau, Hybrid-Gerüst) — schreibt NICHT in den Vault.
 
     Der zurückgegebene Body geht (ggf. vom Nutzer editiert) an ``POST …/handover``.
     """
     manager = _manager(request)
-    if manager.get(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    _owned_or_404(manager, session_id, user)
     return manager.generate_handover(session_id)
 
 
 @router.post("/{session_id}/reset", response_model=SessionRead, status_code=201)
-async def reset_session(session_id: str, payload: ResetRequest, request: Request) -> dict:
+async def reset_session(
+    session_id: str, payload: ResetRequest, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
     """„Session zurücksetzen": alte Session archivieren, Kind-Session mit dem Handover
     als Seed-Kontext frisch starten (Staffelstab, ``parent_session_id`` verweist zurück).
     """
     manager = _manager(request)
-    if manager.get(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    _owned_or_404(manager, session_id, user)
     try:
         child = await manager.reset(
             session_id,
@@ -249,11 +282,12 @@ async def reset_session(session_id: str, payload: ResetRequest, request: Request
 
 
 @router.patch("/{session_id}/threshold", response_model=SessionRead)
-async def set_session_threshold(session_id: str, payload: ThresholdPatch, request: Request) -> dict:
+async def set_session_threshold(
+    session_id: str, payload: ThresholdPatch, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
     """Pro-Session-Override der Kontext-Schwelle (None = globale Schwelle nutzen)."""
-    runtime = _manager(request).get(session_id)
-    if runtime is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    runtime = _owned_or_404(_manager(request), session_id, user)
     runtime.state.context_threshold_override_pct = (
         clamp_threshold(payload.threshold_pct) if payload.threshold_pct is not None else None
     )
@@ -263,11 +297,12 @@ async def set_session_threshold(session_id: str, payload: ThresholdPatch, reques
 
 
 @router.post("/{session_id}/handover", response_model=VaultWriteResult, status_code=201)
-async def write_handover(session_id: str, payload: HandoverRequest, request: Request) -> dict:
+async def write_handover(
+    session_id: str, payload: HandoverRequest, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
     """Kuratiertes Handover-Dokument dieser Session in den Vault schreiben (PROJ-2)."""
-    runtime = _manager(request).get(session_id)
-    if runtime is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    runtime = _owned_or_404(_manager(request), session_id, user)
     vault = request.app.state.vault
     try:
         result = vault.write(
@@ -286,10 +321,11 @@ async def write_handover(session_id: str, payload: HandoverRequest, request: Req
 
 
 @router.get("/{session_id}/transcript", response_model=TranscriptText)
-async def get_transcript(session_id: str, request: Request) -> dict:
+async def get_transcript(
+    session_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
     manager = _manager(request)
-    if manager.get(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session nicht gefunden.")
+    _owned_or_404(manager, session_id, user)
     return {"text": manager.transcript_text(session_id)}
 
 
@@ -298,8 +334,26 @@ async def stream_session(websocket: WebSocket, session_id: str) -> None:
     import asyncio
 
     manager: SessionManager = websocket.app.state.manager
+    auth = websocket.app.state.auth
+
+    # PROJ-25: Browser-WebSockets können keinen Authorization-Header setzen → der
+    # Access-Token reist als Query-Param (?access_token=…). Identität wird auch hier
+    # serverseitig aus dem Token aufgelöst und der Stream auf den eigenen owner
+    # beschränkt. Vor dem Bootstrap (leere Nutzerbasis) bleibt der Stream offen.
+    owner: str | None = None
+    if await auth.has_users():
+        token = websocket.query_params.get("access_token")
+        try:
+            owner = auth.resolve_access(token).user_id if token else None
+        except AuthError:
+            owner = None
+        if owner is None:
+            await websocket.close(code=4401)  # nicht/ungültig authentifiziert
+            return
+
     runtime = manager.get(session_id)
-    if runtime is None:
+    # Unbekannt ODER fremd → einheitlich 4404 (kein Existenz-Leak fürs ID-Raten).
+    if runtime is None or (owner is not None and runtime.state.owner != owner):
         await websocket.close(code=4404)
         return
     await websocket.accept()
