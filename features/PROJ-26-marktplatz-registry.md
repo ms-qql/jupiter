@@ -1,6 +1,6 @@
 # PROJ-26: Marktplatz/Registry für Rollen/Skills/Agenten
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-26
 **Baustein:** — (Roadmap-Erweiterung, Phase 2)

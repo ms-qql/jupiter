@@ -1,6 +1,6 @@
 # PROJ-24: Vault als geteilter Dienst (auch für eingebettete Apps)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-26
 **Baustein:** #14

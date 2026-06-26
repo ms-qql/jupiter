@@ -1,6 +1,6 @@
 # PROJ-25: Echtes Auth (JWT) + Scope/RLS auf `owner`
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-23
 **Last Updated:** 2026-06-26
 **Baustein:** #21 (Ausbau)
