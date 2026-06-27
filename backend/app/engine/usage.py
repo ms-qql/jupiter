@@ -17,7 +17,11 @@ Zeitbezug: ``created_at`` ist tz-aware UTC; die Zeitfenster werden in UTC gebild
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
+from ..config import settings
+from .registry import ENGINE, engine_registry
 
 UsageRange = str  # "today" | "7d" | "30d" | "all"
 CostStatus = str  # "complete" | "partial" | "none"
@@ -211,3 +215,195 @@ class UsageService:
     ) -> list[dict]:
         rows = await self._repo.list_all()
         return aggregate_drilldown(rows, range_, self._now(), model=model, project=project)
+
+
+class BudgetRefreshRateLimited(RuntimeError):
+    """Manueller Budget-Refresh wurde zu schnell wiederholt."""
+
+
+@dataclass(frozen=True)
+class _WindowSpec:
+    key: str
+    label: str
+    duration: timedelta
+    limit_tokens: int
+
+
+class ProviderBudgetService:
+    """Normalisiert providerseitige Claude-/Codex-Budgetfenster für die Sidebar.
+
+    Es gibt aktuell keine verlässliche, einheitliche maschinenlesbare Quelle für die
+    5h-/Wochenlimits beider Subscription-CLIs. Darum ist die Service-Regel bewusst
+    konservativ: Live-Adapter können später echte Werte liefern; bis dahin gibt es nur
+    markierte Schätzwerte, wenn Quoten explizit konfiguriert sind, sonst ``n/v``.
+    """
+
+    PROVIDERS = (
+        ("claude", "Claude"),
+        ("codex", "Codex"),
+    )
+
+    def __init__(self, repo, *, registry=engine_registry, cfg=settings) -> None:
+        self._repo = repo
+        self._registry = registry
+        self._settings = cfg
+        self._snapshot: dict | None = None
+        self._snapshot_at: datetime | None = None
+        self._last_force_at: datetime | None = None
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    @property
+    def ttl_seconds(self) -> int:
+        minutes = max(1, int(self._settings.provider_budget_refresh_minutes))
+        return minutes * 60
+
+    def _force_min_seconds(self) -> int:
+        return max(0, int(self._settings.provider_budget_force_refresh_min_seconds))
+
+    def _fresh(self, now: datetime) -> bool:
+        if self._snapshot is None or self._snapshot_at is None:
+            return False
+        return (now - self._snapshot_at).total_seconds() < self.ttl_seconds
+
+    async def snapshot(self) -> dict:
+        now = self._now()
+        if self._fresh(now):
+            return dict(self._snapshot or {})
+        return await self._build_snapshot(now)
+
+    async def refresh(self) -> dict:
+        now = self._now()
+        if (
+            self._last_force_at is not None
+            and (now - self._last_force_at).total_seconds() < self._force_min_seconds()
+        ):
+            raise BudgetRefreshRateLimited("Budget wurde gerade aktualisiert.")
+        self._last_force_at = now
+        return await self._build_snapshot(now)
+
+    async def _build_snapshot(self, now: datetime) -> dict:
+        rows = await self._repo.list_all()
+        providers = [self._provider_budget(key, label, rows, now) for key, label in self.PROVIDERS]
+        warnings = [
+            f"{p['label']}: {p['unavailable_reason']}"
+            for p in providers
+            if p.get("availability") != "available" and p.get("unavailable_reason")
+        ]
+        snapshot = {
+            "updated_at": now.isoformat(),
+            "ttl_seconds": self.ttl_seconds,
+            "providers": providers,
+            "warnings": warnings,
+        }
+        self._snapshot = snapshot
+        self._snapshot_at = now
+        return snapshot
+
+    def _provider_budget(self, provider: str, label: str, rows: list[dict], now: datetime) -> dict:
+        availability, reason = self._availability(provider)
+        windows = [self._window_budget(provider, spec, rows, now, availability) for spec in self._windows(provider)]
+        return {
+            "provider": provider,
+            "label": label,
+            "availability": availability,
+            "unavailable_reason": reason,
+            "windows": windows,
+        }
+
+    def _availability(self, provider: str) -> tuple[str, str | None]:
+        prof = self._registry.get(provider, include_disabled=True)
+        if prof is None:
+            return "unavailable", "Provider ist nicht konfiguriert."
+        if not prof.enabled:
+            return "disabled", "Provider ist deaktiviert."
+        if prof.kind != ENGINE:
+            return "unavailable", "Provider ist keine Session-Engine."
+        available, reason = prof.availability()
+        if not available:
+            return "unavailable", reason or "Provider ist nicht verfügbar."
+        return "available", None
+
+    def _windows(self, provider: str) -> list[_WindowSpec]:
+        prefix = f"provider_budget_{provider}"
+        limit_5h = int(getattr(self._settings, f"{prefix}_5h_tokens", 0) or 0)
+        limit_week = int(getattr(self._settings, f"{prefix}_week_tokens", 0) or 0)
+        return [
+            _WindowSpec("5h", "5h", timedelta(hours=5), limit_5h),
+            _WindowSpec("week", "Woche", timedelta(days=7), limit_week),
+        ]
+
+    def _window_budget(
+        self,
+        provider: str,
+        spec: _WindowSpec,
+        rows: list[dict],
+        now: datetime,
+        availability: str,
+    ) -> dict:
+        if availability != "available":
+            return self._unavailable_window(spec, now, "Provider nicht verfügbar.")
+        if spec.limit_tokens <= 0:
+            return self._unavailable_window(
+                spec,
+                now,
+                "Kein providerseitiges Limit konfiguriert; Prozentwert nicht seriös bestimmbar.",
+            )
+        scoped = self._rows_for_provider_window(rows, provider, spec, now)
+        used = _sum_tokens(scoped)
+        used_pct = round(100.0 * used / spec.limit_tokens, 1)
+        reset_at = self._reset_at(scoped, spec, now)
+        return {
+            "window": spec.key,
+            "label": spec.label,
+            "used_pct": used_pct,
+            "used_tokens": used,
+            "limit_tokens": spec.limit_tokens,
+            "reset_at": reset_at.isoformat(),
+            "quality": "estimated",
+            "source": "local_usage_estimate",
+            "updated_at": now.isoformat(),
+            "error": None,
+        }
+
+    @staticmethod
+    def _unavailable_window(spec: _WindowSpec, now: datetime, error: str) -> dict:
+        return {
+            "window": spec.key,
+            "label": spec.label,
+            "used_pct": None,
+            "used_tokens": None,
+            "limit_tokens": spec.limit_tokens if spec.limit_tokens > 0 else None,
+            "reset_at": None,
+            "quality": "unavailable",
+            "source": "none",
+            "updated_at": now.isoformat(),
+            "error": error,
+        }
+
+    @staticmethod
+    def _row_engine(row: dict) -> str:
+        return str(row.get("engine") or "claude")
+
+    def _rows_for_provider_window(
+        self, rows: list[dict], provider: str, spec: _WindowSpec, now: datetime
+    ) -> list[dict]:
+        start = now - spec.duration
+        out = []
+        for row in rows:
+            if self._row_engine(row) != provider:
+                continue
+            created_at = _parse_dt(row.get("created_at"))
+            if created_at is not None and created_at >= start:
+                out.append(row)
+        return out
+
+    @staticmethod
+    def _reset_at(rows: list[dict], spec: _WindowSpec, now: datetime) -> datetime:
+        starts = [_parse_dt(row.get("created_at")) for row in rows]
+        starts = [dt for dt in starts if dt is not None]
+        if not starts:
+            return now + spec.duration
+        return min(starts) + spec.duration

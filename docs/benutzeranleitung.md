@@ -12,6 +12,10 @@ Jupiter ist deine **selbstgehostete Kommandozentrale für KI-Agenten**. Statt me
 4. **Oberfläche:** Links die **Sidebar** (Navigation + zuletzt genutzte Sessions, Micro-Apps, Orchestration), rechts der Inhalt.
 5. **Navigation:** **Cockpit** (Kanban + Gantt), **Doku** (Markdown lesen/bearbeiten), **Dateien** (Fileexplorer), **Apps** (Marktplatz + Micro-Apps).
 
+## Verfügbarkeit
+
+Diese Anleitung beschreibt den aktuellen Produktstand im Repository. Die Phase-0-Basisfunktionen **Engine-Treiber**, **Vault-Anbindung**, **Cockpit** und **Knappheits-Konstitution** sind fertig/`Approved`, aber noch nicht auf die deployed Umgebung ausgerollt. Auf `https://jupiter.auxevo.tech` können diese Teile deshalb bis zum nächsten Deploy noch fehlen oder älter wirken.
+
 ## Funktionen
 
 ### Neue Session starten
@@ -182,6 +186,14 @@ Jupiter ist deine **selbstgehostete Kommandozentrale für KI-Agenten**. Statt me
 2. Sektionen ein-/ausblenden oder per Drag-and-Drop verschieben.
 3. **Speichern** — Einstellung bleibt nach Reload erhalten.
 **Tipps & Hinweise:** Die Workspace-Sektion ist immer sichtbar — so kommst du immer ans Konfig-Panel. Neue Apps erscheinen nach Installation automatisch in der Sidebar.
+
+### Token-Budget in der Sidebar prüfen
+**Wofür ist das?** Oben in der Sidebar sehen, wie viel des 5h- und Wochenbudgets für **Claude** und **Codex** ungefähr verbraucht ist.
+**So nutzt du es:**
+1. Öffne Jupiter; der Bereich **„Budget"** lädt automatisch direkt unter dem Sidebar-Kopf.
+2. Lies pro Provider die zwei Chips **5h** und **Woche**: Prozentwert, Füllstand, Reset-Hinweis und Datenqualität.
+3. Klicke bei Bedarf auf **„Budget aktualisieren"**, wenn du außerhalb von Jupiter Tokens verbraucht hast.
+**Tipps & Hinweise:** `geschätzt` bedeutet: Jupiter nutzt lokale Session-Usage und konfigurierte Limits. `n/v` bedeutet: kein seriöser Prozentwert verfügbar. `veraltet` erscheint, wenn ein angezeigter Reset-Zeitpunkt überschritten ist, bis der nächste Snapshot geladen wurde. Hinter den Kulissen: [Token-Budget prüfen](funktionen.md#token-budget-prüfen-sidebar).
 
 ## Häufige Fragen
 

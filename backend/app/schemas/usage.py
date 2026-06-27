@@ -12,6 +12,9 @@ from pydantic import BaseModel, Field
 
 UsageRange = Literal["today", "7d", "30d", "all"]
 CostStatus = Literal["complete", "partial", "none"]
+BudgetWindow = Literal["5h", "week"]
+BudgetQuality = Literal["live", "estimated", "unavailable", "stale"]
+BudgetAvailability = Literal["available", "disabled", "unavailable"]
 
 
 class UsageGroup(BaseModel):
@@ -56,3 +59,34 @@ class UsageDrilldownRow(BaseModel):
 class UsageDrilldown(BaseModel):
     range: UsageRange
     rows: list[UsageDrilldownRow]
+
+
+class ProviderBudgetWindow(BaseModel):
+    window: BudgetWindow
+    label: str
+    used_pct: float | None = Field(
+        default=None,
+        description="Verbrauch in Prozent; None = nicht seriös bestimmbar.",
+    )
+    used_tokens: int | None = None
+    limit_tokens: int | None = None
+    reset_at: str | None = None
+    quality: BudgetQuality
+    source: str
+    updated_at: str
+    error: str | None = None
+
+
+class ProviderBudget(BaseModel):
+    provider: str
+    label: str
+    availability: BudgetAvailability
+    unavailable_reason: str | None = None
+    windows: list[ProviderBudgetWindow]
+
+
+class ProviderBudgetSnapshot(BaseModel):
+    updated_at: str
+    ttl_seconds: int
+    providers: list[ProviderBudget]
+    warnings: list[str] = []

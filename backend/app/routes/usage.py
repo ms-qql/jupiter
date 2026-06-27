@@ -7,16 +7,25 @@ Aggregaten (best-effort), nie Hard-Fail.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from ..engine.usage import UsageService
-from ..schemas.usage import UsageDrilldown, UsageRange, UsageSummary
+from ..engine.usage import BudgetRefreshRateLimited, ProviderBudgetService, UsageService
+from ..schemas.usage import (
+    ProviderBudgetSnapshot,
+    UsageDrilldown,
+    UsageRange,
+    UsageSummary,
+)
 
 router = APIRouter(prefix="/usage", tags=["usage"])
 
 
 def _svc(request: Request) -> UsageService:
     return request.app.state.usage
+
+
+def _budget_svc(request: Request) -> ProviderBudgetService:
+    return request.app.state.provider_budgets
 
 
 @router.get("/summary", response_model=UsageSummary)
@@ -38,3 +47,21 @@ async def usage_drilldown(
     """Session-Drilldown (nach Tokens absteigend), optional nach Modell/Projekt gefiltert."""
     rows = await _svc(request).drilldown(range_, model=model, project=project)
     return {"range": range_, "rows": rows}
+
+
+@router.get("/provider-budgets", response_model=ProviderBudgetSnapshot)
+async def provider_budgets(request: Request) -> dict:
+    """Claude-/Codex-Quota-Lagebild für die Sidebar (gecacht, read-only)."""
+    return await _budget_svc(request).snapshot()
+
+
+@router.post("/provider-budgets/refresh", response_model=ProviderBudgetSnapshot)
+async def refresh_provider_budgets(request: Request) -> dict:
+    """Manueller Refresh des Budget-Snapshots; gegen Mehrfachklicks rate-limited."""
+    try:
+        return await _budget_svc(request).refresh()
+    except BudgetRefreshRateLimited as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc

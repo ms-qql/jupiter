@@ -1,7 +1,8 @@
 # Technische Architektur
 
-> **Stand:** 2026-06-26 · Lebende Doku, generiert aus `features/INDEX.md` + Code. Dokumentiert: alle nicht-`Planned`-Features (PROJ-1–27, 28–47, 49).
+> **Stand:** 2026-06-27 · Lebende Doku, generiert aus `features/INDEX.md` + Code. Dokumentiert: alle nicht-`Planned`-Features (PROJ-1–27, 28–47, 49).
 > **Jupiter-Override:** Next.js statt Flutter · FastAPI **in-memory + SQLite** statt Neon/ORM · **kein** MinIO (Dateien host-nativ) · JWT-Auth seit PROJ-25 (Login-Screen + httpOnly-Cookie).
+> **Deployment-Stand:** PROJ-1, PROJ-2, PROJ-3 und PROJ-6 sind fachlich/technisch fertig und in `features/INDEX.md` als `Approved` geführt, aber noch **nicht** deployed. Die Deployment-Abschnitte in den Specs bleiben bis `/deploy` leer.
 
 ## 1. System-Überblick
 
@@ -150,6 +151,8 @@ Seit **PROJ-25** ist Jupiter hinter einem echten JWT-Login gesichert:
 ## 6. Features
 
 ### PROJ-1 — Engine-Treiber (Claude headless)
+**Status:** `Approved` / fertig, noch nicht deployed.
+
 Startet und steuert Claude-Code-Subprozesse headless. `ClaudeCodeDriver` spawnt `claude -p --output-format stream-json`, parst den Event-Stream (Tokens/Kosten aus `result`-Events), und hält je Session eine `SessionRuntime` in-memory. Der Live-Stream wird per WebSocket ans Cockpit gebroadcastet.
 
 **Backend:**
@@ -178,6 +181,8 @@ sequenceDiagram
 **Abhängigkeiten:** keine.
 
 ### PROJ-2 — Vault-Anbindung
+**Status:** `Approved` / fertig, noch nicht deployed.
+
 Liest/schreibt/sucht Markdown im Hal-Vault als persistente Wahrheit. `VaultService` schreibt **atomar** (temp + `os.replace`), parst YAML-Frontmatter und vergibt Slugs.
 
 **Backend:**
@@ -192,6 +197,8 @@ Liest/schreibt/sucht Markdown im Hal-Vault als persistente Wahrheit. `VaultServi
 **Abhängigkeiten:** keine.
 
 ### PROJ-3 — Cockpit (Mission Control / Kanban / Ampel)
+**Status:** `Approved` / fertig, noch nicht deployed.
+
 Die zentrale Übersicht: Sessions als Ampel-Kacheln, gruppiert in einem Kanban (Arbeitet / Wartet / Review / Fertig), darunter der ABC-Gantt.
 
 **Frontend:** `app/(cockpit)/page.tsx`; Komponenten `session-tile.tsx`, `kanban-board.tsx`, `global-status-bar.tsx`, `session-rail.tsx`, `new-session-dialog.tsx`. State: `sessions-provider.tsx`.
@@ -237,6 +244,8 @@ Hält den Kontext-Füllstand sichtbar und warnt an konfigurierbarer Schwelle. Be
 **Abhängigkeiten:** PROJ-1, PROJ-2, PROJ-3.
 
 ### PROJ-6 — Knappheits-Konstitution
+**Status:** `Approved` / fertig, noch nicht deployed.
+
 Injiziert eine token-sparsame Konstitution + Rolle in jede Session via `--append-system-prompt`. `ConstitutionResolver` setzt `global.md` + `roles/<rolle>.md` zusammen.
 
 **Backend:** `GET /constitution`, `GET /constitution/{role}`, `GET /sessions/{id}/constitution`. Service: `engine/constitution.py`.
@@ -700,6 +709,44 @@ sequenceDiagram
 ```
 **Abhängigkeiten:** PROJ-3, PROJ-1, PROJ-25.
 
+### PROJ-52 — Sidebar Token-Budget-Monitor für Claude und Codex
+Ergänzt die persistente Sidebar um ein kompaktes Quota-Lagebild für Claude und Codex. Das Backend normalisiert providerseitige 5h- und Wochenfenster in einem gecachten Snapshot; wenn keine verlässliche Live-Quelle oder konfigurierte Quota vorhanden ist, liefert es bewusst `n/v` statt erfundener Prozentwerte. Die UI pollt unabhängig vom Session-Poll anhand des backendseitigen `ttl_seconds`-Werts und bietet einen rate-limited manuellen Refresh.
+
+| Methode | Pfad | Schema / Service |
+|---|---|---|
+| GET | `/usage/provider-budgets` | `ProviderBudgetSnapshot` → `ProviderBudgetService.snapshot()` |
+| POST | `/usage/provider-budgets/refresh` | `ProviderBudgetSnapshot` → `ProviderBudgetService.refresh()`; 429 bei Doppelrefresh |
+
+**Backend:** `backend/app/routes/usage.py:52`, `backend/app/engine/usage.py:232`, `backend/app/schemas/usage.py`.
+**Frontend:** `ProviderBudgetWidget` in `nextjs_app/components/cockpit/provider-budget-widget.tsx:17`; eingebunden in `SessionRail` bei `nextjs_app/components/cockpit/session-rail.tsx:97`.
+**Daten:** keine neue Tabelle; der Service liest den vorhandenen `session_index` über `repo.list_all()` und hält den Snapshot in-memory.
+**Konfiguration:** `provider_budget_refresh_minutes` (Default 30), `provider_budget_force_refresh_min_seconds`, optionale Quotas `provider_budget_<provider>_5h_tokens` und `provider_budget_<provider>_week_tokens`.
+
+**Ablauf:**
+```mermaid
+sequenceDiagram
+  participant UI as Sidebar-Widget
+  participant API as FastAPI /usage
+  participant Svc as ProviderBudgetService
+  participant Index as SQLite session_index
+  participant Registry as EngineRegistry
+
+  UI->>API: GET /usage/provider-budgets
+  API->>Svc: snapshot()
+  alt Cache frisch
+    Svc-->>API: letzter Snapshot
+  else Cache abgelaufen
+    Svc->>Registry: Claude/Codex-Verfügbarkeit prüfen
+    Svc->>Index: Session-Usage lesen
+    Svc->>Svc: 5h/Woche schätzen oder n/v setzen
+    Svc-->>API: neuer Snapshot + ttl_seconds
+  end
+  API-->>UI: ProviderBudgetSnapshot
+  UI->>UI: Claude/Codex-Zeilen rendern
+```
+
+**Abhängigkeiten:** PROJ-3, PROJ-19, PROJ-48, PROJ-51.
+
 ## 7. Cross-Cutting Concerns
 
 - **Auth-Pipeline:** Alle Cockpit-Routen hinter `Depends(get_current_user)` (JWT, PROJ-25). `/internal/permission` ist localhost-only; `/vault/v1` ist consumer-key-geschützt (PROJ-24).
@@ -754,4 +801,11 @@ graph LR
   WS[WS /sessions/stream PROJ-49] --> Snapshot[Full-Snapshot]
   WS --> Delta[kind:message]
   WS --> Ping[kind:ping]
+
+  BudgetWidget[ProviderBudgetWidget PROJ-52] --> BudgetApi[GET /usage/provider-budgets]
+  BudgetWidget --> BudgetRefresh[POST /usage/provider-budgets/refresh]
+  BudgetApi --> BudgetSvc[ProviderBudgetService]
+  BudgetRefresh --> BudgetSvc
+  BudgetSvc --> UsageIndex[(SQLite session_index)]
+  BudgetSvc --> Engines[EngineRegistry]
 ```
