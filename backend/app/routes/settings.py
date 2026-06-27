@@ -12,9 +12,13 @@ from ..config import THRESHOLD_MAX_PCT, THRESHOLD_MIN_PCT, clamp_threshold, sett
 from ..engine import liveness, policy, watchdog
 from ..engine.abc_phases import ABC_PHASES
 from ..engine.files import FileService
+from ..engine.registry import engine_registry
 from ..schemas.settings import (
     ClipboardDirPatch,
     ClipboardDirRead,
+    EngineSettingsPut,
+    EngineSettingsRead,
+    EngineSettingsValidationRead,
     LivenessLimitsPut,
     LivenessSettingRead,
     PolicyPreviewRead,
@@ -69,6 +73,33 @@ async def set_clipboard_dir(request: Request, payload: ClipboardDirPatch) -> dic
     try:
         return {"path": _files(request).set_clipboard_dir(payload.path)}
     except ValueError as exc:  # außerhalb der erlaubten Roots
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Engine-/Modellverwaltung (PROJ-51) ------------------------------------
+
+
+@router.get("/engines", response_model=EngineSettingsRead)
+async def get_engine_settings() -> dict:
+    """Bearbeitbare Engine-Konfiguration (secret-frei, aber mit auth_env-Namen)."""
+    return engine_registry.settings_snapshot()
+
+
+@router.post("/engines/validate", response_model=EngineSettingsValidationRead)
+async def validate_engine_settings(payload: EngineSettingsPut) -> dict:
+    """Trockenlauf: validiert die Engine-Konfiguration ohne YAML zu schreiben."""
+    try:
+        return engine_registry.validate_settings(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/engines", response_model=EngineSettingsRead)
+async def put_engine_settings(payload: EngineSettingsPut) -> dict:
+    """Engine-Konfiguration validieren + atomar nach engines.yaml schreiben."""
+    try:
+        return engine_registry.save_settings(payload.model_dump())
+    except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

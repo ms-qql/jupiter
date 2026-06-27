@@ -29,6 +29,9 @@ import type {
   PolicyRule,
   RecoveryListResult,
   RootEntry,
+  EngineSettingsEntry,
+  EngineSettingsOverview,
+  EngineSettingsValidation,
   Session,
   SessionCreate,
   SessionDetail,
@@ -285,6 +288,31 @@ export function createSession(body: SessionCreate): Promise<Session> {
  *  Speist den Engine-Selector im „Neue Session"-Dialog und das Werkzeuge-Panel. */
 export function getEngines(signal?: AbortSignal): Promise<EnginesOverview> {
   return request<EnginesOverview>("/engines", { signal });
+}
+
+/** PROJ-51: Bearbeitbare Engine-/Modell-Konfiguration lesen. */
+export function getEngineSettings(signal?: AbortSignal): Promise<EngineSettingsOverview> {
+  return request<EngineSettingsOverview>("/settings/engines", { signal });
+}
+
+/** PROJ-51: Engine-Konfiguration validieren, ohne engines.yaml zu schreiben. */
+export function validateEngineSettings(
+  engines: EngineSettingsEntry[],
+): Promise<EngineSettingsValidation> {
+  return request<EngineSettingsValidation>("/settings/engines/validate", {
+    method: "POST",
+    body: JSON.stringify({ engines }),
+  });
+}
+
+/** PROJ-51: Engine-Konfiguration validieren und atomar in engines.yaml speichern. */
+export function setEngineSettings(
+  engines: EngineSettingsEntry[],
+): Promise<EngineSettingsOverview> {
+  return request<EngineSettingsOverview>("/settings/engines", {
+    method: "PUT",
+    body: JSON.stringify({ engines }),
+  });
 }
 
 // --- PROJ-19 (#28/#27): Token-/Kosten-Dashboard ----------------------------

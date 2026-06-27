@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-51
+**Next Available ID:** PROJ-52
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -63,6 +63,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-48 | Engine — OpenAI Codex CLI (Pro-Subscription) als Jupiter-Agent | P1 | Deployed | PROJ-18, PROJ-1, PROJ-19 | [Spec](PROJ-48-engine-openai-codex-cli.md) |
 | PROJ-49 | WebSocket-Flapping zum Browser — Stabilität + Event-Replay bei Reconnect | P1 | Deployed | PROJ-3, PROJ-1, PROJ-25 | [Spec](PROJ-49-websocket-flapping-event-replay.md) |
 | PROJ-50 | abc-Workflow für die Codex-Engine (portierte Skills + Phasen-Signal) | P1 | Deployed | PROJ-48, PROJ-9, PROJ-8 | [Spec](PROJ-50-abc-workflow-codex-engine.md) |
+| PROJ-51 | Engine- und Modellverwaltung in den App-Einstellungen | P1 | Deployed | PROJ-18, PROJ-48, PROJ-50, PROJ-9 | [Spec](PROJ-51-engine-modellverwaltung-einstellungen.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
