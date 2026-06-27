@@ -283,6 +283,40 @@ export interface UsageDrilldownRead {
   rows: UsageDrilldownRow[];
 }
 
+// --- PROJ-52: Sidebar Token-Budget-Monitor --------------------------------
+
+export type ProviderBudgetWindowKey = "5h" | "week";
+export type ProviderBudgetQuality = "live" | "estimated" | "unavailable" | "stale";
+export type ProviderBudgetAvailability = "available" | "disabled" | "unavailable";
+
+export interface ProviderBudgetWindowRead {
+  window: ProviderBudgetWindowKey;
+  label: string;
+  used_pct: number | null;
+  used_tokens: number | null;
+  limit_tokens: number | null;
+  reset_at: string | null;
+  quality: ProviderBudgetQuality;
+  source: string;
+  updated_at: string;
+  error: string | null;
+}
+
+export interface ProviderBudgetRead {
+  provider: string;
+  label: string;
+  availability: ProviderBudgetAvailability;
+  unavailable_reason: string | null;
+  windows: ProviderBudgetWindowRead[];
+}
+
+export interface ProviderBudgetSnapshotRead {
+  updated_at: string;
+  ttl_seconds: number;
+  providers: ProviderBudgetRead[];
+  warnings: string[];
+}
+
 // --- PROJ-19 (#23): Pointer/RAG-Vorschau -----------------------------------
 
 /** Ein gerankter Vault-Ausschnitt aus GET /vault/rag/preview. */

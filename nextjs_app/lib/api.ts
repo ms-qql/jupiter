@@ -45,6 +45,7 @@ import type {
   UsageDrilldownRead,
   UsageRange,
   UsageSummaryRead,
+  ProviderBudgetSnapshotRead,
   ScoutRequest,
   ScoutResult,
   VaultRagPreview,
@@ -335,6 +336,20 @@ export function getUsageDrilldown(
   if (opts?.model) params.set("model", opts.model);
   if (opts?.project) params.set("project", opts.project);
   return request<UsageDrilldownRead>(`/usage/drilldown?${params.toString()}`, { signal });
+}
+
+// --- PROJ-52: Sidebar Token-Budget-Monitor --------------------------------
+
+/** Claude-/Codex-Budget-Snapshot für die Sidebar (Backend-cached). */
+export function getProviderBudgets(signal?: AbortSignal): Promise<ProviderBudgetSnapshotRead> {
+  return request<ProviderBudgetSnapshotRead>("/usage/provider-budgets", { signal });
+}
+
+/** Manueller Refresh des Budget-Snapshots; Backend schützt gegen Mehrfachklicks. */
+export function refreshProviderBudgets(): Promise<ProviderBudgetSnapshotRead> {
+  return request<ProviderBudgetSnapshotRead>("/usage/provider-budgets/refresh", {
+    method: "POST",
+  });
 }
 
 export function sendInput(id: string, text: string): Promise<{ ok: boolean }> {

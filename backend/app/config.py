@@ -178,6 +178,18 @@ class Settings(BaseSettings):
     scout_timeout_seconds: int = 180
     scout_max_context_chars: int = 40_000  # eingelesener Kontext gedeckelt (Kosten-Schutz).
 
+    # PROJ-52: Sidebar Token-Budget-Monitor. Providerseitige Quotas sind externe
+    # Momentaufnahmen; Jupiter cached den normalisierten Snapshot kurz im Speicher.
+    provider_budget_refresh_minutes: int = 30
+    provider_budget_timeout_seconds: float = 10.0
+    provider_budget_force_refresh_min_seconds: int = 60
+    # Optionale Fallback-Quoten für lokale Schätzung. 0 = unbekannt → UI zeigt n/v
+    # statt erfundener Prozentwerte.
+    provider_budget_claude_5h_tokens: int = 0
+    provider_budget_claude_week_tokens: int = 0
+    provider_budget_codex_5h_tokens: int = 0
+    provider_budget_codex_week_tokens: int = 0
+
     # --- Decision Cards / Freigabe-Hook (PROJ-4) ---------------------------
     # Freigabe-Flow aktivieren: Sessions starten mit dem PreToolUse-Hook.
     enable_decision_cards: bool = True

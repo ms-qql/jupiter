@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-52
+**Next Available ID:** PROJ-53
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -64,6 +64,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-49 | WebSocket-Flapping zum Browser — Stabilität + Event-Replay bei Reconnect | P1 | Deployed | PROJ-3, PROJ-1, PROJ-25 | [Spec](PROJ-49-websocket-flapping-event-replay.md) |
 | PROJ-50 | abc-Workflow für die Codex-Engine (portierte Skills + Phasen-Signal) | P1 | Deployed | PROJ-48, PROJ-9, PROJ-8 | [Spec](PROJ-50-abc-workflow-codex-engine.md) |
 | PROJ-51 | Engine- und Modellverwaltung in den App-Einstellungen | P1 | Deployed | PROJ-18, PROJ-48, PROJ-50, PROJ-9 | [Spec](PROJ-51-engine-modellverwaltung-einstellungen.md) |
+| PROJ-52 | Sidebar Token-Budget-Monitor für Claude und Codex | P1 | Deployed | PROJ-3, PROJ-19, PROJ-48, PROJ-51 | [Spec](PROJ-52-sidebar-token-budget-monitor.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

@@ -4,6 +4,8 @@
 
 Dieses Dokument erklärt **was im Hintergrund passiert**, wenn du in Jupiter eine konkrete Aktion auslöst — vom Klick im Browser über die API bis zum Claude-Subprozess, zur SQLite-Datei und zum Vault. Es ist kein Bedien-Handbuch (das ist die [Benutzeranleitung](benutzeranleitung.md)) und keine Code-Referenz (das ist die [Architektur](architektur.md)), sondern die Brücke dazwischen: das mentale Modell, *warum* etwas schnell ist, *warum* etwas auch nach einem Neustart noch da ist, *warum* eine Session anhält.
 
+**Stand 2026-06-27:** Die Basisabläufe aus PROJ-1, PROJ-2, PROJ-3 und PROJ-6 sind lokal fertig/`Approved`, aber noch nicht deployed. Die Diagramme beschreiben deshalb den Repository-Stand, nicht zwingend den aktuell erreichbaren Live-Stand.
+
 ## Wie liest du die Diagramme?
 
 - **Du** = der Browser-Tab vor dir
@@ -784,6 +786,51 @@ sequenceDiagram
 **Tipps zum Verstehen:**
 - Die **Workspace-Sektion** ist immer sichtbar — so kommst du nie ans Konfig-Panel nicht heran.
 - Micro-Apps und Orchestration-Apps kommen aus der **Registry** — nach einer neuen Installation erscheinen sie automatisch in der Sidebar ohne Neustart.
+
+---
+
+### Token-Budget prüfen (Sidebar)
+
+**Was du tust:**
+1. Du öffnest Jupiter und schaust oben in der Sidebar auf **Budget**.
+2. Du vergleichst Claude und Codex jeweils für **5h** und **Woche**.
+3. Optional klickst du **„Budget aktualisieren"**, wenn du einen frischen Stand brauchst.
+
+**Was im Hintergrund passiert:**
+```mermaid
+sequenceDiagram
+  participant Du
+  participant UI
+  participant API
+  participant Svc as ProviderBudgetService
+  participant Index as SQLite session_index
+  participant Registry as EngineRegistry
+
+  Du->>UI: Jupiter öffnen
+  UI->>API: GET /usage/provider-budgets
+  API->>Svc: snapshot()
+  Svc->>Registry: Claude/Codex aktiv und verfügbar?
+  Svc->>Index: lokale Usage für 5h/Woche lesen
+  Svc->>Svc: Prozent schätzen oder n/v setzen
+  API-->>UI: ProviderBudgetSnapshot + ttl_seconds
+  UI-->>Du: Budget-Zeilen anzeigen
+  Du->>UI: Budget aktualisieren
+  UI->>API: POST /usage/provider-budgets/refresh
+  API->>Svc: Refresh erzwingen, Rate-Limit prüfen
+  API-->>UI: neuer Snapshot oder deutsche Kurzmeldung
+```
+
+**Wer macht was:**
+- **UI**: `nextjs_app/components/cockpit/provider-budget-widget.tsx:17`
+- **Sidebar**: `nextjs_app/components/cockpit/session-rail.tsx:97`
+- **API**: `GET/POST /usage/provider-budgets` in `backend/app/routes/usage.py:52`
+- **Service**: `ProviderBudgetService` in `backend/app/engine/usage.py:232`
+- **Daten**: vorhandener SQLite-`session_index`, keine neue Tabelle
+
+**Tipps zum Verstehen:**
+- Das Widget nutzt einen eigenen langsamen Poll, nicht den 4-Sekunden-Session-Poll.
+- Ohne konfigurierte Provider-Limits zeigt Jupiter `n/v`, weil ein Prozentwert sonst falsche Genauigkeit vortäuschen würde.
+- Überschreitet ein angezeigter Reset-Zeitpunkt die aktuelle Uhrzeit, markiert die UI den Wert bis zum nächsten Snapshot als `veraltet`.
 
 ---
 

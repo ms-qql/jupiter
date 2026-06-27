@@ -23,6 +23,7 @@ import { microAppEngineKey, sectionLabel } from "@/lib/sidebar-config";
 import { Ampel } from "./ampel";
 import { DeleteSessionButton } from "./delete-session-button";
 import { NewSessionDialog } from "./new-session-dialog";
+import { ProviderBudgetWidget } from "./provider-budget-widget";
 import { SidebarConfigButton } from "./sidebar-config-panel";
 import { useSidebarPrefs } from "./sidebar-prefs-provider";
 import { useOrchestrationApps } from "./use-orchestration-apps";
@@ -92,6 +93,8 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
           </button>
         </NewSessionDialog>
       </div>
+
+      <ProviderBudgetWidget />
 
       {/* PROJ-38: Workspace-Sektion. Überschrift + Einstellungs-Icon sind
           IMMER sichtbar (auch wenn alle Einträge ausgeblendet sind) — der
