@@ -32,6 +32,65 @@ class ClipboardDirPatch(BaseModel):
     path: str = Field(..., min_length=1, description="Absoluter Ordnerpfad innerhalb der erlaubten Roots.")
 
 
+# --- PROJ-51: Engine-/Modellverwaltung ------------------------------------
+
+
+class EngineSettingsEntry(BaseModel):
+    """Bearbeitbarer Engine-Registry-Eintrag für /settings/engines.
+
+    Enthält Konfigurationsfelder wie auth_env/api_base, aber nie Secret-Werte.
+    """
+
+    key: str
+    label: str
+    kind: str = "engine"
+    driver: str | None = None
+    enabled: bool = True
+    available: bool = True
+    unavailable_reason: str | None = None
+    models: list[str] = Field(default_factory=list)
+    default_model: str | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    context_window: int | None = None
+    auth_env: str | None = None
+    api_base: str | None = None
+    api_path: str | None = None
+    url: str | None = None
+    sandbox: str | None = None
+    target: str | None = None
+    group: str | None = None
+    icon: str | None = None
+    bin: str | None = None
+    argv_template: list[str] = Field(default_factory=list)
+    resume_argv_template: list[str] = Field(default_factory=list)
+    adapter: str | None = None
+    prompt_via: str | None = None
+    input_format: str | None = None
+    oneshot: bool | None = None
+
+
+class EngineSettingsRead(BaseModel):
+    """Vollständige, bearbeitbare Engine-Konfiguration."""
+
+    engines: list[EngineSettingsEntry]
+    source: str
+    warning: str | None = None
+
+
+class EngineSettingsPut(BaseModel):
+    """Neue Engine-Konfiguration. Speichern validiert serverseitig und schreibt YAML."""
+
+    engines: list[EngineSettingsEntry]
+
+
+class EngineSettingsValidationRead(BaseModel):
+    """Trockenlauf-Ergebnis für eine Engine-Konfiguration."""
+
+    valid: bool
+    warnings: list[str] = Field(default_factory=list)
+    engines: list[EngineSettingsEntry] = Field(default_factory=list)
+
+
 # --- PROJ-10: Trust-Policy --------------------------------------------------
 
 PolicyLevel = Literal["auto-allow", "card", "deny"]

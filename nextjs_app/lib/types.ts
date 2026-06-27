@@ -563,6 +563,37 @@ export interface EnginesOverview {
   warning: string | null;
 }
 
+/** PROJ-51: Bearbeitbarer Engine-Eintrag aus GET/PUT /settings/engines.
+ *  Enthält Konfigurationsfelder wie auth_env/api_base, aber nie API-Key-Werte. */
+export interface EngineSettingsEntry extends EngineRead {
+  enabled: boolean;
+  context_window: number | null;
+  auth_env: string | null;
+  api_base: string | null;
+  api_path: string | null;
+  bin: string | null;
+  argv_template: string[];
+  resume_argv_template: string[];
+  adapter: string | null;
+  prompt_via: string | null;
+  input_format: string | null;
+  oneshot: boolean | null;
+}
+
+/** Vollständige, bearbeitbare Engine-Konfiguration. */
+export interface EngineSettingsOverview {
+  engines: EngineSettingsEntry[];
+  source: string;
+  warning: string | null;
+}
+
+/** Trockenlauf-Antwort der Engine-Settings-Validierung. */
+export interface EngineSettingsValidation {
+  valid: boolean;
+  warnings: string[];
+  engines: EngineSettingsEntry[];
+}
+
 // --- PROJ-9: Smart Launcher -------------------------------------------------
 
 /** Ein offenes Feature aus features/INDEX.md + die abgeleitete nächste Arbeit.

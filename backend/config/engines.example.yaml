@@ -42,6 +42,23 @@ engines:
     context_window: 128000
     capabilities: [usage, multi_turn]
 
+  # PROJ-51: Swisscom als OpenAI-kompatibler HTTP-Provider. Der Eintrag ist bewusst
+  # deaktiviert, bis api_base/Modelle/Auth-Env zum echten Tenant passen. Die App-
+  # Einstellungen können ihn aktivieren und Modelle/Default direkt in engines.yaml
+  # speichern — API-Key-Werte bleiben weiter ausschließlich in der Server-Umgebung.
+  - key: swisscom
+    label: "Swisscom"
+    kind: engine
+    enabled: false
+    driver: openai
+    auth_env: SWISSCOM_API_KEY
+    api_base: https://api.swisscom.com
+    api_path: /v1/chat/completions
+    models: [swiss-ai-large]
+    default_model: swiss-ai-large
+    context_window: 128000
+    capabilities: [usage, multi_turn]
+
   # PROJ-48: OpenAI Codex CLI über den generischen Treiber (kein Code pro Engine).
   # Platzhalter: {model} {session_id} {project_path} {prompt} {resume_id}.
   # adapter: claude | jsonl | plaintext | codex  (normalisiert den Ausgabestrom).

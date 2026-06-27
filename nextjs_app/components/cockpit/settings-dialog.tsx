@@ -26,6 +26,7 @@ import { WatchdogControl } from "./watchdog-control";
 import { LivenessControl } from "./liveness-control";
 import { TranscriptionControl } from "./transcription-control";
 import { RegistryControl } from "./registry-control";
+import { EngineModelsControl } from "./engine-models-control";
 
 export function SettingsDialog() {
   return (
@@ -51,6 +52,7 @@ export function SettingsDialog() {
             <TabsTrigger value="watchdog">Watchdog</TabsTrigger>
             <TabsTrigger value="liveness">Liveness</TabsTrigger>
             <TabsTrigger value="sprache">Sprache</TabsTrigger>
+            <TabsTrigger value="modelle">Modelle</TabsTrigger>
             <TabsTrigger value="registry">Registry</TabsTrigger>
           </TabsList>
           <TabsContent value="allgemein" className="py-2">
@@ -73,6 +75,11 @@ export function SettingsDialog() {
           </TabsContent>
           <TabsContent value="sprache" className="py-2">
             <TranscriptionControl />
+          </TabsContent>
+          <TabsContent value="modelle" className="py-2">
+            <ScrollArea className="max-h-[60vh] pr-3">
+              <EngineModelsControl />
+            </ScrollArea>
           </TabsContent>
           <TabsContent value="registry" className="py-2">
             <ScrollArea className="max-h-[60vh] pr-3">
