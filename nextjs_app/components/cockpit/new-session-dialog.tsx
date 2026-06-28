@@ -247,16 +247,19 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
     <Dialog open={open} onOpenChange={setOpen}>
       {/* Base UI: eigenes Element via render (kein asChild wie bei Radix). */}
       <DialogTrigger render={children as React.ReactElement} />
-      <DialogContent className="sm:max-w-lg">
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-hidden sm:max-w-3xl lg:max-w-4xl">
+        <form
+          onSubmit={handleSubmit}
+          className="flex max-h-[calc(100dvh-4rem)] min-h-0 flex-col"
+        >
+          <DialogHeader className="shrink-0">
             <DialogTitle>Neue Session</DialogTitle>
             <DialogDescription>
               Startet eine Session im gewählten Projekt — Standard ist Claude Max.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
+          <div className="grid min-h-0 gap-4 overflow-y-auto py-4 pr-1">
             {/* PROJ-34: Modus-Umschalter — Workflow/ABC (Default) vs. freies Chatfenster. */}
             <Tabs
               value={workflowMode}
@@ -353,7 +356,8 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 placeholder="Was soll die Session tun?"
-                rows={4}
+                rows={8}
+                className="min-h-48 max-h-[40dvh] resize-y overflow-y-auto"
               />
               {selected?.skill && prompt.trim() === selected.initial_prompt && (
                 <p className="text-xs text-muted-foreground">
@@ -442,7 +446,7 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
             )}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button type="submit" disabled={!valid || submitting}>
               {submitting ? "Startet…" : "Session starten"}
             </Button>

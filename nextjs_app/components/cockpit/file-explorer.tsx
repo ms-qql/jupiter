@@ -36,7 +36,7 @@ import { BranchBadge } from "@/components/cockpit/branch-panel";
 import {
   ApiError,
   deleteFiles,
-  fileDownloadUrl,
+  downloadFile,
   getClipboardDir,
   listDir,
   listFileRoots,
@@ -353,14 +353,12 @@ export function FileExplorer() {
                         <Copy className="size-4" />
                       </IconBtn>
                       {entry.kind === "file" && (
-                        <a
-                          href={fileDownloadUrl(entry.path)}
-                          download
-                          className="rounded p-1 hover:bg-accent hover:text-foreground"
+                        <IconBtn
                           title="Herunterladen"
+                          onClick={() => void downloadFile(entry.path, entry.name)}
                         >
                           <Download className="size-4" />
-                        </a>
+                        </IconBtn>
                       )}
                       <IconBtn title="Umbenennen" onClick={() => void handleRename(entry)}>
                         <Pencil className="size-4" />

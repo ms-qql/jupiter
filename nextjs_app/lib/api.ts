@@ -21,6 +21,7 @@ import type {
   MdFileRead,
   MdIndexEntry,
   MdIndexResult,
+  MdProject,
   MdSaveResult,
   MdSource,
   BranchStatus,
@@ -637,6 +638,11 @@ export function listMdSources(
   return request<MdSource[]>(`/md/sources${qs}`, { signal });
 }
 
+/** Alle wählbaren Projekte für den Doku-Projektwähler. */
+export function listMdProjects(signal?: AbortSignal): Promise<MdProject[]> {
+  return request<MdProject[]>("/md/projects", { signal });
+}
+
 /** Flacher Index aller .md einer Quelle → Baum + Wikilink-Auflösung. */
 export function getMdIndex(
   source: string,
@@ -723,6 +729,43 @@ export function listDir(path?: string, signal?: AbortSignal): Promise<DirListing
 /** Direkter Download-Link einer Datei (für <a href> / neues Tab). */
 export function fileDownloadUrl(path: string): string {
   return `${API_BASE}/files/download?path=${encodeURIComponent(path)}`;
+}
+
+/** PROJ-25: Datei-Inhalt authentifiziert als Blob laden. Nötig, weil <a href>/
+ *  <img src> KEINEN Authorization-Header setzen können, der Access-Token aber nur
+ *  im Speicher lebt (kein Cookie) → direkte Links liefen sonst in den 401-Login.
+ *  Bei 401 wird genau einmal über den Refresh-Cookie erneuert und erneut versucht. */
+export async function fetchFileBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const url = `/files/download?path=${encodeURIComponent(path)}`;
+  let resp: Response;
+  try {
+    resp = await rawFetch(url, { signal });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (resp.status === 401 && (await refreshAccessToken())) {
+    resp = await rawFetch(url, { signal });
+  }
+  if (resp.status === 401) {
+    handleAuthFailure();
+    throw new ApiError("Nicht angemeldet", 401);
+  }
+  if (!resp.ok) throw new ApiError(`Fehler ${resp.status}`, resp.status);
+  return resp.blob();
+}
+
+/** Datei authentifiziert herunterladen und im Browser als Download anstoßen
+ *  (Object-URL aus dem Blob statt nacktem href ohne Token). */
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const blob = await fetchFileBlob(path);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /** Datei(en) hochladen — Default-Ziel = Clipboard-Ordner. Multipart, daher

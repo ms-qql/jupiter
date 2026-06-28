@@ -518,6 +518,12 @@ export interface MdSource {
   root: string; // absoluter Wurzelpfad
 }
 
+/** Ein wählbares Projekt für den Doku-Projektwähler (MdProject). */
+export interface MdProject {
+  label: string; // Ordnername (Anzeige)
+  path: string; // absoluter Wurzelpfad
+}
+
 /** Ein .md-Eintrag aus dem Index (MdIndexEntry). */
 export interface MdIndexEntry {
   path: string; // absoluter Pfad (für GET /md/file)

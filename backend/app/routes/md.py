@@ -14,6 +14,7 @@ from ..schemas.md import (
     MdFileRead,
     MdFileSave,
     MdIndexResult,
+    MdProject,
     MdSaveResult,
     MdSource,
 )
@@ -31,6 +32,12 @@ async def list_sources(
     project: str | None = Query(None, description="Optionaler Projektpfad (Default = config)."),
 ) -> list[dict]:
     return _reader(request).sources(project)
+
+
+@router.get("/projects", response_model=list[MdProject])
+async def list_projects(request: Request) -> list[dict]:
+    """Alle wählbaren Projekte (Unterordner der Roots) für den Doku-Projektwähler."""
+    return _reader(request).projects()
 
 
 @router.get("/index", response_model=MdIndexResult)

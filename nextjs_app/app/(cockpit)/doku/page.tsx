@@ -10,6 +10,13 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Pencil } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -20,13 +27,25 @@ import { FrontmatterPanel } from "@/components/cockpit/frontmatter-panel";
 import { MarkdownView } from "@/components/cockpit/markdown-view";
 import { MdEditorPanel } from "@/components/cockpit/md-editor";
 import { BacklinksPanel } from "@/components/cockpit/backlinks-panel";
-import { ApiError, getMdIndex, listMdSources, readMdFile } from "@/lib/api";
+import {
+  ApiError,
+  getMdIndex,
+  listMdProjects,
+  listMdSources,
+  readMdFile,
+} from "@/lib/api";
 import {
   buildTree,
   buildWikilinkIndex,
   type TreeNode,
 } from "@/lib/md-tree";
-import type { MdFileRead, MdIndexEntry, MdIndexResult, MdSource } from "@/lib/types";
+import type {
+  MdFileRead,
+  MdIndexEntry,
+  MdIndexResult,
+  MdProject,
+  MdSource,
+} from "@/lib/types";
 
 const EXPAND_PREFIXES: Record<string, string[]> = {
   vault: ["Agentic OS/Jupiter", "Agentic OS/Jupiter/Handovers"],
@@ -46,6 +65,11 @@ function DocReader() {
   const searchParams = useSearchParams();
 
   const [sources, setSources] = useState<MdSource[]>([]);
+  // PROJ-7: wählbare Projekte für den Doku-Projektwähler (Default = config).
+  const [projects, setProjects] = useState<MdProject[]>([]);
+  const [projectPath, setProjectPath] = useState<string | null>(
+    () => searchParams.get("project"),
+  );
   const [indices, setIndices] = useState<Record<string, MdIndexResult>>({});
   const [activeSource, setActiveSource] = useState<string>(
     () => searchParams.get("source") || "project",
@@ -70,15 +94,22 @@ function DocReader() {
   //    einen vault-relativen Pointer (?rel=) auf einen absoluten Pfad auf.
   useEffect(() => {
     let active = true;
-    listMdSources()
-      .then(async (srcs) => {
+    Promise.all([
+      listMdSources(projectPath ?? undefined),
+      listMdProjects().catch(() => [] as MdProject[]),
+    ])
+      .then(async ([srcs, projs]) => {
         if (!active) return;
         setSources(srcs);
+        setProjects(projs);
         const loaded: Record<string, MdIndexResult> = {};
         await Promise.all(
           srcs.map(async (s) => {
             try {
-              loaded[s.id] = await getMdIndex(s.id);
+              loaded[s.id] = await getMdIndex(
+                s.id,
+                s.id === "project" ? projectPath ?? undefined : undefined,
+              );
             } catch {
               /* einzelne Quelle ignorieren */
             }
@@ -176,9 +207,46 @@ function DocReader() {
     (source: string, path: string | null) => {
       const params = new URLSearchParams({ source });
       if (path) params.set("path", path);
+      if (projectPath) params.set("project", projectPath);
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     },
-    [router, pathname],
+    [router, pathname, projectPath],
+  );
+
+  // PROJ-7: Doku-Projekt wechseln — neue Projekt-Quelle + Index laden, Auswahl
+  // im alten Projekt verwerfen, auf die Projekt-Quelle schalten.
+  const changeProject = useCallback(
+    (path: string) => {
+      if (path === projectPath) {
+        setActiveSource("project");
+        updateUrl("project", selectedPath);
+        return;
+      }
+      if (
+        dirtyRef.current &&
+        !window.confirm("Ungespeicherte Änderungen verwerfen und Projekt wechseln?")
+      ) {
+        return;
+      }
+      dirtyRef.current = false;
+      setEditing(false);
+      setProjectPath(path);
+      setActiveSource("project");
+      setSelectedPath(null);
+      setFile(null);
+      setFileError(null);
+      Promise.all([listMdSources(path), getMdIndex("project", path)])
+        .then(([srcs, idx]) => {
+          setSources(srcs);
+          setIndices((prev) => ({ ...prev, project: idx }));
+        })
+        .catch((e) =>
+          setLoadError(e instanceof ApiError ? e.message : "Nicht erreichbar"),
+        );
+      const params = new URLSearchParams({ source: "project", project: path });
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [projectPath, selectedPath, updateUrl, router, pathname],
   );
 
   const selectPath = useCallback(
@@ -272,11 +340,32 @@ function DocReader() {
             <TabsList>
               {sources.map((s) => (
                 <TabsTrigger key={s.id} value={s.id}>
-                  {s.id === "vault" ? "Vault" : s.label}
+                  {s.id === "vault" ? "Vault" : "Projekt"}
                 </TabsTrigger>
               ))}
             </TabsList>
           </Tabs>
+        )}
+        {projects.length > 0 && (
+          <Select
+            value={
+              projectPath ??
+              sources.find((s) => s.id === "project")?.root ??
+              undefined
+            }
+            onValueChange={(v) => v && changeProject(v)}
+          >
+            <SelectTrigger size="sm" className="w-44 text-xs">
+              <SelectValue placeholder="Projekt wählen…" />
+            </SelectTrigger>
+            <SelectContent>
+              {projects.map((p) => (
+                <SelectItem key={p.path} value={p.path}>
+                  {p.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
         <div className="ml-auto">
           <ThemeToggle />

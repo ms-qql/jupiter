@@ -333,3 +333,157 @@ Keine Critical- oder High-Findings. PROJ-52 ist aus QA-Sicht bereit für Deploym
 - [ ] 5h- und Wochenfenster zeigen Prozentwerte, `geschätzt` oder `n/v`; kein horizontales Scrollen.
 - [ ] **Budget aktualisieren** triggert Refresh; bei zu schnellem Wiederholen erscheint eine deutsche Kurzmeldung.
 - [ ] Host-Logs für Frontend und Backend zeigen keine neuen Fehler.
+
+---
+
+## Tech Design — Iteration 2: Echte Live-Werte (Solution Architect)
+**Erstellt:** 2026-06-28 · **Stack:** Next.js Sidebar (unverändert) + FastAPI Live-Adapter (neu) + In-Memory-Cache · **Branch:** dev
+
+### Problem / Auslöser
+Iteration 1 zeigt im Widget nur **manuell gepflegte bzw. konfigurierte Schätzwerte** (`source=manual_input` / `local_usage_estimate`). Ohne hinterlegte Quoten degradiert alles zu `n/v`. Der Nutzer will die **tatsächlichen providerseitigen Verbrauchswerte** sehen, automatisch abgefragt — ohne von Hand Prozentwerte einzutragen.
+
+Nutzer-Hypothese (verifiziert): „Bei Claude `/usage` aufrufen, Werte aus der Antwort ins Widget eintragen. Bei Codex heißt der Befehl `status`, nicht `usage`."
+
+### Feasibility-Befund (am echten Host geprüft, 2026-06-28)
+Beide Provider liefern eine **maschinenlesbare Live-Quelle** — aber über **zwei unterschiedliche Mechanismen**:
+
+**Claude — funktioniert direkt headless.**
+`claude -p "/usage"` gibt nicht-interaktiv sauberen Klartext zurück, u. a.:
+- `You are currently using your subscription to power your Claude Code usage` (Login-/Subscription-Nachweis)
+- `Current session: 22% used · resets Jun 28, 10:40am (UTC)` → **5h-Fenster**
+- `Current week (all models): 45% used · resets Jul 1, 8pm (UTC)` → **Wochenfenster**
+- (zusätzliche Zeile „Current week (Sonnet only)" wird ignoriert.)
+→ Prozent + Reset-Zeitpunkt (UTC) sind direkt parsebar. Kein TUI-Scraping nötig.
+
+**Codex — `/status` ist NICHT headless-fähig, aber die Daten liegen in Session-Dateien.**
+`codex exec "/status"` interpretiert `/status` als **Agent-Prompt** (führte `git status` aus) — es ist KEIN Slash-Command in `exec`. Die echten Limits stehen aber strukturiert in jeder Rollout-Datei `~/.codex/sessions/<jjjj>/<mm>/<tt>/rollout-*.jsonl`. Jeder Turn schreibt ein `rate_limits`-Objekt:
+- `primary` → 5h-Fenster (`window_minutes: 300`): `used_percent`, `resets_at` (Unix-Epoch)
+- `secondary` → Wochenfenster (`window_minutes: 10080` = 7 Tage): `used_percent`, `resets_at`
+- `plan_type` (z. B. `plus`)
+→ Das ist robuster als TUI-Scraping. `codex login status` (→ „Logged in using ChatGPT") dient als Verfügbarkeits-/Login-Check.
+
+**Konsequenz:** Die User-Hypothese stimmt im Kern — mit der Korrektur, dass Codex nicht per Befehl abgefragt, sondern aus der jüngsten Session-Rollout-Datei gelesen wird.
+
+### A) Was sich ändert (Scope dieser Iteration)
+Nur der **Backend-Datenpfad**. Schemas und Frontend-Widget bleiben strukturell unverändert — das Widget rendert `used_pct`, `reset_at`, `quality`, `source` bereits. Es kommt lediglich eine neue Quelle `source=cli_live` mit `quality=live` hinein.
+
+```
+ProviderBudgetService  (backend/app/engine/usage.py)
+├── SnapshotCache (TTL)                         [unverändert]
+├── NEU: ClaudeCliBudgetAdapter  →  source=cli_live
+│        ruft `claude -p "/usage"`, parst Session-/Wochen-Zeile
+├── NEU: CodexRateLimitAdapter   →  source=cli_live
+│        liest jüngste ~/.codex/sessions/**/rollout-*.jsonl, letztes rate_limits
+├── ClaudeBudgetAdapter / CodexBudgetAdapter    [bestehende Schätz-/Manual-Pfade als Fallback]
+└── LocalUsageEstimator                          [unverändert]
+```
+
+**Auflösungs-Reihenfolge pro Provider/Fenster (erste erfolgreiche gewinnt):**
+1. **Live** (`cli_live`) — Claude-CLI-Output bzw. Codex-Rollout. → `quality=live`.
+2. **Schätzung** (`local_usage_estimate`) — nur wenn ein konfiguriertes Limit existiert. → `quality=estimated`.
+3. **Manuell** (`manual_input`) — falls weiter gepflegt. → `quality=estimated`.
+4. **n/v** — sonst. → `quality=unavailable`.
+
+### B) Provider-Adapter im Detail (Verhalten, kein Code)
+
+**ClaudeCliBudgetAdapter**
+- Führt `claude -p "/usage"` als Subprozess mit kurzem Timeout aus (off-event-loop, threadpool/async-subprocess).
+- Parst die Zeilen „Current session: N% … resets <Datum> (UTC)" → 5h, „Current week (all models): N% … resets <Datum> (UTC)" → Woche.
+- Reset-Strings werden zu UTC-Zeitpunkten geparst; fehlt das Jahr (Session-Zeile), wird das nächste passende Datum angenommen.
+- Fehlt „using your subscription" / Exit ≠ 0 / Parse schlägt fehl → dieser Provider degradiert sauber (Fallback-Kette), Claude beschädigt Codex nicht.
+
+**CodexRateLimitAdapter**
+- Liest **ohne** Codex zu starten: jüngste `rollout-*.jsonl`, letztes `rate_limits`-Event. → `primary`=5h, `secondary`=Woche, `resets_at` (Epoch→UTC).
+- **Frische:** Die Datei ist nur so aktuell wie der letzte Codex-Turn. Liegt das `resets_at` in der Vergangenheit oder ist das Event älter als das Fenster, markiert der Adapter `quality=stale` (Widget zeigt „veraltet").
+- **Optionaler Force-Refresh** (Default AUS): Ein minimaler `codex exec`-Turn aktualisiert die Rollout-Daten. Kostet Tokens und braucht auf diesem Host `-s danger-full-access` (siehe Codex-Sandbox-Einschränkung: `workspace-write` scheitert am netns-Loopback). Wird hinter ein Setting + das bestehende Force-Refresh-Rate-Limit gelegt; ohne Aktivierung liest der Adapter nur die vorhandene Datei.
+- Kein Login / keine Rollout-Datei → `unavailable` mit deutschem Hinweis.
+
+### C) Betriebliche Voraussetzungen (wichtig fürs Deployment)
+- Das Backend läuft host-nativ als systemd-Dienst. Die Live-Adapter funktionieren nur, wenn **derselbe Service-User** die CLIs eingeloggt hat, d. h. Zugriff auf `~/.claude` (Claude-Subscription-OAuth) und `~/.codex/sessions` hat. Vor dem Bau verifizieren: läuft `jupiter-backend` unter dem User, dessen `claude`/`codex` eingeloggt sind?
+- `claude -p "/usage"` darf den Request-Thread nicht blockieren → asynchroner Subprozess mit hartem Timeout; das bestehende 30-Min-TTL hält die Aufrufrate niedrig (kein Pro-Tab-Trigger).
+- Keine Secrets in die API-Antwort: nur Prozent, Reset, Quelle, Qualität — `plan_type` optional, keine Tokens/Keys.
+
+### D) Schemas / Frontend
+- **Schemas:** unverändert. `source` ist bereits ein freier String → `cli_live` ohne Migration. Optional ergänzend ein Quell-Label für den Tooltip („Live aus Claude-CLI" / „Live aus Codex-Session").
+- **Frontend:** `provider-budget-widget.tsx` rendert `quality=live` bereits (Tooltip/Chip). Minimal: Tooltip-Text um die Live-Quelle ergänzen. `resolveWindowQuality()` (Client-`stale`-Logik) bleibt.
+
+### E) Config (neue optionale Felder)
+- `provider_budget_claude_cli_enabled` — Default an (sofern CLI verfügbar).
+- `provider_budget_codex_rollout_enabled` — Default an.
+- `provider_budget_codex_force_exec` — Default **aus** (kostenpflichtiger Codex-Turn für Frische).
+- Bestehende Timeout-/Quota-/Refresh-Felder bleiben; die Quota-Limits dienen nur noch als Fallback-Schätzung, wenn die Live-Quelle ausfällt.
+
+### F) Tech-Entscheidungen (Warum)
+- **CLI/Datei lesen statt API:** Es gibt keine stabile öffentliche Quota-API; die CLIs sind die autoritative, vom Nutzer bereits authentifizierte Quelle. `claude -p "/usage"` und die Codex-Rollouts sind genau die Daten, die der Nutzer im TUI sieht.
+- **Codex aus Session-Datei statt TUI-Scrape:** strukturiertes JSON (`used_percent`/`resets_at`) ist robust gegen TUI-/ANSI-Änderungen; kein pty, keine Token-Kosten beim Lesen.
+- **Live als zusätzliche Quelle, nicht als Ersatz:** Schätz-/Manual-/`n/v`-Pfade bleiben als Fallback — fällt eine CLI aus, bleibt das Widget bedienbar (Constitution „keine falsche Genauigkeit").
+- **Force-Refresh für Codex optional & aus:** automatisches Token-Ausgeben widerspricht der Knappheits-Doktrin; der Nutzer aktiviert es bewusst.
+
+### G) Bau-Reihenfolge / Handoff
+1. **Vorab-Check (Backend):** Service-User-Zugriff auf `~/.claude` + `~/.codex/sessions` verifizieren; Claude-`/usage`-Output und Codex-Rollout-Format am Zielhost gegenprüfen.
+2. **Backend:** `ClaudeCliBudgetAdapter` + `CodexRateLimitAdapter`, Einhängen in `ProviderBudgetService` als oberste Quelle der Fallback-Kette, neue Config-Flags, Tests (Live-Parse OK, CLI fehlt/Exit≠0, Codex-Rollout fehlt/veraltet, Fallback auf Schätzung/`n/v`, kein Event-Loop-Block). Subprozesse in Tests gemockt.
+3. **Frontend:** nur Tooltip-/`source=cli_live`-Feinschliff; kein struktureller Umbau.
+4. **QA:** Matrix live/stale/unavailable je Provider; Smoke, dass echte Prozentwerte erscheinen; Regression PROJ-19.
+
+### H) Risiken / offene Punkte
+- **CLI-Output-Format kann sich ändern** (Claude-Update ändert „Current session:"-Wording) → Parse-Fehler wird als `n/v`/Fallback behandelt, nie als Crash; Format in einem Test fixiert.
+- **Service-User ≠ CLI-Login-User** → Live-Quelle fällt komplett aus; muss im Deploy geklärt werden.
+- **Codex-Frische ohne Force-Exec** begrenzt: zeigt Stand des letzten Codex-Laufs (als `veraltet` markiert) — bewusst akzeptiert, um Token-Kosten zu vermeiden.
+
+## Implementation Notes (Backend Developer) — Iteration 2
+**Datum:** 2026-06-28 · **Branch:** dev · **Stand:** Backend fertig, am echten Host verifiziert.
+
+### Gebaut
+- **Neues Modul `backend/app/engine/provider_budget_live.py`** mit zwei Live-Probes + reinen Parser-Funktionen:
+  - `ClaudeUsageProbe` — startet `claude -p "/usage"` als async-Subprozess (Timeout `provider_budget_timeout_seconds`, Default **20 s**), parst per Regex `Current session:` → 5h und `Current week (all models):` → Woche; `_parse_claude_reset` wandelt „Jun 28, 10:40am (UTC)" / „Jul 1, 8pm (UTC)" in UTC (fehlendes Jahr → aktuelles, bei Vergangenheit aufs nächste Jahr gerollt). Exit≠0 / Timeout / kein Treffer → `{}`.
+  - `CodexRolloutProbe` — liest **read-only** die jüngste `~/.codex/sessions/**/rollout-*.jsonl` (`latest_rollout_file` nach mtime), nimmt das **letzte** `rate_limits`-Event (`read_codex_rate_limits` + rekursives `_find_rate_limits`), mappt `primary`→5h, `secondary`→Woche (robust über `window_minutes` 300/10080), `resets_at`-Epoch→UTC. Dateizugriff via `asyncio.to_thread` (kein Event-Loop-Block).
+  - `LiveWindow`-Dataclass + `build_live_probes()`-Factory fürs Production-Wiring.
+- **`ProviderBudgetService` (usage.py) erweitert:** neuer Parameter `live_probes`; pro verfügbarem Provider wird die Probe einmal je Snapshot abgefragt (`_live_for`, fehlertolerant — jede Exception → `{}`, kein Crash). Neue Auflösungs-Reihenfolge je Fenster: **Live (`cli_live`, `quality=live`)** → Store/manuell → Schätzung → `n/v`. `_live_window` markiert ein bereits überschrittenes `reset_at` als `stale`.
+- **Wiring `main.py`:** `ProviderBudgetService(repo, store=…, live_probes=build_live_probes())`.
+- **Config `config.py`:** `provider_budget_claude_cli_enabled` (True), `provider_budget_codex_rollout_enabled` (True), `codex_sessions_dir` (`~/.codex/sessions`); `provider_budget_timeout_seconds` Default 10→**20 s**.
+
+### Bewusste Entscheidungen
+- **Schemas + Frontend unverändert:** `source` ist ein freier String → `cli_live:claude_usage` / `cli_live:codex_session` ohne Migration. Das Widget rendert `quality=live` bereits; es reagiert nur auf `quality`, nicht auf `source` → kein Frontend-Change nötig (optionaler Tooltip-Feinschliff bleibt offen).
+- **Kein Force-Exec für Codex:** read-only genügt — Jupiters eigene Codex-Sessions (PROJ-48) schreiben laufend frische Rollouts. Spart Tokens und umgeht die netns-Sandbox-Einschränkung. Setting bewusst weggelassen statt als Dead-Flag.
+
+### Verifikation
+- `python -m pytest tests/test_proj52_live_budgets.py tests/test_proj52_provider_budgets.py tests/test_proj19_usage.py` → **34 passed**.
+- Voller Backend-Lauf: `python -m pytest` → **933 passed, 1 warning** (bekannte Starlette-Cookie-Deprecation, nicht PROJ-52).
+- **Echter Host-Smoke** mit den realen Probes: Claude → 5h 30 %, Woche 46 % (+ Reset-UTC); Codex → 5h 20 %, Woche 20 % (+ Reset-UTC). Beide Provider liefern echte Live-Werte.
+- Hinweis: `conda` ist in dieser Shell kein Kommando; ausgeführt via `/home/dev/miniconda3/envs/Dashboard/bin/python`.
+
+## QA Test Results — Iteration 2 (Live-Werte)
+**Datum:** 2026-06-28 · **QA:** abc-qa · **Branch:** dev · **Entscheidung:** Approved / production-ready.
+
+### Test-Matrix
+- Fokus Live + Budget: `python -m pytest tests/test_proj52_live_budgets.py tests/test_proj52_provider_budgets.py` → **31 passed**.
+- Voller Backend-Lauf: `python -m pytest` → **939 passed, 1 warning** (bekannte Starlette-Cookie-Deprecation in `test_proj25_auth.py`, nicht PROJ-52). Vorher 933 → +6 neue QA-Tests, keine Regression.
+- Echter Host-Smoke (reale Probes, nicht gemockt): Claude 5h/Woche und Codex 5h/Woche liefern echte Prozentwerte + UTC-Reset → bestätigt, dass statt `n/v` nun `live` erscheint.
+
+### Acceptance Criteria (Iterationsziel)
+- **Echte aktuelle Werte statt nur manueller:** erfüllt — Live-Quelle hat Vorrang (`quality=live`, `source=cli_live:*`), per Host-Smoke + Endpoint-Integration (`test_endpoint_surfaces_live_values`) belegt.
+- **Claude über `/usage`:** `claude -p "/usage"` headless geparst (`parse_claude_usage`), inkl. Reset-UTC; Sonnet-only-Zeile ignoriert.
+- **Codex über `status`-Äquivalent:** `/status` ist nicht headless — stattdessen read-only aus dem `rate_limits`-Event der jüngsten Rollout-Datei (`primary`=5h, `secondary`=Woche). Korrektur zur ursprünglichen Hypothese, gleiches Ergebnis.
+- **Keine falsche Präzision / saubere Degradation:** Probe-Fehler, fehlende Datei, partielle Daten und nicht verfügbarer Provider fallen auf Schätzung/manuell/`n/v` zurück (`test_failing_probe_degrades_to_fallback`, `test_partial_live_falls_back_for_other_window`).
+- **Reset überschritten → veraltet:** `test_live_window_past_reset_is_stale` → `quality=stale`.
+- **Wert > 100 %:** `test_parse_claude_usage_over_100_percent_not_truncated` → 105 % nicht gekappt.
+
+### Edge Cases
+- Garbage-/Nicht-JSON-Zeile mit `rate_limits`-Marker in Codex-Rollout → übersprungen, letztes gültiges Event gewinnt.
+- Claude-Output ohne parsebaren Reset → Prozentwert bleibt erhalten, `reset_at=None` (Service füllt `now+duration`).
+- Codex-Datei vorhanden, aber ohne `rate_limits`-Event → `n/v`-Fallback.
+- Probe deaktiviert per Config (`provider_budget_codex_rollout_enabled=False`) → leer, kein Abruf.
+
+### Security (Red-Team)
+- **Auth:** `usage.router` in `main.py:284` mit `dependencies=auth_gate` eingebunden — die Live-Endpunkte liegen hinter derselben JWT-Grenze.
+- **Command-Injection:** Claude-Probe nutzt `create_subprocess_exec` (keine Shell) mit **fixem** argv `[claude_bin, "-p", "/usage"]` — kein User-Input fließt in die Kommandozeile. Codex-Probe liest aus fixem Config-Verzeichnis per Glob, ebenfalls ohne User-Input.
+- **Keine Secret-Exposition:** Live-Fenster enthält ausschließlich Lagebild-Felder (`test_live_window_exposes_no_secret_fields`); `plan_type`, Token- und Limit-Zahlen werden nicht in die API-Antwort übernommen.
+- **DoS/Last:** Probes laufen nur einmal je 30-Min-Snapshot; manueller Refresh rate-limited (429). Subprozess mit hartem Timeout (20 s) + `to_thread`-Dateizugriff blockieren den Event-Loop nicht.
+
+### Findings
+- Keine Critical-/High-/Medium-Findings.
+- **Low / offen (kein Blocker):** Frontend-Tooltip nennt die konkrete Live-Quelle noch nicht (Widget rendert `quality=live` korrekt, da es nur auf `quality` reagiert). Optionaler Feinschliff, falls gewünscht.
+- **Nicht ausgeführt:** kein separater Browser-E2E (Frontend strukturell unverändert; Datenpfad über Host-Smoke + Endpoint-Integrationstest abgedeckt). Empfehlung: nach Deploy einmal in der UI prüfen, dass Claude/Codex `live`-Prozentwerte zeigen.
+
+### Ergebnis
+Keine Critical- oder High-Findings. PROJ-52 Iteration 2 ist aus QA-Sicht **production-ready**.
