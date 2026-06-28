@@ -44,10 +44,14 @@ export function ToolsPanel() {
 
   // PROJ-40: Micro-Apps (group=micro, z. B. Excalidraw) leben ausschließlich in der
   // Sidebar-Sektion „Micro-Apps" und erscheinen NICHT mehr im Werkzeuge-Tab — genau
-  // eine Quelle pro App, keine Doppelregistrierung. Orchestration (PROJ-39) bleibt
-  // hier bewusst mit gelistet.
+  // eine Quelle pro App, keine Doppelregistrierung. Ebenso Orchestration (group=
+  // orchestration, z. B. Paperclip/Wayland): die hat ihre eigene Sidebar-Sektion in
+  // der Zeitbar und gehört nicht doppelt in den Werkzeuge-Tab.
   const iframes =
-    engines?.filter((e) => e.kind === "iframe" && e.group !== "micro") ?? [];
+    engines?.filter(
+      (e) =>
+        e.kind === "iframe" && e.group !== "micro" && e.group !== "orchestration",
+    ) ?? [];
   const launches = engines?.filter((e) => e.kind === "launch") ?? [];
 
   // Engine-abhängiger Block — eigene Lade-/Fehler-/Leer-Zustände, UNTER den

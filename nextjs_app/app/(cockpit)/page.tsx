@@ -12,8 +12,10 @@ import { ArchivedSection } from "@/components/cockpit/archived-section";
 import { ToolsPanel } from "@/components/cockpit/tools-panel";
 import { UsageDashboard } from "@/components/cockpit/usage-dashboard";
 import { NewSessionDialog } from "@/components/cockpit/new-session-dialog";
-import { SettingsDialog } from "@/components/cockpit/settings-dialog";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
+import Link from "next/link";
+import { SettingsIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   BoardSkeleton,
   EmptyState,
@@ -47,7 +49,14 @@ export default function CockpitPage() {
         </div>
         <div className="flex items-center gap-2">
           {!initialLoading && <CleanupButton terminalCount={terminalCount} />}
-          <SettingsDialog />
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Einstellungen"
+            render={<Link href="/settings" />}
+          >
+            <SettingsIcon className="size-4" />
+          </Button>
           <ThemeToggle />
           <NewSessionDialog>
             <button className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">

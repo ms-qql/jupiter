@@ -122,9 +122,11 @@ class Settings(BaseSettings):
     # mit einer Warnung quittiert. Ein Wechsel des Secrets invalidiert alle Tokens.
     jwt_secret: str = "dev-only-insecure-change-me-jupiter-jwt-secret-0123456789"
     jwt_algorithm: str = "HS256"
-    # Kurzer Access-Token (Minuten) begrenzt den Schaden eines Leaks; langer Refresh
-    # (Tage) hält den Login bequem. Stack-Konvention: 15 min / 7 d.
-    access_token_ttl_minutes: int = 15
+    # Access-Token-Lebensdauer (Minuten). Jupiter ist ein Single-User-Cockpit, das oft
+    # lange in einem Tab/iframe offen bleibt (z. B. MD-Editor in „Doku"). Ein 15-min-Token
+    # lief mitten im Tippen ab → Speichern schlug fehl und der Frame zeigte „This page
+    # couldn't load" + Zwangs-Logout. Daher 24 h, damit der Login einen Arbeitstag hält.
+    access_token_ttl_minutes: int = 1440
     refresh_token_ttl_days: int = 7
     # httpOnly-Refresh-Cookie. ``secure``/``samesite`` sind dev-tauglich vorbelegt
     # (cross-site :3000→:8000 braucht im Dev http → samesite="lax" + secure=False).
