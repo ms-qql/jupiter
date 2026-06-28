@@ -356,7 +356,13 @@ Keine Critical/High/Medium gefunden.
 **Production-Ready: JA** — mit der Empfehlung, beim Deploy einen Live-Smoke (echtes Buch) für AC 9/10/11 zu fahren und LOW-1 als Fast-Follow zu härten.
 
 ## Deployment
-_To be added by /abc-deploy_
-
-## Deployment
-_To be added by /abc-deploy_
+- **Production URL:** https://jupiter.auxevo.tech (Route `/apps/book_nuggets`, Sidebar-Sektion „Micro-Apps")
+- **Deployed:** 2026-06-28 · **Version:** 0.26.0 · **Tag:** v0.26.0-PROJ-53
+- **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend` aus `/home/dev/projects/jupiter`, Caddy TLS), Auto-Deploy via GitHub-Webhook auf `main` (`jupiter-deploy/deploy.sh`: `git reset --hard origin/main` + `npm run build` + Service-Restart) ([[jupiter-deployment]]).
+- **Geshippt:** native Micro-App Buch-Nuggets — Backend (SQLite-Queue-Worker, Stufen-Modelllogik, Kostenschätzung, Duplikat-Logik, 8 Routen) + Frontend (Upload/URL, Modell-Steuerung, Queue mit Phase, Bibliothek, Duplikat-Dialog) + Host-Skill `hal-book-nuggets`. **Mit-promotet:** Chat-Modus-Fix (Initial-Prompt ausblenden) + Status-Docs PROJ-1/2/3/6.
+- **Hinweis:** Prod-`engines.yaml` (gitignored) trägt den `book_nuggets`-Eintrag bereits (überlebt `git reset --hard`).
+- **Offene Smoke-Tests (Browser/Live, nach SW-Hard-Refresh):**
+  - [ ] Kachel „Buch-Nuggets" in Micro-Apps, `/api/health` via Proxy ok.
+  - [ ] **Live-Smoke AC 9/10/11** (QA-Empfehlung): je 1× echtes pdf + epub → 11 Blöcke, Seitenzitate, Contra-Quellen sichten.
+  - [ ] Upload + URL + Duplikat-Dialog + Kostenschätzung end-to-end.
+- **Fast-Follow (QA LOW-1):** Upload-`source_ref` serverseitig auf `allowed_roots` härten.

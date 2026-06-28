@@ -65,7 +65,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-50 | abc-Workflow für die Codex-Engine (portierte Skills + Phasen-Signal) | P1 | Deployed | PROJ-48, PROJ-9, PROJ-8 | [Spec](PROJ-50-abc-workflow-codex-engine.md) |
 | PROJ-51 | Engine- und Modellverwaltung in den App-Einstellungen | P1 | Deployed | PROJ-18, PROJ-48, PROJ-50, PROJ-9 | [Spec](PROJ-51-engine-modellverwaltung-einstellungen.md) |
 | PROJ-52 | Sidebar Token-Budget-Monitor für Claude und Codex | P1 | Approved (Iter. 2: Live-Werte) | PROJ-3, PROJ-19, PROJ-48, PROJ-51 | [Spec](PROJ-52-sidebar-token-budget-monitor.md) |
-| PROJ-53 | Buch-Nuggets (native Micro-App: Buch-Upload/URL → KI-Kurzform inkl. Contra → Hal) | P1 | Approved | PROJ-40, PROJ-1, PROJ-2, PROJ-11, PROJ-51 | [Spec](PROJ-53-buch-nuggets-microapp.md) |
+| PROJ-53 | Buch-Nuggets (native Micro-App: Buch-Upload/URL → KI-Kurzform inkl. Contra → Hal) | P1 | Deployed | PROJ-40, PROJ-1, PROJ-2, PROJ-11, PROJ-51 | [Spec](PROJ-53-buch-nuggets-microapp.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
