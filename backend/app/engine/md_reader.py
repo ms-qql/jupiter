@@ -138,6 +138,31 @@ class MdReaderService:
                 out.append({"id": "project", "label": os.path.basename(real) or real, "root": real})
         return out
 
+    def projects(self) -> list[dict]:
+        """Alle wählbaren Projekte für den Doku-Projektwähler.
+
+        Direkte Unterordner der ``allowed_roots`` (``/home/dev/projects`` +
+        ``/home/dev/tools``), ohne versteckte/uninteressante Verzeichnisse
+        (``_EXCLUDE_DIRS``). Jeder Eintrag ist als ``source=project`` lesbar.
+        """
+        out: list[dict] = []
+        seen: set[str] = set()
+        for root in _allowed_roots():
+            try:
+                names = os.listdir(root)
+            except OSError:
+                continue
+            for name in names:
+                if name.startswith(".") or name in _EXCLUDE_DIRS:
+                    continue
+                real = os.path.realpath(os.path.join(root, name))
+                if real in seen or not os.path.isdir(real) or not _within(real, root):
+                    continue
+                seen.add(real)
+                out.append({"label": name, "path": real})
+        out.sort(key=lambda e: e["label"].lower())
+        return out
+
     def resolve_source_root(self, source: str, project: str | None = None) -> str:
         """``source`` → erlaubter, validierter Wurzelpfad."""
         if source == "vault":

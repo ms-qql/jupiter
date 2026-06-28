@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Download, FileWarning } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { fileDownloadUrl } from "@/lib/api";
+import { downloadFile, fetchFileBlob } from "@/lib/api";
 import type { FileEntry, MdIndexEntry } from "@/lib/types";
 import { MarkdownView } from "./markdown-view";
 
@@ -66,21 +66,33 @@ export function FilePreview({ entry }: { entry: FileEntry | null }) {
   const tooLarge = entry ? entry.size > MAX_PREVIEW_BYTES : false;
   const needsText = kind === "markdown" || kind === "text";
 
+  const isImage = kind === "image";
+
   const [text, setText] = useState<string | null>(null);
-  const [loading, setLoading] = useState(() => !!entry && needsText && !tooLarge);
+  // Bild-Vorschau als Object-URL (authentifiziert geladen, da <img src> keinen
+  // Bearer-Header senden kann — PROJ-25).
+  const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(
+    () => !!entry && (needsText || isImage) && !tooLarge,
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!entry || !needsText || tooLarge) return;
+    if (!entry || tooLarge || (!needsText && !isImage)) return;
     let active = true;
+    let objectUrl: string | null = null;
     const ctrl = new AbortController();
-    fetch(fileDownloadUrl(entry.path), { signal: ctrl.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error(`Fehler ${r.status}`);
-        return r.text();
-      })
-      .then((t) => {
-        if (active) setText(t);
+    fetchFileBlob(entry.path, ctrl.signal)
+      .then((blob) => {
+        if (!active) return;
+        if (isImage) {
+          objectUrl = URL.createObjectURL(blob);
+          setImgUrl(objectUrl);
+        } else {
+          return blob.text().then((t) => {
+            if (active) setText(t);
+          });
+        }
       })
       .catch((e) => {
         if (active && (e as Error).name !== "AbortError")
@@ -92,8 +104,9 @@ export function FilePreview({ entry }: { entry: FileEntry | null }) {
     return () => {
       active = false;
       ctrl.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [entry, needsText, tooLarge]);
+  }, [entry, needsText, isImage, tooLarge]);
 
   if (!entry) {
     return (
@@ -104,11 +117,13 @@ export function FilePreview({ entry }: { entry: FileEntry | null }) {
   }
 
   const downloadBtn = (
-    <a href={fileDownloadUrl(entry.path)} download>
-      <Button size="sm" variant="outline">
-        <Download className="size-3.5" /> Herunterladen
-      </Button>
-    </a>
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() => void downloadFile(entry.path, entry.name)}
+    >
+      <Download className="size-3.5" /> Herunterladen
+    </Button>
   );
 
   return (
@@ -124,12 +139,18 @@ export function FilePreview({ entry }: { entry: FileEntry | null }) {
       </div>
 
       {kind === "image" ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={fileDownloadUrl(entry.path)}
-          alt={entry.name}
-          className="mx-auto max-h-[75vh] max-w-full rounded-md border border-border object-contain"
-        />
+        loading ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">Lädt…</p>
+        ) : error ? (
+          <PreviewHint text={error} />
+        ) : imgUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={imgUrl}
+            alt={entry.name}
+            className="mx-auto max-h-[75vh] max-w-full rounded-md border border-border object-contain"
+          />
+        ) : null
       ) : tooLarge || kind === "binary" ? (
         <PreviewHint
           text={

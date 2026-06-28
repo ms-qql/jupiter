@@ -10,6 +10,12 @@ class MdSource(BaseModel):
     root: str     # absoluter Wurzelpfad
 
 
+class MdProject(BaseModel):
+    """Ein wählbares Projekt für den Doku-Projektwähler (PROJ-7)."""
+    label: str    # Ordnername (Anzeige)
+    path: str     # absoluter Wurzelpfad (→ source=project&project=…)
+
+
 class MdIndexEntry(BaseModel):
     path: str     # absoluter Pfad (zum Lesen via GET /md/file)
     rel: str      # relativ zur Quell-Wurzel (für den Datei-Baum)
