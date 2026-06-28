@@ -237,6 +237,54 @@ Kein Auth/RLS (MVP-Entscheidung); `owner` gestempelt, nicht gefiltert. Upload + 
 - Modell-Quelle: `backend/app/routes/engines.py` (`GET /engines`, `models`/`default_model`)
 - Config-Defaults: `backend/app/config.py` (`video_summary_*`-Block, `vault_root`, `upload_allowed_extensions`)
 
+## Implementation Notes (Backend + Skill — /abc-backend, 2026-06-28)
+
+**Branch:** `dev`. Backend + Verarbeitungs-Skill vollständig; Frontend (native Komponente + `engines.yaml`/Registry-Eintrag) ist der nächste Hand-off. **Volle Suite: 966 passed, keine Regression** (27 neue PROJ-53-Tests).
+
+### Neue/geänderte Dateien (Backend)
+- `backend/app/db/book_nuggets_queue.py` — SQLite-Repo (Vorbild `video_summary_queue.py`): Tabellen `book_nuggets_queue` (eine Zeile/Buch) + `book_nuggets_settings` (1-Zeile: Default-Modellmodus/-Modelle/-Seitenlimit). Off-thread via `asyncio.to_thread`, WAL, Spalten-Whitelist bei insert/update, `reset_running()`.
+- `backend/app/engine/book_nuggets.py` — `BookNuggetsWorker` (sequenziell, **eine** Session zur Zeit, **Auto-Drain** bei Add — kein Cooldown/Zeitplan) + reine Helfer `validate_source`, `compute_book_hash_sync`, `estimate_cost`, `build_prompt`, `parse_result_paths`, `parse_phase` + `DuplicateError`.
+- `backend/app/schemas/book_nuggets.py` — Pydantic v2 (QueueItem/WorkerState/Queue, QueueAdd Req/Result, Estimate Req/Result, DuplicateConflict, Settings Read/Patch, Library).
+- `backend/app/routes/book_nuggets.py` — Router (API unten).
+- `backend/app/config.py` — `book_nuggets_*`-Defaults (db_path, poll 5s, model `opus`, permission `bypassPermissions`, project_path=Vault, output_subdir `04 Resources/Buch_Nuggets`); **`epub` in `upload_allowed_extensions`** ergänzt (pdf/txt/docx waren schon drin; **mobi bewusst nicht**).
+- `backend/app/main.py` — `bn_repo` gebaut, `app.state.book_nuggets` (Worker), `_book_nuggets_loop` als Lifespan-Task, `startup()` (Schema + running→pending), Router registriert, `bn_repo.close()` beim Shutdown.
+- `backend/app/db/__init__.py` — Exporte. `backend/tests/conftest.py` — Test-Isolation (eigene DB in tmp, Poll-Intervall aus).
+- `backend/tests/test_proj53_book_nuggets.py` — 27 Tests (Helper + Worker + Duplikat + Persistenz + API).
+
+### Neuer Skill (Host-seitig, kein Repo)
+- `/home/dev/.claude/skills/hal-book-nuggets/SKILL.md` — Orchestrator: 11-Block-Nugget inkl. recherchegestütztem Contra-Kapitel, STAGED-Stufenlogik (günstige Chunk-Extrakte via Sub-Agenten mit Modell-Override), seitenzitierte Zahlen, md+figures+PDF nach `04 Resources/Buch_Nuggets/<Autor>-<Titel>/`, Abschluss-Block `JUPITER_BOOK_RESULT`.
+- `scripts/extract_book.py` — Buch → `text.md` (PDF seitengemappt via pdfplumber, Bilder via pypdf; epub/docx/txt via `pandoc --extract-media`). **Abbruch bei DRM/Scan ohne Textebene** (kein Halluzinieren). `mobi` abgewiesen.
+- `scripts/check_embeds.py` — Embed-Konsistenz-Gate vor dem PDF-Bau.
+
+### Worker-Verhalten (umgesetzt)
+- **Sequenziell + Auto-Drain:** genau eine headless Session gleichzeitig; ein eingereihtes Buch wird ohne weiteren Klick verarbeitet; `run-now` bleibt (idempotent). **Kein Cooldown/Zeitplan** (Bücher blocken nicht).
+- **Stufen-Logik (D7):** Session läuft auf dem **Konsolidierungs-Modell** (`model=model_consolidate`); der Prompt weist im STAGED-Modus an, Chunk-Extrakte über Sub-Agenten mit dem günstigen `model_extract` zu fahren. SINGLE kollabiert beide Modelle.
+- **Kostenschätzung (D7):** `POST /estimate` best-effort aus Dateigröße (Upload); URL ohne Download → `null` (ehrlich). `cost_estimate` wird am Eintrag gespeichert.
+- **Duplikat (D9):** Identität = SHA-256 (Upload) bzw. URL. Gleiche Identität pending/running/done → **409** mit `existing_id`/`existing_status`; `on_duplicate=overwrite|new_version` hebt auf (vault-seitige Versionierung erledigt der Skill).
+- **Phasen-Anzeige:** Worker liest `JUPITER_BOOK_PHASE:`-Marker aus dem Transcript → `phase` am Eintrag (parsing/analysis/contra/pdf).
+- **Persistenz:** Queue + Einstellungen in SQLite (überleben Neustart); `running`→`pending` beim Start.
+- **Fehler/Retry:** Start-/Skill-Fehler → `error` + Ursache, Queue läuft weiter; `retry` setzt `error`→`pending` + Drain. `SessionLimitError` → bleibt `pending`.
+
+### API-Vertrag (für Frontend)
+```
+GET    /book-nuggets/queue              → {items:[QueueItem], state:{status:idle|running, draining, current_id}}
+POST   /book-nuggets/estimate           → {source_type, source_ref, model_mode, model_extract, model_consolidate, page_limit?} → {pages?, est_tokens?, est_cost?}
+POST   /book-nuggets/queue              → {source_type:url|upload, source_ref, model_mode:staged|single, model_extract, model_consolidate, page_limit?, on_duplicate?} → {item, queue}; Duplikat → 409 {detail, existing_id, existing_status}; ungültig → 400
+DELETE /book-nuggets/queue/{id}         → 204 (404 unbekannt)
+POST   /book-nuggets/queue/{id}/retry   → QueueRead (404 unbekannt, 409 wenn nicht error)
+POST   /book-nuggets/run-now            → QueueRead (Drain sofort, idempotent)
+GET    /book-nuggets/library            → [{title, md_path, pdf_path?, mtime?}] (Vault-Scan)
+GET    /book-nuggets/settings           → {default_model_mode, default_model_extract, default_model_consolidate, default_page_limit?}
+PATCH  /book-nuggets/settings           → Teil-Update derselben Felder
+```
+QueueItem: `{id, owner, source_type, source_ref, title, author, model_mode, model_extract, model_consolidate, page_limit, cost_estimate, status, phase, result_dir, result_note_path, result_pdf_path, error_message, session_id, created_at, started_at, finished_at}`.
+Modelle: `haiku|sonnet|opus`. Modi: `staged|single`.
+
+### Offener Hand-off (Frontend, /abc-frontend)
+- `engines.yaml`/`engines.example.yaml`-Eintrag `book_nuggets` (`kind: native`, `group: micro`, Label „Buch-Nuggets", Icon z. B. `book`/`book-open`).
+- `nextjs_app/lib/microapps-registry.ts` (`book_nuggets → lazy(import …)`) + Komponente `components/microapps/book_nuggets/`: **Dropzone/Upload** (→ `POST /files/upload`, dann `source_type=upload` + Pfad) **ODER URL-Feld**, Modell-Steuerung (Umschalter staged/single + 1–2 Modell-Dropdowns), Kostenschätzung (`POST /estimate` vor dem Hinzufügen), Queue-Liste mit Polling (`GET /queue`, Phase-Anzeige), Bibliotheks-Tab (`GET /library`), Duplikat-Dialog (409 → overwrite/new_version), Einstellungs-Dialog.
+- **Upload-Fluss:** Datei via bestehendes `/files/upload` ablegen → den zurückgegebenen Pfad als `source_ref` mit `source_type=upload` an `POST /book-nuggets/queue` schicken (kein zweiter Upload-Endpunkt).
+
 ## QA Test Results
 _To be added by /abc-qa_
 
