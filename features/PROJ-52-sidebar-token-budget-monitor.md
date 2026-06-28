@@ -333,3 +333,99 @@ Keine Critical- oder High-Findings. PROJ-52 ist aus QA-Sicht bereit für Deploym
 - [ ] 5h- und Wochenfenster zeigen Prozentwerte, `geschätzt` oder `n/v`; kein horizontales Scrollen.
 - [ ] **Budget aktualisieren** triggert Refresh; bei zu schnellem Wiederholen erscheint eine deutsche Kurzmeldung.
 - [ ] Host-Logs für Frontend und Backend zeigen keine neuen Fehler.
+
+---
+
+## Tech Design — Iteration 2: Echte Live-Werte (Solution Architect)
+**Erstellt:** 2026-06-28 · **Stack:** Next.js Sidebar (unverändert) + FastAPI Live-Adapter (neu) + In-Memory-Cache · **Branch:** dev
+
+### Problem / Auslöser
+Iteration 1 zeigt im Widget nur **manuell gepflegte bzw. konfigurierte Schätzwerte** (`source=manual_input` / `local_usage_estimate`). Ohne hinterlegte Quoten degradiert alles zu `n/v`. Der Nutzer will die **tatsächlichen providerseitigen Verbrauchswerte** sehen, automatisch abgefragt — ohne von Hand Prozentwerte einzutragen.
+
+Nutzer-Hypothese (verifiziert): „Bei Claude `/usage` aufrufen, Werte aus der Antwort ins Widget eintragen. Bei Codex heißt der Befehl `status`, nicht `usage`."
+
+### Feasibility-Befund (am echten Host geprüft, 2026-06-28)
+Beide Provider liefern eine **maschinenlesbare Live-Quelle** — aber über **zwei unterschiedliche Mechanismen**:
+
+**Claude — funktioniert direkt headless.**
+`claude -p "/usage"` gibt nicht-interaktiv sauberen Klartext zurück, u. a.:
+- `You are currently using your subscription to power your Claude Code usage` (Login-/Subscription-Nachweis)
+- `Current session: 22% used · resets Jun 28, 10:40am (UTC)` → **5h-Fenster**
+- `Current week (all models): 45% used · resets Jul 1, 8pm (UTC)` → **Wochenfenster**
+- (zusätzliche Zeile „Current week (Sonnet only)" wird ignoriert.)
+→ Prozent + Reset-Zeitpunkt (UTC) sind direkt parsebar. Kein TUI-Scraping nötig.
+
+**Codex — `/status` ist NICHT headless-fähig, aber die Daten liegen in Session-Dateien.**
+`codex exec "/status"` interpretiert `/status` als **Agent-Prompt** (führte `git status` aus) — es ist KEIN Slash-Command in `exec`. Die echten Limits stehen aber strukturiert in jeder Rollout-Datei `~/.codex/sessions/<jjjj>/<mm>/<tt>/rollout-*.jsonl`. Jeder Turn schreibt ein `rate_limits`-Objekt:
+- `primary` → 5h-Fenster (`window_minutes: 300`): `used_percent`, `resets_at` (Unix-Epoch)
+- `secondary` → Wochenfenster (`window_minutes: 10080` = 7 Tage): `used_percent`, `resets_at`
+- `plan_type` (z. B. `plus`)
+→ Das ist robuster als TUI-Scraping. `codex login status` (→ „Logged in using ChatGPT") dient als Verfügbarkeits-/Login-Check.
+
+**Konsequenz:** Die User-Hypothese stimmt im Kern — mit der Korrektur, dass Codex nicht per Befehl abgefragt, sondern aus der jüngsten Session-Rollout-Datei gelesen wird.
+
+### A) Was sich ändert (Scope dieser Iteration)
+Nur der **Backend-Datenpfad**. Schemas und Frontend-Widget bleiben strukturell unverändert — das Widget rendert `used_pct`, `reset_at`, `quality`, `source` bereits. Es kommt lediglich eine neue Quelle `source=cli_live` mit `quality=live` hinein.
+
+```
+ProviderBudgetService  (backend/app/engine/usage.py)
+├── SnapshotCache (TTL)                         [unverändert]
+├── NEU: ClaudeCliBudgetAdapter  →  source=cli_live
+│        ruft `claude -p "/usage"`, parst Session-/Wochen-Zeile
+├── NEU: CodexRateLimitAdapter   →  source=cli_live
+│        liest jüngste ~/.codex/sessions/**/rollout-*.jsonl, letztes rate_limits
+├── ClaudeBudgetAdapter / CodexBudgetAdapter    [bestehende Schätz-/Manual-Pfade als Fallback]
+└── LocalUsageEstimator                          [unverändert]
+```
+
+**Auflösungs-Reihenfolge pro Provider/Fenster (erste erfolgreiche gewinnt):**
+1. **Live** (`cli_live`) — Claude-CLI-Output bzw. Codex-Rollout. → `quality=live`.
+2. **Schätzung** (`local_usage_estimate`) — nur wenn ein konfiguriertes Limit existiert. → `quality=estimated`.
+3. **Manuell** (`manual_input`) — falls weiter gepflegt. → `quality=estimated`.
+4. **n/v** — sonst. → `quality=unavailable`.
+
+### B) Provider-Adapter im Detail (Verhalten, kein Code)
+
+**ClaudeCliBudgetAdapter**
+- Führt `claude -p "/usage"` als Subprozess mit kurzem Timeout aus (off-event-loop, threadpool/async-subprocess).
+- Parst die Zeilen „Current session: N% … resets <Datum> (UTC)" → 5h, „Current week (all models): N% … resets <Datum> (UTC)" → Woche.
+- Reset-Strings werden zu UTC-Zeitpunkten geparst; fehlt das Jahr (Session-Zeile), wird das nächste passende Datum angenommen.
+- Fehlt „using your subscription" / Exit ≠ 0 / Parse schlägt fehl → dieser Provider degradiert sauber (Fallback-Kette), Claude beschädigt Codex nicht.
+
+**CodexRateLimitAdapter**
+- Liest **ohne** Codex zu starten: jüngste `rollout-*.jsonl`, letztes `rate_limits`-Event. → `primary`=5h, `secondary`=Woche, `resets_at` (Epoch→UTC).
+- **Frische:** Die Datei ist nur so aktuell wie der letzte Codex-Turn. Liegt das `resets_at` in der Vergangenheit oder ist das Event älter als das Fenster, markiert der Adapter `quality=stale` (Widget zeigt „veraltet").
+- **Optionaler Force-Refresh** (Default AUS): Ein minimaler `codex exec`-Turn aktualisiert die Rollout-Daten. Kostet Tokens und braucht auf diesem Host `-s danger-full-access` (siehe Codex-Sandbox-Einschränkung: `workspace-write` scheitert am netns-Loopback). Wird hinter ein Setting + das bestehende Force-Refresh-Rate-Limit gelegt; ohne Aktivierung liest der Adapter nur die vorhandene Datei.
+- Kein Login / keine Rollout-Datei → `unavailable` mit deutschem Hinweis.
+
+### C) Betriebliche Voraussetzungen (wichtig fürs Deployment)
+- Das Backend läuft host-nativ als systemd-Dienst. Die Live-Adapter funktionieren nur, wenn **derselbe Service-User** die CLIs eingeloggt hat, d. h. Zugriff auf `~/.claude` (Claude-Subscription-OAuth) und `~/.codex/sessions` hat. Vor dem Bau verifizieren: läuft `jupiter-backend` unter dem User, dessen `claude`/`codex` eingeloggt sind?
+- `claude -p "/usage"` darf den Request-Thread nicht blockieren → asynchroner Subprozess mit hartem Timeout; das bestehende 30-Min-TTL hält die Aufrufrate niedrig (kein Pro-Tab-Trigger).
+- Keine Secrets in die API-Antwort: nur Prozent, Reset, Quelle, Qualität — `plan_type` optional, keine Tokens/Keys.
+
+### D) Schemas / Frontend
+- **Schemas:** unverändert. `source` ist bereits ein freier String → `cli_live` ohne Migration. Optional ergänzend ein Quell-Label für den Tooltip („Live aus Claude-CLI" / „Live aus Codex-Session").
+- **Frontend:** `provider-budget-widget.tsx` rendert `quality=live` bereits (Tooltip/Chip). Minimal: Tooltip-Text um die Live-Quelle ergänzen. `resolveWindowQuality()` (Client-`stale`-Logik) bleibt.
+
+### E) Config (neue optionale Felder)
+- `provider_budget_claude_cli_enabled` — Default an (sofern CLI verfügbar).
+- `provider_budget_codex_rollout_enabled` — Default an.
+- `provider_budget_codex_force_exec` — Default **aus** (kostenpflichtiger Codex-Turn für Frische).
+- Bestehende Timeout-/Quota-/Refresh-Felder bleiben; die Quota-Limits dienen nur noch als Fallback-Schätzung, wenn die Live-Quelle ausfällt.
+
+### F) Tech-Entscheidungen (Warum)
+- **CLI/Datei lesen statt API:** Es gibt keine stabile öffentliche Quota-API; die CLIs sind die autoritative, vom Nutzer bereits authentifizierte Quelle. `claude -p "/usage"` und die Codex-Rollouts sind genau die Daten, die der Nutzer im TUI sieht.
+- **Codex aus Session-Datei statt TUI-Scrape:** strukturiertes JSON (`used_percent`/`resets_at`) ist robust gegen TUI-/ANSI-Änderungen; kein pty, keine Token-Kosten beim Lesen.
+- **Live als zusätzliche Quelle, nicht als Ersatz:** Schätz-/Manual-/`n/v`-Pfade bleiben als Fallback — fällt eine CLI aus, bleibt das Widget bedienbar (Constitution „keine falsche Genauigkeit").
+- **Force-Refresh für Codex optional & aus:** automatisches Token-Ausgeben widerspricht der Knappheits-Doktrin; der Nutzer aktiviert es bewusst.
+
+### G) Bau-Reihenfolge / Handoff
+1. **Vorab-Check (Backend):** Service-User-Zugriff auf `~/.claude` + `~/.codex/sessions` verifizieren; Claude-`/usage`-Output und Codex-Rollout-Format am Zielhost gegenprüfen.
+2. **Backend:** `ClaudeCliBudgetAdapter` + `CodexRateLimitAdapter`, Einhängen in `ProviderBudgetService` als oberste Quelle der Fallback-Kette, neue Config-Flags, Tests (Live-Parse OK, CLI fehlt/Exit≠0, Codex-Rollout fehlt/veraltet, Fallback auf Schätzung/`n/v`, kein Event-Loop-Block). Subprozesse in Tests gemockt.
+3. **Frontend:** nur Tooltip-/`source=cli_live`-Feinschliff; kein struktureller Umbau.
+4. **QA:** Matrix live/stale/unavailable je Provider; Smoke, dass echte Prozentwerte erscheinen; Regression PROJ-19.
+
+### H) Risiken / offene Punkte
+- **CLI-Output-Format kann sich ändern** (Claude-Update ändert „Current session:"-Wording) → Parse-Fehler wird als `n/v`/Fallback behandelt, nie als Crash; Format in einem Test fixiert.
+- **Service-User ≠ CLI-Login-User** → Live-Quelle fällt komplett aus; muss im Deploy geklärt werden.
+- **Codex-Frische ohne Force-Exec** begrenzt: zeigt Stand des letzten Codex-Laufs (als `veraltet` markiert) — bewusst akzeptiert, um Token-Kosten zu vermeiden.
