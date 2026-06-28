@@ -429,3 +429,25 @@ ProviderBudgetService  (backend/app/engine/usage.py)
 - **CLI-Output-Format kann sich ändern** (Claude-Update ändert „Current session:"-Wording) → Parse-Fehler wird als `n/v`/Fallback behandelt, nie als Crash; Format in einem Test fixiert.
 - **Service-User ≠ CLI-Login-User** → Live-Quelle fällt komplett aus; muss im Deploy geklärt werden.
 - **Codex-Frische ohne Force-Exec** begrenzt: zeigt Stand des letzten Codex-Laufs (als `veraltet` markiert) — bewusst akzeptiert, um Token-Kosten zu vermeiden.
+
+## Implementation Notes (Backend Developer) — Iteration 2
+**Datum:** 2026-06-28 · **Branch:** dev · **Stand:** Backend fertig, am echten Host verifiziert.
+
+### Gebaut
+- **Neues Modul `backend/app/engine/provider_budget_live.py`** mit zwei Live-Probes + reinen Parser-Funktionen:
+  - `ClaudeUsageProbe` — startet `claude -p "/usage"` als async-Subprozess (Timeout `provider_budget_timeout_seconds`, Default **20 s**), parst per Regex `Current session:` → 5h und `Current week (all models):` → Woche; `_parse_claude_reset` wandelt „Jun 28, 10:40am (UTC)" / „Jul 1, 8pm (UTC)" in UTC (fehlendes Jahr → aktuelles, bei Vergangenheit aufs nächste Jahr gerollt). Exit≠0 / Timeout / kein Treffer → `{}`.
+  - `CodexRolloutProbe` — liest **read-only** die jüngste `~/.codex/sessions/**/rollout-*.jsonl` (`latest_rollout_file` nach mtime), nimmt das **letzte** `rate_limits`-Event (`read_codex_rate_limits` + rekursives `_find_rate_limits`), mappt `primary`→5h, `secondary`→Woche (robust über `window_minutes` 300/10080), `resets_at`-Epoch→UTC. Dateizugriff via `asyncio.to_thread` (kein Event-Loop-Block).
+  - `LiveWindow`-Dataclass + `build_live_probes()`-Factory fürs Production-Wiring.
+- **`ProviderBudgetService` (usage.py) erweitert:** neuer Parameter `live_probes`; pro verfügbarem Provider wird die Probe einmal je Snapshot abgefragt (`_live_for`, fehlertolerant — jede Exception → `{}`, kein Crash). Neue Auflösungs-Reihenfolge je Fenster: **Live (`cli_live`, `quality=live`)** → Store/manuell → Schätzung → `n/v`. `_live_window` markiert ein bereits überschrittenes `reset_at` als `stale`.
+- **Wiring `main.py`:** `ProviderBudgetService(repo, store=…, live_probes=build_live_probes())`.
+- **Config `config.py`:** `provider_budget_claude_cli_enabled` (True), `provider_budget_codex_rollout_enabled` (True), `codex_sessions_dir` (`~/.codex/sessions`); `provider_budget_timeout_seconds` Default 10→**20 s**.
+
+### Bewusste Entscheidungen
+- **Schemas + Frontend unverändert:** `source` ist ein freier String → `cli_live:claude_usage` / `cli_live:codex_session` ohne Migration. Das Widget rendert `quality=live` bereits; es reagiert nur auf `quality`, nicht auf `source` → kein Frontend-Change nötig (optionaler Tooltip-Feinschliff bleibt offen).
+- **Kein Force-Exec für Codex:** read-only genügt — Jupiters eigene Codex-Sessions (PROJ-48) schreiben laufend frische Rollouts. Spart Tokens und umgeht die netns-Sandbox-Einschränkung. Setting bewusst weggelassen statt als Dead-Flag.
+
+### Verifikation
+- `python -m pytest tests/test_proj52_live_budgets.py tests/test_proj52_provider_budgets.py tests/test_proj19_usage.py` → **34 passed**.
+- Voller Backend-Lauf: `python -m pytest` → **933 passed, 1 warning** (bekannte Starlette-Cookie-Deprecation, nicht PROJ-52).
+- **Echter Host-Smoke** mit den realen Probes: Claude → 5h 30 %, Woche 46 % (+ Reset-UTC); Codex → 5h 20 %, Woche 20 % (+ Reset-UTC). Beide Provider liefern echte Live-Werte.
+- Hinweis: `conda` ist in dieser Shell kein Kommando; ausgeführt via `/home/dev/miniconda3/envs/Dashboard/bin/python`.

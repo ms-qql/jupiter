@@ -191,8 +191,18 @@ class Settings(BaseSettings):
     # PROJ-52: Sidebar Token-Budget-Monitor. Providerseitige Quotas sind externe
     # Momentaufnahmen; Jupiter cached den normalisierten Snapshot kurz im Speicher.
     provider_budget_refresh_minutes: int = 30
-    provider_budget_timeout_seconds: float = 10.0
+    # Timeout für eine Live-Abfrage (Claude-CLI-Spawn braucht mehrere Sekunden).
+    provider_budget_timeout_seconds: float = 20.0
     provider_budget_force_refresh_min_seconds: int = 60
+    # PROJ-52 Iteration 2: echte Live-Werte direkt aus den Provider-CLIs.
+    #   Claude  → `claude -p "/usage"` (nicht-interaktiver Klartext, parsebar).
+    #   Codex   → jüngste ~/.codex/sessions/**/rollout-*.jsonl, letztes `rate_limits`-Event
+    #             (read-only; Rollouts bleiben durch Jupiters Codex-Sessions ohnehin frisch).
+    # Live hat Vorrang vor Schätzung/manuellem Schnappschuss; fällt Live aus, greift der
+    # bisherige Fallback (geschätzt/manuell/n/v) — keine falsche Präzision.
+    provider_budget_claude_cli_enabled: bool = True
+    provider_budget_codex_rollout_enabled: bool = True
+    codex_sessions_dir: str = str(Path.home() / ".codex" / "sessions")
     # Optionale Fallback-Quoten für lokale Schätzung. 0 = unbekannt → UI zeigt n/v
     # statt erfundener Prozentwerte. Live-Quelle ist provider_budgets.yaml (UI-editierbar);
     # diese env-Felder bleiben als letzter Fallback, wenn kein Store gesetzt ist (Tests).

@@ -17,11 +17,14 @@ Zeitbezug: ``created_at`` ist tz-aware UTC; die Zeitfenster werden in UTC gebild
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from ..config import settings
 from .registry import ENGINE, engine_registry
+
+log = logging.getLogger(__name__)
 
 UsageRange = str  # "today" | "7d" | "30d" | "all"
 CostStatus = str  # "complete" | "partial" | "none"
@@ -243,13 +246,19 @@ class ProviderBudgetService:
         ("codex", "Codex"),
     )
 
-    def __init__(self, repo, *, registry=engine_registry, cfg=settings, store=None) -> None:
+    def __init__(
+        self, repo, *, registry=engine_registry, cfg=settings, store=None, live_probes=None
+    ) -> None:
         self._repo = repo
         self._registry = registry
         self._settings = cfg
         # Live-Quelle der Schätz-Quoten (UI-editierbar, PROJ-52). Ohne Store fallen die
         # Limits auf die env-Felder von ``cfg`` zurück (Rückwärtskompatibilität/Tests).
         self._store = store
+        # PROJ-52 Iteration 2: echte providerseitige Live-Werte. Mapping provider→async-Probe,
+        # die ``{"5h": LiveWindow, "week": LiveWindow}`` liefert. Ohne Probes (Tests/Legacy)
+        # bleibt das alte Schätz-/Manual-/n-v-Verhalten unverändert.
+        self._live_probes = dict(live_probes or {})
         self._snapshot: dict | None = None
         self._snapshot_at: datetime | None = None
         self._last_force_at: datetime | None = None
@@ -294,7 +303,9 @@ class ProviderBudgetService:
 
     async def _build_snapshot(self, now: datetime) -> dict:
         rows = await self._repo.list_all()
-        providers = [self._provider_budget(key, label, rows, now) for key, label in self.PROVIDERS]
+        providers = [
+            await self._provider_budget(key, label, rows, now) for key, label in self.PROVIDERS
+        ]
         warnings = [
             f"{p['label']}: {p['unavailable_reason']}"
             for p in providers
@@ -310,9 +321,15 @@ class ProviderBudgetService:
         self._snapshot_at = now
         return snapshot
 
-    def _provider_budget(self, provider: str, label: str, rows: list[dict], now: datetime) -> dict:
+    async def _provider_budget(
+        self, provider: str, label: str, rows: list[dict], now: datetime
+    ) -> dict:
         availability, reason = self._availability(provider)
-        windows = [self._window_budget(provider, spec, rows, now, availability) for spec in self._windows(provider)]
+        live = await self._live_for(provider, availability, now)
+        windows = [
+            self._window_budget(provider, spec, rows, now, availability, live)
+            for spec in self._windows(provider)
+        ]
         return {
             "provider": provider,
             "label": label,
@@ -349,6 +366,23 @@ class ProviderBudgetService:
             int(getattr(self._settings, f"{prefix}_week_tokens", 0) or 0),
         )
 
+    async def _live_for(self, provider: str, availability: str, now: datetime) -> dict:
+        """Echte Live-Werte des Providers abrufen (best-effort, fehlertolerant).
+
+        Nur wenn der Provider verfügbar ist und eine Probe registriert wurde. Ein
+        Probe-Fehler (CLI fehlt, Timeout, Parse) degradiert still zu ``{}`` → Fallback.
+        """
+        if availability != "available":
+            return {}
+        probe = self._live_probes.get(provider)
+        if probe is None:
+            return {}
+        try:
+            return dict(await probe(now) or {})
+        except Exception as exc:  # noqa: BLE001 — kein Provider darf die Sidebar killen.
+            log.warning("Live-Budget-Probe für %s fehlgeschlagen: %s", provider, exc)
+            return {}
+
     def _window_budget(
         self,
         provider: str,
@@ -356,9 +390,14 @@ class ProviderBudgetService:
         rows: list[dict],
         now: datetime,
         availability: str,
+        live: dict | None = None,
     ) -> dict:
         if availability != "available":
             return self._unavailable_window(spec, now, "Provider nicht verfügbar.")
+        # Vorrang (PROJ-52 Iteration 2): echter providerseitiger Live-Wert aus der CLI.
+        live_window = (live or {}).get(spec.key)
+        if live_window is not None:
+            return self._live_window(spec, now, live_window)
         # Produktivpfad (PROJ-52): vom Nutzer gepflegter Schnappschuss aus den Einstellungen.
         if self._store is not None:
             return self._manual_window(provider, spec, now)
@@ -382,6 +421,28 @@ class ProviderBudgetService:
             "reset_at": reset_at.isoformat(),
             "quality": "estimated",
             "source": "local_usage_estimate",
+            "updated_at": now.isoformat(),
+            "error": None,
+        }
+
+    def _live_window(self, spec: _WindowSpec, now: datetime, live_window) -> dict:
+        """Fenster aus echtem providerseitigem Live-Wert (Claude-CLI / Codex-Rollout).
+
+        Ist der gemeldete Reset-Zeitpunkt bereits überschritten, wird der Wert als
+        ``veraltet`` (``stale``) markiert statt fälschlich als frisch — ein neuer Abruf
+        liefert dann beim nächsten Intervall aktuelle Zahlen.
+        """
+        reset_at = getattr(live_window, "reset_at", None) or (now + spec.duration)
+        quality = "stale" if reset_at <= now else "live"
+        return {
+            "window": spec.key,
+            "label": spec.label,
+            "used_pct": round(float(live_window.used_pct), 1),
+            "used_tokens": None,
+            "limit_tokens": None,
+            "reset_at": reset_at.isoformat(),
+            "quality": quality,
+            "source": getattr(live_window, "source", "cli_live"),
             "updated_at": now.isoformat(),
             "error": None,
         }
