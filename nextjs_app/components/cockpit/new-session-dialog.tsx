@@ -342,30 +342,32 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
               />
             )}
 
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <Label htmlFor="initial_prompt">Initial-Prompt</Label>
-                {/* PROJ-20: Auftrag diktieren statt tippen. */}
-                <PushToTalkButton
-                  className="size-7"
-                  onTranscript={(t) => setPrompt((p) => appendDictation(p, t))}
+            {!chatMode && (
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="initial_prompt">Initial-Prompt</Label>
+                  {/* PROJ-20: Auftrag diktieren statt tippen. */}
+                  <PushToTalkButton
+                    className="size-7"
+                    onTranscript={(t) => setPrompt((p) => appendDictation(p, t))}
+                  />
+                </div>
+                <Textarea
+                  id="initial_prompt"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Was soll die Session tun?"
+                  rows={8}
+                  className="min-h-48 max-h-[40dvh] resize-y overflow-y-auto"
                 />
+                {selected?.skill && prompt.trim() === selected.initial_prompt && (
+                  <p className="text-xs text-muted-foreground">
+                    Skill <span className="font-mono">{selected.skill}</span> wird über den Prompt
+                    übergeben — frei editierbar.
+                  </p>
+                )}
               </div>
-              <Textarea
-                id="initial_prompt"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Was soll die Session tun?"
-                rows={8}
-                className="min-h-48 max-h-[40dvh] resize-y overflow-y-auto"
-              />
-              {selected?.skill && prompt.trim() === selected.initial_prompt && (
-                <p className="text-xs text-muted-foreground">
-                  Skill <span className="font-mono">{selected.skill}</span> wird über den Prompt
-                  übergeben — frei editierbar.
-                </p>
-              )}
-            </div>
+            )}
 
             <div className="grid gap-2">
               <Label htmlFor="role">Rolle (optional)</Label>
