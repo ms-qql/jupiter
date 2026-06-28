@@ -1,6 +1,6 @@
 # PROJ-6: Knappheits-Konstitution
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-22 (Backend + QA abgeschlossen)
 
