@@ -278,6 +278,12 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
       )}
 
       <div className="flex flex-col gap-2 border-t border-border px-4 py-2">
+        {/* Budget-Monitor sitzt ganz unten, direkt über dem Board-/Abmelden-Block. */}
+        {budgetProviderKeys.length > 0 && (
+          <div className="-mx-1">
+            <ProviderBudgetWidget visibleProviders={budgetProviderKeys} />
+          </div>
+        )}
         <Link
           href="/"
           onClick={onItemClick}
@@ -287,11 +293,6 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
         </Link>
         {/* PROJ-25: angemeldete Identität + Abmelden. */}
         <UserMenu />
-        {budgetProviderKeys.length > 0 && (
-          <div className="-mx-1">
-            <ProviderBudgetWidget visibleProviders={budgetProviderKeys} />
-          </div>
-        )}
       </div>
     </aside>
   );

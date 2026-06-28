@@ -55,6 +55,29 @@ export function RecoveryDialog({
   const [busy, setBusy] = useState<{ id: string; action: "restore" | "dismiss" } | null>(
     null,
   );
+  // Läuft die Sammel-Aktion „Alle verwerfen"? Sperrt währenddessen alle Buttons.
+  const [dismissingAll, setDismissingAll] = useState(false);
+
+  async function handleDismissAll() {
+    if (busy || dismissingAll || candidates.length === 0) return;
+    setDismissingAll(true);
+    let failed = 0;
+    // Sequenziell verwerfen — der Vault-Eintrag bleibt je Kandidat erhalten (Audit).
+    for (const c of candidates) {
+      try {
+        await dismissRecovery(c.session_id);
+      } catch {
+        failed += 1;
+      }
+    }
+    if (failed === 0) {
+      toast.success("Alle Kandidaten verworfen (Vault-Einträge bleiben erhalten)");
+    } else {
+      toast.error(`${failed} von ${candidates.length} konnten nicht verworfen werden`);
+    }
+    setDismissingAll(false);
+    onChanged();
+  }
 
   async function handleRestore(c: RecoveryCandidate) {
     if (busy) return;
@@ -104,7 +127,23 @@ export function RecoveryDialog({
             Keine wiederherstellbaren Sessions.
           </p>
         ) : (
-          <ScrollArea className="max-h-[60vh] pr-3">
+          <>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-muted-foreground">
+                {candidates.length} wiederherstellbar
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleDismissAll}
+                disabled={!!busy || dismissingAll}
+                title="Alle Kandidaten auf einmal verwerfen (Vault-Einträge bleiben)"
+              >
+                <Trash2Icon className="size-4" />
+                {dismissingAll ? "Verwirft alle…" : "Alle verwerfen"}
+              </Button>
+            </div>
+            <ScrollArea className="max-h-[60vh] pr-3">
             <ul className="flex flex-col gap-3 py-1">
               {candidates.map((c) => {
                 const src = SOURCE_META[c.source];
@@ -165,7 +204,7 @@ export function RecoveryDialog({
                         variant="ghost"
                         size="sm"
                         onClick={() => handleDismiss(c)}
-                        disabled={isBusy}
+                        disabled={isBusy || dismissingAll}
                       >
                         <Trash2Icon className="size-4" />
                         {isBusy && busy?.action === "dismiss" ? "Verwirft…" : "Verwerfen"}
@@ -173,7 +212,7 @@ export function RecoveryDialog({
                       <Button
                         size="sm"
                         onClick={() => handleRestore(c)}
-                        disabled={isBusy || c.restore_blocked}
+                        disabled={isBusy || dismissingAll || c.restore_blocked}
                         title={c.restore_blocked ? c.blocked_reason ?? undefined : undefined}
                       >
                         {isBusy && busy?.action === "restore"
@@ -185,7 +224,8 @@ export function RecoveryDialog({
                 );
               })}
             </ul>
-          </ScrollArea>
+            </ScrollArea>
+          </>
         )}
 
         <DialogFooter showCloseButton />
