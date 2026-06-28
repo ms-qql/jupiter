@@ -46,6 +46,8 @@ import type {
   UsageRange,
   UsageSummaryRead,
   ProviderBudgetSnapshotRead,
+  ProviderBudgetLimits,
+  ProviderBudgetSetting,
   ScoutRequest,
   ScoutResult,
   VaultRagPreview,
@@ -584,6 +586,26 @@ export function getWatchdog(signal?: AbortSignal): Promise<WatchdogSetting> {
  *  übernommen (kein Neustart, laufende Sessions bleiben ununterbrochen). */
 export function setWatchdog(limits: WatchdogLimits): Promise<WatchdogSetting> {
   return request<WatchdogSetting>("/settings/watchdog", {
+    method: "PUT",
+    body: JSON.stringify(limits),
+  });
+}
+
+// --- PROJ-52: Provider-Budget-Quoten (Schätz-Limits, UI-editierbar) ---------
+
+/** Aktuelle Schätz-Quoten lesen (Claude/Codex 5h + Woche + Herkunft/Warnung). */
+export function getProviderBudgetLimits(
+  signal?: AbortSignal,
+): Promise<ProviderBudgetSetting> {
+  return request<ProviderBudgetSetting>("/settings/provider-budgets", { signal });
+}
+
+/** Quoten ersetzen — serverseitig validiert (≥ 0) und LIVE übernommen; der
+ *  Sidebar-Snapshot-Cache wird sofort verworfen (neue Werte ohne Neustart). */
+export function setProviderBudgetLimits(
+  limits: ProviderBudgetLimits,
+): Promise<ProviderBudgetSetting> {
+  return request<ProviderBudgetSetting>("/settings/provider-budgets", {
     method: "PUT",
     body: JSON.stringify(limits),
   });

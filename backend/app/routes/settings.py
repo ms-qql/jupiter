@@ -12,6 +12,7 @@ from ..config import THRESHOLD_MAX_PCT, THRESHOLD_MIN_PCT, clamp_threshold, sett
 from ..engine import liveness, policy, watchdog
 from ..engine.abc_phases import ABC_PHASES
 from ..engine.files import FileService
+from ..engine.provider_budget import provider_budget_store
 from ..engine.registry import engine_registry
 from ..schemas.settings import (
     ClipboardDirPatch,
@@ -22,6 +23,8 @@ from ..schemas.settings import (
     LivenessLimitsPut,
     LivenessSettingRead,
     PolicyPreviewRead,
+    ProviderBudgetLimitsPut,
+    ProviderBudgetSettingRead,
     ThresholdSettingPatch,
     ThresholdSettingRead,
     TrustPolicyPut,
@@ -156,6 +159,31 @@ async def put_watchdog(payload: WatchdogLimitsPut) -> dict:
         return watchdog.watchdog_store.save(payload.model_dump())
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Provider-Budget-Quoten (PROJ-52) -------------------------------------
+
+@router.get("/provider-budgets", response_model=ProviderBudgetSettingRead)
+async def get_provider_budgets() -> dict:
+    """Aktuelle Schätz-Quoten für Claude/Codex + Herkunft/Warnung (live aus der Datei)."""
+    return provider_budget_store.snapshot()
+
+
+@router.put("/provider-budgets", response_model=ProviderBudgetSettingRead)
+async def put_provider_budgets(request: Request, payload: ProviderBudgetLimitsPut) -> dict:
+    """Quoten ersetzen — Pydantic erzwingt ≥ 0; in YAML geschrieben, **live** aktiv.
+
+    0 = unbekannt → die Sidebar zeigt für das Fenster ``n/v`` statt erfundener Prozente.
+    """
+    try:
+        snapshot = provider_budget_store.save(payload.model_dump())
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Den kurzlebigen Budget-Snapshot-Cache verwerfen → neue Quoten sofort sichtbar.
+    budgets = getattr(request.app.state, "provider_budgets", None)
+    if budgets is not None:
+        budgets.invalidate()
+    return snapshot
 
 
 # --- Liveness + Auto-Reanimierung (PROJ-27) -------------------------------

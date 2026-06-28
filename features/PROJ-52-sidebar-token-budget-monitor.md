@@ -2,10 +2,10 @@
 
 ## Status: Deployed
 **Created:** 2026-06-27
-**Last Updated:** 2026-06-27
+**Last Updated:** 2026-06-28
 
 ## Dependencies
-- Requires: PROJ-3 (Cockpit + Sidebar) — Anzeige sitzt oben in der persistenten Sidebar.
+- Requires: PROJ-3 (Cockpit + Sidebar) — Anzeige sitzt unten in der persistenten Sidebar.
 - Requires: PROJ-19 (Token-/Kosten-Dashboard) — vorhandene Usage-Modelle und Anzeige-Konventionen werden wiederverwendet.
 - Requires: PROJ-48 (OpenAI Codex CLI als Engine) — Codex muss als Engine/Provider im System bekannt sein.
 - Requires: PROJ-51 (Engine- und Modellverwaltung) — Claude/Codex-Provider und deren Verfügbarkeit kommen aus der Engine-Konfiguration.
@@ -21,7 +21,7 @@ Die Anzeige aktualisiert sich automatisch in regelmäßigen Abständen, initial 
 Wichtig: Die Anzeige darf keine falsche Präzision vortäuschen. Wenn Claude oder Codex den exakten Verbrauch bzw. Reset-Zeitpunkt nicht maschinenlesbar liefern, zeigt Jupiter einen klar gekennzeichneten Schätzwert oder „nicht verfügbar“ statt erfundener Prozentwerte.
 
 ## User Stories
-- Als Nutzer möchte ich oben in der Sidebar sofort sehen, wie viel meines **Claude-5h-Kontingents** und **Claude-Wochenkontingents** verbraucht ist, damit ich neue Claude-Sessions bewusst starten kann.
+- Als Nutzer möchte ich unten in der Sidebar sehen, wie viel meines **Claude-5h-Kontingents** und **Claude-Wochenkontingents** verbraucht ist, damit ich neue Claude-Sessions bewusst starten kann.
 - Als Nutzer möchte ich dieselbe Information für **Codex** sehen, damit ich zwischen Engines wechseln kann, bevor ein Provider knapp wird.
 - Als Nutzer möchte ich sehen, **wann** die 5h- und Wochenfenster jeweils zurückgesetzt werden, damit ich Wartezeiten einschätzen kann.
 - Als Nutzer möchte ich, dass die Anzeige automatisch aktualisiert wird, ohne die Seite neu zu laden.
@@ -29,7 +29,8 @@ Wichtig: Die Anzeige darf keine falsche Präzision vortäuschen. Wenn Claude ode
 - Als Nutzer möchte ich klar erkennen, wenn ein Wert geschätzt oder nicht verfügbar ist, statt falsche Sicherheit zu bekommen.
 
 ## Acceptance Criteria
-- [ ] Die Sidebar enthält oben, direkt im Kopfbereich bzw. vor den Workspace-Links, eine kompakte Anzeige **„Budget“** oder gleichwertig.
+- [ ] Die Sidebar enthält unten im Footer-Bereich eine kompakte Anzeige **„Budget“** oder gleichwertig.
+- [ ] Claude- und Codex-Verbrauch können über das bestehende Sidebar-Konfig-Panel einzeln ein- und ausgeblendet werden.
 - [ ] Die Anzeige enthält mindestens zwei Provider-Zeilen: **Claude** und **Codex**.
 - [ ] Pro Provider werden zwei Fenster angezeigt: **5h** und **Woche**.
 - [ ] Pro Fenster zeigt die UI:
@@ -87,13 +88,13 @@ Wichtig: Die Anzeige darf keine falsche Präzision vortäuschen. Wenn Claude ode
 **Erstellt:** 2026-06-27 · **Stack:** Next.js Sidebar + FastAPI Usage-Service + In-Memory Provider-Cache · **Branch:** dev
 
 ### Überblick / Kernaussage
-PROJ-52 ergänzt Jupiter um ein kleines, dauerhaft sichtbares **Quota-Lagebild** oben in der Sidebar. Es ist bewusst **nicht** das bestehende PROJ-19-Verbrauchsdashboard: PROJ-19 beantwortet „Was haben meine Jupiter-Sessions verbraucht?“, PROJ-52 beantwortet „Wie voll sind meine providerseitigen Claude-/Codex-Fenster gerade?“.
+PROJ-52 ergänzt Jupiter um ein kleines, dauerhaft sichtbares **Quota-Lagebild** unten in der Sidebar. Es ist bewusst **nicht** das bestehende PROJ-19-Verbrauchsdashboard: PROJ-19 beantwortet „Was haben meine Jupiter-Sessions verbraucht?“, PROJ-52 beantwortet „Wie voll sind meine providerseitigen Claude-/Codex-Fenster gerade?“.
 
 Die Architektur trennt deshalb drei Ebenen:
 
 1. **Provider-Budget-Snapshot** im Backend: Claude und Codex werden über getrennte Adapter abgefragt bzw. degradieren sauber zu Schätzung/`n/v`.
 2. **Normalisierte Usage-API** unter `/usage/provider-budgets`: ein einheitliches Antwortformat für Sidebar und spätere Widgets.
-3. **Sidebar-Widget** im bestehenden `SessionRail`: kompakte Anzeige vor den Workspace-Links, mit automatischem 30-Minuten-Refresh und manuellem Refresh.
+3. **Sidebar-Widget** im bestehenden `SessionRail`: kompakte Anzeige im Sidebar-Footer, mit automatischem 30-Minuten-Refresh, manuellem Refresh und Provider-Sichtbarkeit über das Sidebar-Konfig-Panel.
 
 Wichtigste Produktentscheidung: **Keine falsche Genauigkeit.** Wenn Claude/Codex keine maschinenlesbaren 5h-/Wochen-Budgetdaten liefern, zeigt Jupiter `n/v` oder ausdrücklich `geschätzt`, nicht erfundene Prozentwerte.
 
@@ -115,7 +116,7 @@ SessionRail
 └── Sessions-Liste
 ```
 
-**Platzierung:** Direkt unter dem Sidebar-Kopf und oberhalb der Workspace-Sektion. Damit sieht der Nutzer die Budgets, bevor er eine neue Session startet oder den Arbeitsbereich wechselt.
+**Platzierung:** Unten im Sidebar-Footer. Damit bleibt der Monitor dauerhaft erreichbar, ohne Workspace-, Orchestration-, Micro-App- oder Session-Navigation nach unten zu drücken.
 
 **Darstellung:** Pro Provider eine schmale Zeile mit zwei kompakten Fenster-Chips (`5h`, `Woche`). Jeder Chip zeigt Prozent, kleine Füllstandslinie/Farbe und Reset-Kurztext. Tooltips erklären Quelle und Datenqualität (`live`, `geschätzt`, `n/v`, `veraltet`).
 
@@ -272,7 +273,7 @@ Fehlerstrategie:
   - Hält bei Refresh-Fehlern den letzten Stand sichtbar.
   - Zeigt `live`, `geschätzt`, `veraltet` oder `n/v`; unbekannte Prozentwerte bleiben `n/v`.
   - Rendert Claude/Codex-Zeilen mit 5h-/Wochen-Chips, Füllstandsbalken, Reset-Kurztext und Tooltips.
-- **Einbau:** `ProviderBudgetWidget` direkt unter dem `SessionRail`-Header und oberhalb der Workspace-Sektion eingebunden. Damit erscheint es auch im Mobile-Drawer.
+- **Einbau:** `ProviderBudgetWidget` im Footer des `SessionRail`; Claude/Codex werden über die Sidebar-Präferenz-Sektion `Verbrauch` gefiltert. Damit erscheint es auch im Mobile-Drawer.
 
 ### Tests / Verifikation
 - `npm test -- provider-budget-widget.test.tsx` → **1 passed**.
@@ -314,18 +315,21 @@ Fehlerstrategie:
 Keine Critical- oder High-Findings. PROJ-52 ist aus QA-Sicht bereit für Deployment.
 
 ## Deployment
-**Datum:** 2026-06-27 · **Version:** 0.24.0 · **Branch:** main · **Production URL:** https://jupiter.auxevo.tech
+**Datum:** 2026-06-28 · **Version:** 0.24.1 · **Branch:** main · **Production URL:** https://jupiter.auxevo.tech
 
 ### Ausgeliefert
-- Sidebar-Budget-Monitor oben im `SessionRail` für Claude und Codex.
+- Sidebar-Budget-Monitor unten im `SessionRail` für Claude und Codex.
 - `GET /usage/provider-budgets` und `POST /usage/provider-budgets/refresh` hinter der bestehenden Auth-Grenze.
 - Konfigurierbare 30-Minuten-TTL, manueller Refresh mit Rate-Limit und konservative Degradation auf `n/v`.
+- Bugfix 0.24.1: Budget-Anzeige sitzt unten im Sidebar-Footer.
+- Bugfix 0.24.1: Claude- und Codex-Verbrauch sind einzeln über „Sidebar anpassen" ein-/ausblendbar.
 - Living Docs aktualisiert: Architektur, Benutzeranleitung, Funktionsablauf und PRD-Roadmap.
 
 ### Smoke-Test nach Host-Build
 - [ ] `https://jupiter.auxevo.tech/api/health` liefert OK.
 - [ ] Login-Screen lädt, Login funktioniert, geschützte Route überlebt Hard-Reload.
-- [ ] Sidebar zeigt oben den Bereich **Budget** mit Claude und Codex.
+- [ ] Sidebar zeigt unten den Bereich **Budget** mit Claude und/oder Codex.
+- [ ] „Sidebar anpassen" enthält **Verbrauch** mit getrennten Schaltern für Claude und Codex.
 - [ ] 5h- und Wochenfenster zeigen Prozentwerte, `geschätzt` oder `n/v`; kein horizontales Scrollen.
 - [ ] **Budget aktualisieren** triggert Refresh; bei zu schnellem Wiederholen erscheint eine deutsche Kurzmeldung.
 - [ ] Host-Logs für Frontend und Backend zeigen keine neuen Fehler.

@@ -14,7 +14,11 @@ const MINUTE_MS = 60_000;
 
 type LoadState = "idle" | "loading" | "refreshing" | "error";
 
-export function ProviderBudgetWidget() {
+export function ProviderBudgetWidget({
+  visibleProviders,
+}: {
+  visibleProviders?: string[];
+}) {
   const [snapshot, setSnapshot] = useState<ProviderBudgetSnapshotRead | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [message, setMessage] = useState<string | null>(null);
@@ -74,7 +78,10 @@ export function ProviderBudgetWidget() {
     }
   }
 
-  const providerRows = snapshot?.providers ?? [];
+  const visibleProviderSet = visibleProviders ? new Set(visibleProviders) : null;
+  const providerRows = (snapshot?.providers ?? []).filter(
+    (provider) => !visibleProviderSet || visibleProviderSet.has(provider.provider),
+  );
   const lastUpdate = snapshot ? relativeTime(snapshot.updated_at) : null;
 
   return (

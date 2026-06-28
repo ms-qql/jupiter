@@ -40,6 +40,7 @@ from .engine.metrics import MetricsService
 from .engine.recovery import RecoveryService
 from .engine.scout import ScoutService
 from .engine.transcription import TranscriptionService
+from .engine.provider_budget import provider_budget_store
 from .engine.usage import ProviderBudgetService, UsageService
 from .engine.vault import VaultService
 from .engine.video_summary import VideoSummaryWorker
@@ -244,7 +245,8 @@ def create_app(
     # PROJ-19 (#28): Token-/Kosten-Aggregat über den persistenten Live-Index.
     app.state.usage = UsageService(repo)
     # PROJ-52: Claude-/Codex-Budget-Lagebild für die Sidebar (kurzlebiger Cache).
-    app.state.provider_budgets = ProviderBudgetService(repo)
+    # Quoten kommen aus dem live editierbaren Store (UI: /settings/provider-budgets).
+    app.state.provider_budgets = ProviderBudgetService(repo, store=provider_budget_store)
     # PROJ-19 (#26): billige Späher-Agenten (RAG-Kontext + günstiges Modell → nur Fazit).
     app.state.scout = ScoutService(vault_service)
     # PROJ-20: Spracheingabe-Transkription (self-hosted Whisper, optional Groq-Fallback).

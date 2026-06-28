@@ -168,6 +168,36 @@ class WatchdogSettingRead(WatchdogLimitsPut):
     warning: str | None = None
 
 
+# --- PROJ-52: Provider-Budget-Quoten (Schätz-Limits, UI-editierbar) ---------
+
+
+class ProviderBudgetLimitsPut(BaseModel):
+    """Nutzergepflegte Budget-Schnappschüsse für Claude/Codex (PUT /settings/provider-budgets).
+
+    Pro Provider/Fenster ein Prozentwert (``ge=0``, leer = ``None`` = unbekannt → n/v) und
+    ein Reset-Zeitpunkt (ISO 8601, leer = automatisch ``jetzt + Fensterdauer``). Die Werte
+    werden in der Sidebar genau so angezeigt; abgelaufene Reset-Zeiten werden als
+    *veraltet* markiert. Quelle ist Claudes/Codex' eigene Verbrauchsanzeige (z. B. ``/usage``).
+    """
+
+    claude_5h_pct: float | None = Field(None, ge=0, description="Claude 5h-Verbrauch in %.")
+    claude_5h_reset_at: str | None = Field(None, description="Claude 5h-Reset (ISO 8601).")
+    claude_week_pct: float | None = Field(None, ge=0, description="Claude Wochen-Verbrauch in %.")
+    claude_week_reset_at: str | None = Field(None, description="Claude Wochen-Reset (ISO 8601).")
+    codex_5h_pct: float | None = Field(None, ge=0, description="Codex 5h-Verbrauch in %.")
+    codex_5h_reset_at: str | None = Field(None, description="Codex 5h-Reset (ISO 8601).")
+    codex_week_pct: float | None = Field(None, ge=0, description="Codex Wochen-Verbrauch in %.")
+    codex_week_reset_at: str | None = Field(None, description="Codex Wochen-Reset (ISO 8601).")
+
+
+class ProviderBudgetSettingRead(ProviderBudgetLimitsPut):
+    """Aktuelle Schnappschüsse + Herkunft/Warnung + Refresh-Intervall (GET /settings/provider-budgets)."""
+
+    source: str
+    warning: str | None = None
+    refresh_minutes: int
+
+
 # --- PROJ-27: Verifizierter Liveness-Indikator + Auto-Reanimierung ----------
 
 

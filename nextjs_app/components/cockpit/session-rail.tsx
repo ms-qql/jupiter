@@ -19,7 +19,11 @@ import {
 import type { Session } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
 import { UserMenu } from "@/components/auth/user-menu";
-import { microAppEngineKey, sectionLabel } from "@/lib/sidebar-config";
+import {
+  budgetProviderFromItemKey,
+  microAppEngineKey,
+  sectionLabel,
+} from "@/lib/sidebar-config";
 import { Ampel } from "./ampel";
 import { DeleteSessionButton } from "./delete-session-button";
 import { NewSessionDialog } from "./new-session-dialog";
@@ -62,6 +66,10 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
   const orchestrationItems = visibleItems("orchestration");
   // PROJ-40: sichtbare Micro-App-Einträge (group=micro aus der Registry).
   const microAppItems = visibleItems("micro");
+  // PROJ-52: sichtbare Verbrauchs-Provider, einzeln über das Sidebar-Panel steuerbar.
+  const budgetProviderKeys = visibleItems("budget").map((item) =>
+    budgetProviderFromItemKey(item.key),
+  );
   // PROJ-42: Gesamtstatus-Ampel je Micro-App (nur Apps mit Status-Endpoint, z. B.
   // VPS-Admin) — pollt unabhängig davon, ob die App geöffnet ist.
   const microAppStatuses = useMicroAppStatuses(
@@ -93,9 +101,6 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
           </button>
         </NewSessionDialog>
       </div>
-
-      <ProviderBudgetWidget />
-
       {/* PROJ-38: Workspace-Sektion. Überschrift + Einstellungs-Icon sind
           IMMER sichtbar (auch wenn alle Einträge ausgeblendet sind) — der
           Panel-Zugang darf nie verloren gehen. */}
@@ -282,6 +287,11 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
         </Link>
         {/* PROJ-25: angemeldete Identität + Abmelden. */}
         <UserMenu />
+        {budgetProviderKeys.length > 0 && (
+          <div className="-mx-1">
+            <ProviderBudgetWidget visibleProviders={budgetProviderKeys} />
+          </div>
+        )}
       </div>
     </aside>
   );

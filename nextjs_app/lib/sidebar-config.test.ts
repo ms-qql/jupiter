@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import {
   SIDEBAR_ITEMS,
   SIDEBAR_SECTIONS,
+  budgetProviderFromItemKey,
+  budgetProviderItemKey,
   microAppEngineKey,
   microAppItemKey,
   sectionLabel,
@@ -44,6 +46,7 @@ describe("sidebar-config (PROJ-38)", () => {
   it("liefert die Sektionslabels Workspace und Aktive Sessions", () => {
     expect(sectionLabel("workspace")).toBe("Workspace");
     expect(sectionLabel("sessions")).toBe("Aktive Sessions");
+    expect(sectionLabel("budget")).toBe("Verbrauch");
   });
 
   // PROJ-42: der Item-Key (micro:<key>) muss verlustfrei zum Registry-Key
@@ -56,5 +59,10 @@ describe("sidebar-config (PROJ-38)", () => {
 
   it("microAppEngineKey lässt einen Key ohne micro:-Präfix unverändert", () => {
     expect(microAppEngineKey("vps_admin")).toBe("vps_admin");
+  });
+
+  it("budgetProviderFromItemKey ist die Umkehr von budgetProviderItemKey", () => {
+    expect(budgetProviderFromItemKey(budgetProviderItemKey("claude"))).toBe("claude");
+    expect(budgetProviderFromItemKey(budgetProviderItemKey("codex"))).toBe("codex");
   });
 });

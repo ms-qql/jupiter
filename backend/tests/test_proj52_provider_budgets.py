@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.engine.provider_budget import ProviderBudgetStore
 from app.engine.usage import (
     BudgetRefreshRateLimited,
     ProviderBudgetService,
@@ -201,6 +202,91 @@ async def test_manual_refresh_is_rate_limited() -> None:
     await svc.refresh()
     with pytest.raises(BudgetRefreshRateLimited):
         await svc.refresh()
+
+
+class _FakeStore:
+    """Minimaler Store-Stub: liefert den nutzergepflegten Schnappschuss zurück."""
+
+    def __init__(self, values: dict) -> None:
+        self._values = values
+
+    def values(self) -> dict:
+        return dict(self._values)
+
+
+@pytest.mark.asyncio
+async def test_manual_snapshot_shows_entered_pct_and_reset() -> None:
+    # Reale Provider-Zahlen (z. B. aus Claude /usage), vom Nutzer eingetragen.
+    store = _FakeStore(
+        {
+            "claude_5h_pct": 6,
+            "claude_5h_reset_at": "2026-06-28T10:39:00Z",
+            "claude_week_pct": 44,
+            "claude_week_reset_at": "2026-07-01T19:59:00Z",
+            # Codex bewusst leer → n/v.
+            "codex_5h_pct": None,
+            "codex_5h_reset_at": None,
+            "codex_week_pct": None,
+            "codex_week_reset_at": None,
+        }
+    )
+    svc = _FixedClockService(_FakeRepo([]), registry=_registry(), cfg=_cfg(), store=store)
+
+    snap = await svc.snapshot()
+    claude = next(p for p in snap["providers"] if p["provider"] == "claude")
+    win5h = next(w for w in claude["windows"] if w["window"] == "5h")
+    week = next(w for w in claude["windows"] if w["window"] == "week")
+    # Exakt die eingetragenen Werte — keine lokale Schätzung, keine erfundenen Resets.
+    assert win5h["used_pct"] == 6.0
+    assert win5h["reset_at"].startswith("2026-06-28T10:39:00")
+    assert win5h["quality"] == "live"
+    assert week["used_pct"] == 44.0
+    assert week["reset_at"].startswith("2026-07-01T19:59:00")
+
+    # Leerer Codex-Wert → n/v, kein erfundener Prozentwert.
+    codex = next(p for p in snap["providers"] if p["provider"] == "codex")
+    assert all(w["used_pct"] is None for w in codex["windows"])
+    assert all(w["quality"] == "unavailable" for w in codex["windows"])
+
+
+@pytest.mark.asyncio
+async def test_manual_snapshot_auto_reset_when_no_time_given() -> None:
+    store = _FakeStore({"claude_5h_pct": 10, "claude_5h_reset_at": None})
+    svc = _FixedClockService(_FakeRepo([]), registry=_registry(), cfg=_cfg(), store=store)
+
+    snap = await svc.snapshot()
+    claude = next(p for p in snap["providers"] if p["provider"] == "claude")
+    win5h = next(w for w in claude["windows"] if w["window"] == "5h")
+    # Ohne Reset-Eingabe: jetzt + 5h (kein Crash, keine negative Restzeit).
+    assert win5h["used_pct"] == 10.0
+    assert win5h["reset_at"] == (NOW + timedelta(hours=5)).isoformat()
+
+
+def test_store_save_roundtrip_and_validation(tmp_path) -> None:
+    store = ProviderBudgetStore(str(tmp_path / "provider_budgets.yaml"))
+
+    # Frische Datei: alles leer (n/v), Quelle = default.
+    snap = store.snapshot()
+    assert snap["claude_5h_pct"] is None
+    assert snap["source"] == "default"
+
+    # Speichern + Live-Reload: Werte kommen zurück.
+    saved = store.save(
+        {
+            "claude_5h_pct": 6,
+            "claude_5h_reset_at": "2026-06-28T10:39:00Z",
+            "claude_week_pct": 44,
+        }
+    )
+    assert saved["claude_5h_pct"] == 6.0
+    assert saved["claude_week_pct"] == 44.0
+    assert store.values()["claude_5h_reset_at"] == "2026-06-28T10:39:00Z"
+
+    # Ungültige Eingaben werden hart abgelehnt (Route → 400).
+    with pytest.raises(ValueError):
+        store.save({"claude_5h_pct": -1})
+    with pytest.raises(ValueError):
+        store.save({"claude_5h_reset_at": "kein-datum"})
 
 
 def test_provider_budget_endpoints() -> None:

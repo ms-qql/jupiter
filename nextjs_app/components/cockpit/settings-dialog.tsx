@@ -5,6 +5,7 @@
 //  - Trust-Policy (PROJ-10): abgestuftes Vertrauen + Phasen-Übergangs-Gate.
 //  - Watchdog (PROJ-16): Reißleine — Token-/Zeit-/Wiederholungs-/Schreib-Limits.
 //  - Liveness (PROJ-27): verifizierter Heartbeat + Auto-Reanimierung hängender Sessions.
+//  - Budget (PROJ-52): Schätz-Quoten für den Sidebar-Token-Budget-Monitor (Claude/Codex).
 //  - Sprache (PROJ-20): Quelle der Push-to-Talk-Transkription (lokal/Groq).
 // Über das Zahnrad im Mission-Control-Header.
 
@@ -27,6 +28,7 @@ import { LivenessControl } from "./liveness-control";
 import { TranscriptionControl } from "./transcription-control";
 import { RegistryControl } from "./registry-control";
 import { EngineModelsControl } from "./engine-models-control";
+import { ProviderBudgetControl } from "./provider-budget-control";
 
 export function SettingsDialog() {
   return (
@@ -51,6 +53,7 @@ export function SettingsDialog() {
             <TabsTrigger value="policy">Trust-Policy</TabsTrigger>
             <TabsTrigger value="watchdog">Watchdog</TabsTrigger>
             <TabsTrigger value="liveness">Liveness</TabsTrigger>
+            <TabsTrigger value="budget">Budget</TabsTrigger>
             <TabsTrigger value="sprache">Sprache</TabsTrigger>
             <TabsTrigger value="modelle">Modelle</TabsTrigger>
             <TabsTrigger value="registry">Registry</TabsTrigger>
@@ -71,6 +74,11 @@ export function SettingsDialog() {
           <TabsContent value="liveness" className="py-2">
             <ScrollArea className="max-h-[60vh] pr-3">
               <LivenessControl />
+            </ScrollArea>
+          </TabsContent>
+          <TabsContent value="budget" className="py-2">
+            <ScrollArea className="max-h-[60vh] pr-3">
+              <ProviderBudgetControl />
             </ScrollArea>
           </TabsContent>
           <TabsContent value="sprache" className="py-2">

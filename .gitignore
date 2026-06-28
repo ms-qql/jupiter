@@ -51,5 +51,8 @@ backend/config/consumers.yaml
 # PROJ-27/32/45: Laufzeit-Liveness-Schwellen (nutzer-editiert, live mtime-Reload) — nicht versionieren.
 backend/config/liveness.yaml
 
+# PROJ-52: Laufzeit-Provider-Budget-Quoten (nutzer-editiert, live mtime-Reload) — nicht versionieren.
+backend/config/provider_budgets.yaml
+
 # PROJ-26: Marktplatz/Registry — installierte Pakete + Import/Export-Staging (Laufzeit-Daten).
 backend/registry/

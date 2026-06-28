@@ -27,6 +27,14 @@ _DEFAULT_ENGINES_PATH = str(Path(__file__).resolve().parent.parent / "config" / 
 # Voll-Scope-Konsument, falls ein Key gesetzt ist). Live mtime-geprüft wie engines.yaml.
 _DEFAULT_CONSUMERS_PATH = str(Path(__file__).resolve().parent.parent / "config" / "consumers.yaml")
 
+# Standard-Ort der Provider-Budget-Quoten (PROJ-52): backend/config/provider_budgets.yaml.
+# Muss NICHT existieren — fehlt/defekt → eingebaute Schätz-Defaults (live editierbar in
+# den Einstellungen, mtime-geprüft wie Watchdog/Liveness). Quoten ändern sich providerseitig
+# häufig, darum bewusst datei-/UI-gepflegt statt nur env.
+_DEFAULT_PROVIDER_BUDGETS_PATH = str(
+    Path(__file__).resolve().parent.parent / "config" / "provider_budgets.yaml"
+)
+
 # Standard-Ort der Liveness-Schwellen (PROJ-27): backend/config/liveness.yaml. Muss
 # NICHT existieren — fehlt/defekt → eingebaute konservative Defaults (nie „kein Liveness";
 # Auto-Reanimierung mit hartem Limit). Live mtime-geprüft wie Policy/Watchdog.
@@ -184,11 +192,14 @@ class Settings(BaseSettings):
     provider_budget_timeout_seconds: float = 10.0
     provider_budget_force_refresh_min_seconds: int = 60
     # Optionale Fallback-Quoten für lokale Schätzung. 0 = unbekannt → UI zeigt n/v
-    # statt erfundener Prozentwerte.
+    # statt erfundener Prozentwerte. Live-Quelle ist provider_budgets.yaml (UI-editierbar);
+    # diese env-Felder bleiben als letzter Fallback, wenn kein Store gesetzt ist (Tests).
     provider_budget_claude_5h_tokens: int = 0
     provider_budget_claude_week_tokens: int = 0
     provider_budget_codex_5h_tokens: int = 0
     provider_budget_codex_week_tokens: int = 0
+    # Datei mit den UI-editierbaren Schätz-Quoten (live, mtime-geprüft).
+    provider_budgets_config_path: str = _DEFAULT_PROVIDER_BUDGETS_PATH
 
     # --- Decision Cards / Freigabe-Hook (PROJ-4) ---------------------------
     # Freigabe-Flow aktivieren: Sessions starten mit dem PreToolUse-Hook.

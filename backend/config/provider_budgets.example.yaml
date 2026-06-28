@@ -1,0 +1,13 @@
+# PROJ-52 — Budget-Schnappschüsse für den Sidebar-Token-Budget-Monitor (Vorlage).
+# Kopiere nach provider_budgets.yaml oder pflege die Werte im UI-Tab „Budget".
+# Pro Provider/Fenster: Prozent (leer/null = unbekannt → Sidebar zeigt n/v) +
+# Reset-Zeitpunkt (ISO 8601, UTC; leer = automatisch jetzt + Fensterdauer).
+# Quelle sind die echten Verbrauchszahlen des Providers (z. B. Claude `/usage`).
+claude_5h_pct: 6
+claude_5h_reset_at: "2026-06-28T10:39:00Z"
+claude_week_pct: 44
+claude_week_reset_at: "2026-07-01T19:59:00Z"
+codex_5h_pct: null
+codex_5h_reset_at: null
+codex_week_pct: null
+codex_week_reset_at: null

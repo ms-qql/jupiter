@@ -459,6 +459,31 @@ export interface WatchdogSetting extends WatchdogLimits {
   warning: string | null;
 }
 
+// --- PROJ-52: Provider-Budget-Schnappschüsse (manuell gepflegt, Sidebar-Monitor) ---
+
+/** Nutzergepflegter Schnappschuss je Provider/Fenster: Prozent (null = n/v) + Reset
+ *  (ISO 8601, null = automatisch). Quelle sind die echten Provider-Zahlen (z. B. Claude `/usage`). */
+export interface ProviderBudgetLimits {
+  claude_5h_pct: number | null;
+  claude_5h_reset_at: string | null;
+  claude_week_pct: number | null;
+  claude_week_reset_at: string | null;
+  codex_5h_pct: number | null;
+  codex_5h_reset_at: string | null;
+  codex_week_pct: number | null;
+  codex_week_reset_at: string | null;
+}
+
+/** Gesamte Budget-Config (GET /settings/provider-budgets) — Werte + Herkunft/Warnung. */
+export interface ProviderBudgetSetting extends ProviderBudgetLimits {
+  /** Herkunft: „config/provider_budgets.yaml" oder „default" (leer → n/v). */
+  source: string;
+  /** Warnung bei kaputter/ungültiger Config (sonst null). */
+  warning: string | null;
+  /** Auto-Refresh-Intervall der Sidebar-Anzeige (Minuten) — read-only Info. */
+  refresh_minutes: number;
+}
+
 // --- PROJ-27: Verifizierter Liveness-Indikator + Auto-Reanimierung ----------
 
 /** Konfigurierbare Liveness-Schwellen (editierbarer Teil von GET/PUT /settings/liveness).

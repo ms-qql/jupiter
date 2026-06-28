@@ -243,10 +243,13 @@ class ProviderBudgetService:
         ("codex", "Codex"),
     )
 
-    def __init__(self, repo, *, registry=engine_registry, cfg=settings) -> None:
+    def __init__(self, repo, *, registry=engine_registry, cfg=settings, store=None) -> None:
         self._repo = repo
         self._registry = registry
         self._settings = cfg
+        # Live-Quelle der Schätz-Quoten (UI-editierbar, PROJ-52). Ohne Store fallen die
+        # Limits auf die env-Felder von ``cfg`` zurück (Rückwärtskompatibilität/Tests).
+        self._store = store
         self._snapshot: dict | None = None
         self._snapshot_at: datetime | None = None
         self._last_force_at: datetime | None = None
@@ -267,6 +270,11 @@ class ProviderBudgetService:
         if self._snapshot is None or self._snapshot_at is None:
             return False
         return (now - self._snapshot_at).total_seconds() < self.ttl_seconds
+
+    def invalidate(self) -> None:
+        """Cache verwerfen, damit der nächste Abruf frisch baut (z. B. nach Quoten-Änderung)."""
+        self._snapshot = None
+        self._snapshot_at = None
 
     async def snapshot(self) -> dict:
         now = self._now()
@@ -327,13 +335,19 @@ class ProviderBudgetService:
         return "available", None
 
     def _windows(self, provider: str) -> list[_WindowSpec]:
-        prefix = f"provider_budget_{provider}"
-        limit_5h = int(getattr(self._settings, f"{prefix}_5h_tokens", 0) or 0)
-        limit_week = int(getattr(self._settings, f"{prefix}_week_tokens", 0) or 0)
+        limit_5h, limit_week = self._limits_for(provider)
         return [
             _WindowSpec("5h", "5h", timedelta(hours=5), limit_5h),
             _WindowSpec("week", "Woche", timedelta(days=7), limit_week),
         ]
+
+    def _limits_for(self, provider: str) -> tuple[int, int]:
+        """Token-Quoten für (5h, Woche) aus den env-Feldern (Legacy-Schätzpfad, ohne Store)."""
+        prefix = f"provider_budget_{provider}"
+        return (
+            int(getattr(self._settings, f"{prefix}_5h_tokens", 0) or 0),
+            int(getattr(self._settings, f"{prefix}_week_tokens", 0) or 0),
+        )
 
     def _window_budget(
         self,
@@ -345,6 +359,10 @@ class ProviderBudgetService:
     ) -> dict:
         if availability != "available":
             return self._unavailable_window(spec, now, "Provider nicht verfügbar.")
+        # Produktivpfad (PROJ-52): vom Nutzer gepflegter Schnappschuss aus den Einstellungen.
+        if self._store is not None:
+            return self._manual_window(provider, spec, now)
+        # Legacy-Schätzpfad (ohne Store): Verbrauch aus lokalen Tokens / konfigurierter Quote.
         if spec.limit_tokens <= 0:
             return self._unavailable_window(
                 spec,
@@ -364,6 +382,38 @@ class ProviderBudgetService:
             "reset_at": reset_at.isoformat(),
             "quality": "estimated",
             "source": "local_usage_estimate",
+            "updated_at": now.isoformat(),
+            "error": None,
+        }
+
+    def _manual_window(self, provider: str, spec: _WindowSpec, now: datetime) -> dict:
+        """Fenster aus dem nutzergepflegten Schnappschuss (Prozent + Reset) bauen.
+
+        Leer ⇒ ``n/v`` (keine erfundenen Werte). Der überschrittene Reset wird im
+        Frontend automatisch als *veraltet* markiert (resolveWindowQuality).
+        """
+        values = self._store.values()
+        pct = values.get(f"{provider}_{spec.key}_pct")
+        if pct is None:
+            return self._unavailable_window(
+                spec,
+                now,
+                "Kein Wert gepflegt - in den Einstellungen unter Budget eintragen.",
+            )
+        reset_raw = values.get(f"{provider}_{spec.key}_reset_at")
+        # Python 3.10 fromisoformat kennt kein "Z" → vor dem Parsen normalisieren.
+        reset_at = _parse_dt(str(reset_raw).replace("Z", "+00:00")) if reset_raw else None
+        if reset_at is None:
+            reset_at = now + spec.duration
+        return {
+            "window": spec.key,
+            "label": spec.label,
+            "used_pct": round(float(pct), 1),
+            "used_tokens": None,
+            "limit_tokens": None,
+            "reset_at": reset_at.isoformat(),
+            "quality": "live",
+            "source": "manual_input",
             "updated_at": now.isoformat(),
             "error": None,
         }

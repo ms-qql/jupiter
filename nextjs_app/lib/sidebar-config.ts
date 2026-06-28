@@ -7,6 +7,7 @@
 import {
   AppWindowIcon,
   BotIcon,
+  Code2Icon,
   FileTextIcon,
   FolderIcon,
   LayoutDashboardIcon,
@@ -22,7 +23,8 @@ export type SidebarSectionId =
   | "workspace"
   | "sessions"
   | "orchestration"
-  | "micro";
+  | "micro"
+  | "budget";
 
 export interface SidebarSectionDef {
   id: SidebarSectionId;
@@ -56,6 +58,9 @@ export const SIDEBAR_SECTIONS: SidebarSectionDef[] = [
   // ODER nativ in Jupiter programmierte App (kind=native, Render via
   // microapps-registry.ts). Excalidraw ist die erste (eingebettete) Micro-App.
   { id: "micro", label: "Micro-Apps" },
+  // PROJ-52: Die Verbrauchsanzeige sitzt visuell unten in der Sidebar, wird aber
+  // wie Orchestration/Micro-Apps über dasselbe Konfig-Panel steuerbar gemacht.
+  { id: "budget", label: "Verbrauch" },
 ];
 
 /**
@@ -89,6 +94,22 @@ export const SIDEBAR_ITEMS: SidebarItemDef[] = [
     section: "sessions",
     defaultVisible: true,
     defaultOrder: 0,
+  },
+  {
+    key: budgetProviderItemKey("claude"),
+    label: "Claude-Verbrauch",
+    icon: BotIcon,
+    section: "budget",
+    defaultVisible: true,
+    defaultOrder: 0,
+  },
+  {
+    key: budgetProviderItemKey("codex"),
+    label: "Codex-Verbrauch",
+    icon: Code2Icon,
+    section: "budget",
+    defaultVisible: true,
+    defaultOrder: 1,
   },
 ];
 
@@ -169,4 +190,14 @@ export function microAppItemDef(
     defaultVisible: true,
     defaultOrder: order,
   };
+}
+
+// --- PROJ-52: Verbrauchsanzeige je Provider -------------------------------
+
+export function budgetProviderItemKey(provider: "claude" | "codex"): string {
+  return `budget:${provider}`;
+}
+
+export function budgetProviderFromItemKey(itemKey: string): string {
+  return itemKey.startsWith("budget:") ? itemKey.slice("budget:".length) : itemKey;
 }
