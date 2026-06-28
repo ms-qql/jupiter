@@ -226,3 +226,83 @@ async def test_failing_probe_degrades_to_fallback() -> None:
     snap = ProviderBudgetSnapshot.model_validate(await svc.snapshot())
     claude = next(p for p in snap.providers if p.provider == "claude")
     assert all(w.quality == "unavailable" for w in claude.windows)
+
+
+# --------------------------------------------------------------------- QA-Edge-Cases
+
+
+def test_parse_claude_usage_over_100_percent_not_truncated() -> None:
+    # Acceptance: Überziehung muss als echter Wert > 100 % erscheinen, nicht bei 100 gekappt.
+    out = parse_claude_usage("Current session: 105% used · resets Jun 28, 10:40am (UTC)", NOW)
+    assert out["5h"].used_pct == 105.0
+
+
+def test_parse_claude_usage_missing_reset_keeps_pct() -> None:
+    # Unparsebarer/fehlender Reset darf den Prozentwert nicht verwerfen.
+    out = parse_claude_usage("Current session: 12% used · resets irgendwann bald", NOW)
+    assert out["5h"].used_pct == 12.0
+    assert out["5h"].reset_at is None
+
+
+def test_read_codex_rate_limits_skips_garbage_lines(tmp_path) -> None:
+    f = tmp_path / "rollout-y.jsonl"
+    f.write_text(
+        'das ist "rate_limits" aber kein JSON\n'  # enthält Marker, ist aber kaputt → übersprungen
+        + json.dumps({"info": {"rate_limits": {"primary": {"used_percent": 7.0}}}}) + "\n",
+        encoding="utf-8",
+    )
+    rl = read_codex_rate_limits(str(f))
+    assert rl["primary"]["used_percent"] == 7.0
+
+
+def test_read_codex_rate_limits_none_when_no_event(tmp_path) -> None:
+    f = tmp_path / "rollout-z.jsonl"
+    f.write_text(json.dumps({"type": "session_meta"}) + "\n", encoding="utf-8")
+    assert read_codex_rate_limits(str(f)) is None
+
+
+def _row(**over) -> dict:
+    base = {"session_id": "s", "engine": "claude", "created_at": NOW.isoformat(), "tokens_used": 0}
+    base.update(over)
+    return base
+
+
+def test_endpoint_surfaces_live_values() -> None:
+    """Acceptance: echte Live-Werte erscheinen über /usage/provider-budgets als quality=live."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.routes import usage as usage_route
+
+    class _Repo:
+        async def list_all(self):
+            return [_row(tokens_used=1000)]
+
+    probes = {"claude": _probe({"5h": LiveWindow(33.0, NOW + timedelta(hours=2), "cli_live:claude_usage")})}
+    app = FastAPI()
+    app.state.usage = object()
+    app.state.provider_budgets = _FixedClock(
+        _Repo(), registry=_FakeRegistry(), cfg=_Cfg(), live_probes=probes
+    )
+    app.include_router(usage_route.router)
+    client = TestClient(app)
+
+    body = ProviderBudgetSnapshot.model_validate(client.get("/usage/provider-budgets").json())
+    claude = next(p for p in body.providers if p.provider == "claude")
+    w5h = next(w for w in claude.windows if w.window == "5h")
+    assert w5h.quality == "live"
+    assert w5h.used_pct == 33.0
+
+
+def test_live_window_exposes_no_secret_fields() -> None:
+    # Red-Team: das Live-Fenster darf nur die Lagebild-Felder enthalten, keine Tokens/Plan/Keys.
+    svc = _FixedClock(_FakeRepo(), registry=_FakeRegistry(), cfg=_Cfg())
+    win = svc._live_window(  # noqa: SLF001 — gezielter Whitebox-Check
+        type("S", (), {"key": "5h", "label": "5h", "duration": timedelta(hours=5)})(),
+        NOW,
+        LiveWindow(20.0, NOW + timedelta(hours=1), "cli_live:codex_session"),
+    )
+    assert set(win) == {
+        "window", "label", "used_pct", "used_tokens", "limit_tokens",
+        "reset_at", "quality", "source", "updated_at", "error",
+    }
+    assert win["used_tokens"] is None and win["limit_tokens"] is None

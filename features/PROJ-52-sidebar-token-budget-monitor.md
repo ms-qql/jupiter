@@ -451,3 +451,39 @@ ProviderBudgetService  (backend/app/engine/usage.py)
 - Voller Backend-Lauf: `python -m pytest` → **933 passed, 1 warning** (bekannte Starlette-Cookie-Deprecation, nicht PROJ-52).
 - **Echter Host-Smoke** mit den realen Probes: Claude → 5h 30 %, Woche 46 % (+ Reset-UTC); Codex → 5h 20 %, Woche 20 % (+ Reset-UTC). Beide Provider liefern echte Live-Werte.
 - Hinweis: `conda` ist in dieser Shell kein Kommando; ausgeführt via `/home/dev/miniconda3/envs/Dashboard/bin/python`.
+
+## QA Test Results — Iteration 2 (Live-Werte)
+**Datum:** 2026-06-28 · **QA:** abc-qa · **Branch:** dev · **Entscheidung:** Approved / production-ready.
+
+### Test-Matrix
+- Fokus Live + Budget: `python -m pytest tests/test_proj52_live_budgets.py tests/test_proj52_provider_budgets.py` → **31 passed**.
+- Voller Backend-Lauf: `python -m pytest` → **939 passed, 1 warning** (bekannte Starlette-Cookie-Deprecation in `test_proj25_auth.py`, nicht PROJ-52). Vorher 933 → +6 neue QA-Tests, keine Regression.
+- Echter Host-Smoke (reale Probes, nicht gemockt): Claude 5h/Woche und Codex 5h/Woche liefern echte Prozentwerte + UTC-Reset → bestätigt, dass statt `n/v` nun `live` erscheint.
+
+### Acceptance Criteria (Iterationsziel)
+- **Echte aktuelle Werte statt nur manueller:** erfüllt — Live-Quelle hat Vorrang (`quality=live`, `source=cli_live:*`), per Host-Smoke + Endpoint-Integration (`test_endpoint_surfaces_live_values`) belegt.
+- **Claude über `/usage`:** `claude -p "/usage"` headless geparst (`parse_claude_usage`), inkl. Reset-UTC; Sonnet-only-Zeile ignoriert.
+- **Codex über `status`-Äquivalent:** `/status` ist nicht headless — stattdessen read-only aus dem `rate_limits`-Event der jüngsten Rollout-Datei (`primary`=5h, `secondary`=Woche). Korrektur zur ursprünglichen Hypothese, gleiches Ergebnis.
+- **Keine falsche Präzision / saubere Degradation:** Probe-Fehler, fehlende Datei, partielle Daten und nicht verfügbarer Provider fallen auf Schätzung/manuell/`n/v` zurück (`test_failing_probe_degrades_to_fallback`, `test_partial_live_falls_back_for_other_window`).
+- **Reset überschritten → veraltet:** `test_live_window_past_reset_is_stale` → `quality=stale`.
+- **Wert > 100 %:** `test_parse_claude_usage_over_100_percent_not_truncated` → 105 % nicht gekappt.
+
+### Edge Cases
+- Garbage-/Nicht-JSON-Zeile mit `rate_limits`-Marker in Codex-Rollout → übersprungen, letztes gültiges Event gewinnt.
+- Claude-Output ohne parsebaren Reset → Prozentwert bleibt erhalten, `reset_at=None` (Service füllt `now+duration`).
+- Codex-Datei vorhanden, aber ohne `rate_limits`-Event → `n/v`-Fallback.
+- Probe deaktiviert per Config (`provider_budget_codex_rollout_enabled=False`) → leer, kein Abruf.
+
+### Security (Red-Team)
+- **Auth:** `usage.router` in `main.py:284` mit `dependencies=auth_gate` eingebunden — die Live-Endpunkte liegen hinter derselben JWT-Grenze.
+- **Command-Injection:** Claude-Probe nutzt `create_subprocess_exec` (keine Shell) mit **fixem** argv `[claude_bin, "-p", "/usage"]` — kein User-Input fließt in die Kommandozeile. Codex-Probe liest aus fixem Config-Verzeichnis per Glob, ebenfalls ohne User-Input.
+- **Keine Secret-Exposition:** Live-Fenster enthält ausschließlich Lagebild-Felder (`test_live_window_exposes_no_secret_fields`); `plan_type`, Token- und Limit-Zahlen werden nicht in die API-Antwort übernommen.
+- **DoS/Last:** Probes laufen nur einmal je 30-Min-Snapshot; manueller Refresh rate-limited (429). Subprozess mit hartem Timeout (20 s) + `to_thread`-Dateizugriff blockieren den Event-Loop nicht.
+
+### Findings
+- Keine Critical-/High-/Medium-Findings.
+- **Low / offen (kein Blocker):** Frontend-Tooltip nennt die konkrete Live-Quelle noch nicht (Widget rendert `quality=live` korrekt, da es nur auf `quality` reagiert). Optionaler Feinschliff, falls gewünscht.
+- **Nicht ausgeführt:** kein separater Browser-E2E (Frontend strukturell unverändert; Datenpfad über Host-Smoke + Endpoint-Integrationstest abgedeckt). Empfehlung: nach Deploy einmal in der UI prüfen, dass Claude/Codex `live`-Prozentwerte zeigen.
+
+### Ergebnis
+Keine Critical- oder High-Findings. PROJ-52 Iteration 2 ist aus QA-Sicht **production-ready**.
