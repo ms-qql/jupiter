@@ -1,6 +1,6 @@
 # PROJ-2: Vault-Anbindung als Dienst
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-22 (QA bestanden — READY; QA-2.1 behoben)
 

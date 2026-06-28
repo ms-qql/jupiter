@@ -138,6 +138,15 @@ engines:
     group: micro
     icon: server
 
+  # PROJ-53: Buch-Nuggets — native Micro-App. Buch (Upload/URL: pdf/epub/txt/docx)
+  # → headless `hal-book-nuggets`-Session → Nugget (md + Abbildungen + PDF, inkl.
+  # Contra-Kapitel) im Hal-Vault. Code unter components/microapps/book_nuggets/.
+  - key: book_nuggets
+    label: "Buch-Nuggets"
+    kind: native
+    group: micro
+    icon: book-open
+
   # --- Tiefe 3: Launch-Button ---------------------------------------------
   # Für nicht integrierbare Tools: öffnet/startet extern.
   - key: gpt-web

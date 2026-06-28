@@ -18,6 +18,11 @@ from .video_summary_queue import (
     VideoSummaryRepository,
     build_video_summary_repo,
 )
+from .book_nuggets_queue import (
+    BookNuggetsRepository,
+    SqliteBookNuggetsRepository,
+    build_book_nuggets_repo,
+)
 from .auth_store import SqliteAuthRepository, build_auth_repo
 
 __all__ = [
@@ -28,6 +33,9 @@ __all__ = [
     "VideoSummaryRepository",
     "SqliteVideoSummaryRepository",
     "build_video_summary_repo",
+    "BookNuggetsRepository",
+    "SqliteBookNuggetsRepository",
+    "build_book_nuggets_repo",
     "SqliteAuthRepository",
     "build_auth_repo",
 ]

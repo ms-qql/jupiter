@@ -1,6 +1,6 @@
 # PROJ-1: Engine-Treiber — Claude-Max-Session headless
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-22 (Backend + QA abgeschlossen; QA-1/QA-2 behoben)
 

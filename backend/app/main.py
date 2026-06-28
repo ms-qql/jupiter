@@ -18,9 +18,11 @@ from fastapi import Depends
 
 from .config import settings
 from .db import (
+    BookNuggetsRepository,
     SessionIndexRepository,
     VideoSummaryRepository,
     build_auth_repo,
+    build_book_nuggets_repo,
     build_session_index_repo,
     build_video_summary_repo,
 )
@@ -45,9 +47,11 @@ from .engine.provider_budget_live import build_live_probes
 from .engine.usage import ProviderBudgetService, UsageService
 from .engine.vault import VaultService
 from .engine.video_summary import VideoSummaryWorker
+from .engine.book_nuggets import BookNuggetsWorker
 from .routes import (
     agents,
     auth as auth_routes,
+    book_nuggets,
     challenge,
     constitution,
     coordinator,
@@ -108,6 +112,21 @@ async def _video_summary_loop(app: FastAPI) -> None:
             logger.warning("Video-Summary-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
 
 
+async def _book_nuggets_loop(app: FastAPI) -> None:
+    """PROJ-53: niederfrequenter Worker-Tick, der die Buch-Nuggets-Warteschlange
+    sequenziell abarbeitet. Defensiv — ein Fehler je Tick wird geloggt, der Loop
+    lebt weiter."""
+    interval = settings.book_nuggets_poll_interval_seconds
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            await app.state.book_nuggets.tick()
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001 — Worker-Tick nie fatal (Loop überlebt).
+            logger.warning("Buch-Nuggets-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
+
+
 async def _coordinator_loop(app: FastAPI) -> None:
     """PROJ-22 (M3): niederfrequenter Tick, der eingereihte Flotten-Tickets nachrückt,
     sobald ein Engine-Slot frei wird. Defensiv — ein Fehler je Tick wird geloggt, der
@@ -144,12 +163,15 @@ def create_app(
     session_index_repo: SessionIndexRepository | None = None,
     engine_factory: Callable[..., EngineDriver] | None = None,
     video_summary_repo: VideoSummaryRepository | None = None,
+    book_nuggets_repo: BookNuggetsRepository | None = None,
 ) -> FastAPI:
     # PROJ-14: Live-Index-Repository (SQLite, host-nativ). Tests können eine
     # eigene/In-Memory-Variante einschleusen; ohne Angabe greift die Settings-Factory.
     repo = session_index_repo or build_session_index_repo(settings)
     # PROJ-41: Warteschlangen-Repo der Video-Summary-Micro-App (eigene SQLite-Datei).
     vs_repo = video_summary_repo or build_video_summary_repo(settings)
+    # PROJ-53: Warteschlangen-Repo der Buch-Nuggets-Micro-App (eigene SQLite-Datei).
+    bn_repo = book_nuggets_repo or build_book_nuggets_repo(settings)
     # PROJ-25: Auth-Persistenz (Konten + Refresh-Register) auf derselben SQLite-Datei.
     auth_repo = build_auth_repo(settings)
 
@@ -175,6 +197,12 @@ def create_app(
             await app.state.video_summary.startup()
         except Exception:  # noqa: BLE001 — Queue-Persistenz ist best-effort.
             pass
+        # PROJ-53: Buch-Nuggets-Warteschlange initialisieren (Schema + verwaiste
+        # running→pending) — best-effort, die App startet auch ohne.
+        try:
+            await app.state.book_nuggets.startup()
+        except Exception:  # noqa: BLE001 — Queue-Persistenz ist best-effort.
+            pass
         # PROJ-42: ersten Metrik-Snapshot ziehen, damit /current sofort Daten liefert.
         try:
             await app.state.metrics.startup()
@@ -184,6 +212,8 @@ def create_app(
         liveness_task = asyncio.create_task(_liveness_loop(app))
         # PROJ-41: Video-Summary-Worker-Loop (sequenzielle Queue-Abarbeitung).
         video_summary_task = asyncio.create_task(_video_summary_loop(app))
+        # PROJ-53: Buch-Nuggets-Worker-Loop (sequenzielle Queue-Abarbeitung).
+        book_nuggets_task = asyncio.create_task(_book_nuggets_loop(app))
         # PROJ-42: periodischer Host-Metrik-Tick (VPS-Admin).
         metrics_task = asyncio.create_task(_metrics_loop(app))
         # PROJ-22 (M3): Flotten-Warteschlange nachrücken, sobald Slots frei werden.
@@ -191,7 +221,7 @@ def create_app(
         try:
             yield
         finally:
-            for task in (liveness_task, video_summary_task, metrics_task, coordinator_task):
+            for task in (liveness_task, video_summary_task, book_nuggets_task, metrics_task, coordinator_task):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
@@ -203,6 +233,7 @@ def create_app(
                 pass
             await repo.close()
             await vs_repo.close()  # PROJ-41
+            await bn_repo.close()  # PROJ-53
             await auth_repo.close()  # PROJ-25
 
     app = FastAPI(title="Jupiter", version="0.1.0", lifespan=lifespan)
@@ -258,6 +289,9 @@ def create_app(
     # PROJ-41: Video-Summary-Worker (Warteschlange + Drossel/Cooldown/Zeitplan).
     app.state.video_summary_repo = vs_repo
     app.state.video_summary = VideoSummaryWorker(app.state.manager, vs_repo)
+    # PROJ-53: Buch-Nuggets-Worker (Warteschlange + sequenzielle Verarbeitung).
+    app.state.book_nuggets_repo = bn_repo
+    app.state.book_nuggets = BookNuggetsWorker(app.state.manager, bn_repo)
     # PROJ-22: Multi-Agent-Dispatch — Koordinator über dem Session-Treiber + Vault-Vertrag.
     app.state.coordinator = CoordinatorService(app.state.manager, vault_service)
     # PROJ-23: Cross-Agent-Review — Challenge eines Artefakts durch eine andere Engine.
@@ -285,6 +319,7 @@ def create_app(
     app.include_router(agents.router, dependencies=auth_gate)
     app.include_router(transcription.router, dependencies=auth_gate)
     app.include_router(video_summary.router, dependencies=auth_gate)
+    app.include_router(book_nuggets.router, dependencies=auth_gate)  # PROJ-53
     app.include_router(coordinator.router, dependencies=auth_gate)
     app.include_router(challenge.router, dependencies=auth_gate)
     app.include_router(terminal.router, dependencies=auth_gate)

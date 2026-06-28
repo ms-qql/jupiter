@@ -314,6 +314,8 @@ class Settings(BaseSettings):
         "pdf", "txt", "md", "markdown", "rtf", "csv", "tsv", "json", "yaml",
         "yml", "log", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt",
         "ods", "odp",
+        # E-Books (PROJ-53 Buch-Nuggets; mobi = Fast-Follow/Phase 2, daher hier nicht)
+        "epub",
         # Archive
         "zip", "tar", "gz", "tgz",
     }
@@ -363,6 +365,27 @@ class Settings(BaseSettings):
     # Ersetzt die frühere Auto-Kategorie-Wahl: ALLE Zusammenfassungen landen hier, damit
     # der Nutzer sie immer am selben Ort findet. Speist auch die Bibliotheks-Kachel.
     video_summary_output_subdir: str = "04 Resources/Video Summaries"
+
+    # --- Buch-Nuggets (PROJ-53) ------------------------------------------
+    # Native Micro-App: reiht Bücher (Upload/URL: pdf/epub/txt/docx) ein und lässt
+    # sie von einer headless Claude-Session über den `hal-book-nuggets`-Skill in ein
+    # strukturiertes Nugget (Markdown + Abbildungen + konsolidierte PDF, inkl.
+    # Contra-Kapitel) im Hal-Vault umwandeln. Warteschlange + Einstellungen leben in
+    # einer eigenen SQLite-Datei (überlebt Neustart, Akzeptanzkriterium).
+    book_nuggets_db_path: str = str(Path.home() / "jupiter-data" / "book_nuggets.db")
+    # Poll-Frequenz des Hintergrund-Workers (Sek.) — niedrigfrequent, die Skill-Läufe
+    # dauern Minuten.
+    book_nuggets_poll_interval_seconds: float = 5.0
+    # Default-Hauptmodell (Konsolidierung) der Verarbeitungs-Session, falls am Eintrag
+    # keins gesetzt ist. permission_mode = bypassPermissions (headless, kein Gate).
+    book_nuggets_model: str = "opus"
+    book_nuggets_permission_mode: str = "bypassPermissions"
+    # Arbeitsverzeichnis (cwd/Scope) der Sessions. Default = Hal-Vault. MUSS innerhalb
+    # allowed_roots liegen + existieren.
+    book_nuggets_project_path: str = "/home/dev/tools/Hal"
+    # Fester Ziel-Unterordner (relativ zum Vault-Root). Jedes Nugget landet in einem
+    # eigenen Unterordner `<Autor>-<Titel>/`. Speist auch die Bibliotheks-Kachel.
+    book_nuggets_output_subdir: str = "04 Resources/Buch_Nuggets"
 
     # --- VPS-Admin Metriken (PROJ-42) ------------------------------------
     # Read-only Host-Metriken (CPU/RAM/Disk/Load/Swap/Netz/Uptime/Prozesse) +

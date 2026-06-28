@@ -1,6 +1,6 @@
 # PROJ-3: Cockpit — Mission Control + Session-Kanban + Ampel-Kacheln
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-22
 

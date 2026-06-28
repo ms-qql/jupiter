@@ -70,6 +70,7 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-44 | Video Summary — Standard-Ordner · Bibliotheks-Kachel · Modellwahl | P1 | Micro-Apps | Planned |
 | PROJ-51 | Engine- und Modellverwaltung in den App-Einstellungen | P1 | Engine-Layer / Settings | Deployed |
 | PROJ-52 | Sidebar Token-Budget-Monitor für Claude und Codex | P1 | #25, #28, Engine-Layer | Deployed |
+| PROJ-53 | Buch-Nuggets (native Micro-App: Buch → KI-Kurzform inkl. Contra-Kapitel → Hal) | P1 | Micro-Apps | Planned |
 
 ---
 

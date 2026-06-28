@@ -65,6 +65,13 @@ import type {
   VideoSummaryAddResult,
   VideoSummarySettings,
   VideoSummaryLibraryItem,
+  BookNuggetsQueue,
+  BookNuggetsAddRequest,
+  BookNuggetsAddOutcome,
+  BookNuggetsDuplicate,
+  BookNuggetsEstimate,
+  BookNuggetsSettings,
+  BookNuggetsLibraryItem,
   MetricsSnapshot,
   MetricsStatus,
   TerminalInfo,
@@ -1068,6 +1075,91 @@ export function getVideoSummaryLibrary(
 /** PROJ-44: Deeplink, der eine Vault-Notiz im MD-Reader (PROJ-7) öffnet. */
 export function mdReaderUrl(absolutePath: string): string {
   return `/doku?source=vault&path=${encodeURIComponent(absolutePath)}`;
+}
+
+// --- PROJ-53: Buch-Nuggets (native Micro-App) ------------------------------
+
+/** Warteschlange + Worker-Zustand (Polling). */
+export function getBookNuggetsQueue(signal?: AbortSignal): Promise<BookNuggetsQueue> {
+  return request<BookNuggetsQueue>("/book-nuggets/queue", { signal });
+}
+
+/** Best-effort-Kostenschätzung VOR dem Einreihen (D7). */
+export function estimateBookNuggets(
+  req: BookNuggetsAddRequest,
+): Promise<BookNuggetsEstimate> {
+  return request<BookNuggetsEstimate>("/book-nuggets/estimate", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+/** Ein Buch einreihen. Liefert ein diskriminiertes Ergebnis: Erfolg ODER
+ *  Duplikat-Konflikt (409, D9) — das generische `request` würde den 409-Body
+ *  (existing_id) verlieren, daher hier eigenes Fetch mit einmaligem Token-Refresh. */
+export async function addBookNuggets(
+  req: BookNuggetsAddRequest,
+): Promise<BookNuggetsAddOutcome> {
+  const init: RequestInit = { method: "POST", body: JSON.stringify(req) };
+  let resp: Response;
+  try {
+    resp = await rawFetch("/book-nuggets/queue", init);
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (resp.status === 401 && (await refreshAccessToken())) {
+    resp = await rawFetch("/book-nuggets/queue", init);
+  }
+  if (resp.status === 409) {
+    const body = await resp.json();
+    return { ok: false, conflict: body as BookNuggetsDuplicate };
+  }
+  if (!resp.ok) {
+    let detail = `Fehler ${resp.status}`;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(detail, resp.status);
+  }
+  return { ok: true, result: await resp.json() };
+}
+
+export function deleteBookNuggetsItem(id: number): Promise<void> {
+  return request<void>(`/book-nuggets/queue/${id}`, { method: "DELETE" });
+}
+
+export function retryBookNuggetsItem(id: number): Promise<BookNuggetsQueue> {
+  return request<BookNuggetsQueue>(`/book-nuggets/queue/${id}/retry`, {
+    method: "POST",
+  });
+}
+
+export function runBookNuggetsNow(): Promise<BookNuggetsQueue> {
+  return request<BookNuggetsQueue>("/book-nuggets/run-now", { method: "POST" });
+}
+
+export function getBookNuggetsLibrary(
+  signal?: AbortSignal,
+): Promise<BookNuggetsLibraryItem[]> {
+  return request<BookNuggetsLibraryItem[]>("/book-nuggets/library", { signal });
+}
+
+export function getBookNuggetsSettings(
+  signal?: AbortSignal,
+): Promise<BookNuggetsSettings> {
+  return request<BookNuggetsSettings>("/book-nuggets/settings", { signal });
+}
+
+export function patchBookNuggetsSettings(
+  patch: Partial<BookNuggetsSettings>,
+): Promise<BookNuggetsSettings> {
+  return request<BookNuggetsSettings>("/book-nuggets/settings", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
 }
 
 // --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------

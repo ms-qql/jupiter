@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-53
+**Next Available ID:** PROJ-54
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -8,12 +8,12 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 
 | ID | Feature | Prio | Status | Abhängigkeiten | Spec |
 |----|---------|------|--------|----------------|------|
-| PROJ-1 | Engine-Treiber: Claude-Max-Session headless | P0 | Approved | — | [Spec](PROJ-1-engine-treiber-claude-headless.md) |
-| PROJ-2 | Vault-Anbindung als Dienst | P0 | Approved | — | [Spec](PROJ-2-vault-anbindung-dienst.md) |
-| PROJ-3 | Cockpit: Mission Control + Kanban + Ampel-Kacheln | P0 | Approved | PROJ-1, PROJ-2 | [Spec](PROJ-3-cockpit-mission-control-kanban.md) |
+| PROJ-1 | Engine-Treiber: Claude-Max-Session headless | P0 | Deployed | — | [Spec](PROJ-1-engine-treiber-claude-headless.md) |
+| PROJ-2 | Vault-Anbindung als Dienst | P0 | Deployed | — | [Spec](PROJ-2-vault-anbindung-dienst.md) |
+| PROJ-3 | Cockpit: Mission Control + Kanban + Ampel-Kacheln | P0 | Deployed | PROJ-1, PROJ-2 | [Spec](PROJ-3-cockpit-mission-control-kanban.md) |
 | PROJ-4 | Decision Cards (Freigabe-Flow) | P0 | Deployed | PROJ-1, PROJ-3 | [Spec](PROJ-4-decision-cards.md) |
 | PROJ-5 | Context-Management & Handover | P0 | Deployed | PROJ-1, PROJ-2, PROJ-3 | [Spec](PROJ-5-context-management-handover.md) |
-| PROJ-6 | Knappheits-Konstitution | P0 | Approved | PROJ-1 | [Spec](PROJ-6-knappheits-konstitution.md) |
+| PROJ-6 | Knappheits-Konstitution | P0 | Deployed | PROJ-1 | [Spec](PROJ-6-knappheits-konstitution.md) |
 | PROJ-7 | MD-Reader | P0 | Deployed | PROJ-2 | [Spec](PROJ-7-md-reader.md) |
 | PROJ-8 | ABC-Workflow-Gantt (Phasen-Fortschritt je Session) | P0 | Deployed | PROJ-3, PROJ-1 | [Spec](PROJ-8-abc-workflow-gantt.md) |
 
@@ -65,6 +65,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-50 | abc-Workflow für die Codex-Engine (portierte Skills + Phasen-Signal) | P1 | Deployed | PROJ-48, PROJ-9, PROJ-8 | [Spec](PROJ-50-abc-workflow-codex-engine.md) |
 | PROJ-51 | Engine- und Modellverwaltung in den App-Einstellungen | P1 | Deployed | PROJ-18, PROJ-48, PROJ-50, PROJ-9 | [Spec](PROJ-51-engine-modellverwaltung-einstellungen.md) |
 | PROJ-52 | Sidebar Token-Budget-Monitor für Claude und Codex | P1 | Approved (Iter. 2: Live-Werte) | PROJ-3, PROJ-19, PROJ-48, PROJ-51 | [Spec](PROJ-52-sidebar-token-budget-monitor.md) |
+| PROJ-53 | Buch-Nuggets (native Micro-App: Buch-Upload/URL → KI-Kurzform inkl. Contra → Hal) | P1 | Deployed | PROJ-40, PROJ-1, PROJ-2, PROJ-11, PROJ-51 | [Spec](PROJ-53-buch-nuggets-microapp.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

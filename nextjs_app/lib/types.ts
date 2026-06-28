@@ -843,6 +843,111 @@ export interface VideoSummaryLibraryItem {
   mtime: string | null;
 }
 
+// --- PROJ-53: Buch-Nuggets (native Micro-App) ------------------------------
+
+/** Status eines Warteschlangen-Eintrags (= UI-Badges). */
+export type BookNuggetsStatus = "pending" | "running" | "done" | "error";
+
+/** Laufzeit-Zustand des Backend-Workers (kein Cooldown/Zeitplan bei Büchern). */
+export type BookNuggetsWorkerStatus = "idle" | "running";
+
+/** Modell-Stufenlogik + erlaubte Modelle (Backend-Whitelist). */
+export type BookNuggetsModelMode = "staged" | "single";
+export type BookNuggetsModel = "haiku" | "sonnet" | "opus";
+export type BookNuggetsSourceType = "url" | "upload";
+export type BookNuggetsOnDuplicate = "overwrite" | "new_version";
+
+/** Ein Eintrag der Buch-Nuggets-Warteschlange (eine Zeile pro Buch). */
+export interface BookNuggetsItem {
+  id: number;
+  owner: string | null;
+  source_type: string;
+  source_ref: string;
+  title: string | null;
+  author: string | null;
+  model_mode: string;
+  model_extract: string;
+  model_consolidate: string;
+  page_limit: number | null;
+  cost_estimate: number | null;
+  status: BookNuggetsStatus;
+  phase: string | null;
+  result_dir: string | null;
+  result_note_path: string | null;
+  result_pdf_path: string | null;
+  error_message: string | null;
+  session_id: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** Worker-Zustand für die UI (Leerlauf · Läuft). */
+export interface BookNuggetsWorkerState {
+  status: BookNuggetsWorkerStatus;
+  draining: boolean;
+  current_id: number | null;
+}
+
+/** Antwort von GET /book-nuggets/queue (+ run-now/retry). */
+export interface BookNuggetsQueue {
+  items: BookNuggetsItem[];
+  state: BookNuggetsWorkerState;
+}
+
+/** Anfrage an POST /book-nuggets/queue bzw. /estimate. */
+export interface BookNuggetsAddRequest {
+  source_type: BookNuggetsSourceType;
+  source_ref: string;
+  model_mode: BookNuggetsModelMode;
+  model_extract: BookNuggetsModel;
+  model_consolidate: BookNuggetsModel;
+  page_limit?: number | null;
+  on_duplicate?: BookNuggetsOnDuplicate | null;
+}
+
+/** Ergebnis von POST /book-nuggets/queue (Erfolg). */
+export interface BookNuggetsAddResult {
+  item: BookNuggetsItem;
+  queue: BookNuggetsItem[];
+}
+
+/** 409-Body bei erkanntem Duplikat (D9) — die UI bietet Overwrite/Neue-Version an. */
+export interface BookNuggetsDuplicate {
+  detail: string;
+  existing_id: number;
+  existing_status: string;
+}
+
+/** Diskriminiertes Ergebnis des Einreihens (Erfolg ODER Duplikat-Konflikt). */
+export type BookNuggetsAddOutcome =
+  | { ok: true; result: BookNuggetsAddResult }
+  | { ok: false; conflict: BookNuggetsDuplicate };
+
+/** Best-effort-Kostenschätzung (POST /book-nuggets/estimate). */
+export interface BookNuggetsEstimate {
+  source_type: string;
+  pages: number | null;
+  est_tokens: number | null;
+  est_cost: number | null;
+}
+
+/** Default-Einstellungen (persistiert). */
+export interface BookNuggetsSettings {
+  default_model_mode: BookNuggetsModelMode;
+  default_model_extract: BookNuggetsModel;
+  default_model_consolidate: BookNuggetsModel;
+  default_page_limit: number | null;
+}
+
+/** Ein bereits erzeugtes Nugget im Standard-Ordner (Vault-Scan). */
+export interface BookNuggetsLibraryItem {
+  title: string;
+  md_path: string;
+  pdf_path: string | null;
+  mtime: string | null;
+}
+
 // --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------
 
 /** Ampel-Status eines Gauges / des Gesamtzustands (spiegelt backend
