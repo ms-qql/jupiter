@@ -40,6 +40,10 @@ export const MICROAPP_REGISTRY: Record<string, MicroAppComponent> = {
   vps_admin: lazy(
     () => import("@/components/microapps/vps_admin/vps-admin-app"),
   ),
+  // PROJ-53: Buch-Nuggets — Buch (Upload/URL) → KI-Kurzform inkl. Contra → Hal.
+  book_nuggets: lazy(
+    () => import("@/components/microapps/book_nuggets/book-nuggets-app"),
+  ),
 };
 
 /** Liefert die native Komponente zu einem key — oder null, wenn nicht registriert

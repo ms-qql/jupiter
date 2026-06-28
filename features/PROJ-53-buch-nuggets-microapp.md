@@ -285,6 +285,25 @@ Modelle: `haiku|sonnet|opus`. Modi: `staged|single`.
 - `nextjs_app/lib/microapps-registry.ts` (`book_nuggets → lazy(import …)`) + Komponente `components/microapps/book_nuggets/`: **Dropzone/Upload** (→ `POST /files/upload`, dann `source_type=upload` + Pfad) **ODER URL-Feld**, Modell-Steuerung (Umschalter staged/single + 1–2 Modell-Dropdowns), Kostenschätzung (`POST /estimate` vor dem Hinzufügen), Queue-Liste mit Polling (`GET /queue`, Phase-Anzeige), Bibliotheks-Tab (`GET /library`), Duplikat-Dialog (409 → overwrite/new_version), Einstellungs-Dialog.
 - **Upload-Fluss:** Datei via bestehendes `/files/upload` ablegen → den zurückgegebenen Pfad als `source_ref` mit `source_type=upload` an `POST /book-nuggets/queue` schicken (kein zweiter Upload-Endpunkt).
 
+## Implementation Notes (Frontend — /abc-frontend, 2026-06-28)
+
+**Branch:** `dev`. Stack: **Next.js** (native Micro-App, PROJ-40/41-Muster) — kein iFrame. `next build` erfolgreich, `tsc`/`eslint` sauber (1 vorbestehender, fremder tsc-Fehler in `lib/md-tree.test.ts` — nicht angefasst).
+
+### Neue/geänderte Dateien
+- `nextjs_app/components/microapps/book_nuggets/book-nuggets-app.tsx` — native Komponente (Default-Export). Enthält: **EingabeKarte** (Quellen-Umschalter **Upload/Drag&Drop ↔ URL**; Upload via bestehendes `POST /files/upload` → Pfad als `source_type=upload`; URL-Feld; **Modell-Steuerung** Umschalter staged/single + 1–2 Modell-Dropdowns; Seitenlimit; **Kostenschätzung** „Kosten schätzen" → `POST /estimate`), **SteuerLeiste** („Jetzt ausführen", Worker-Badge Leerlauf/Läuft, Einstellungen), **WarteschlangenListe** (Titel/Quelle · Modell · Kosten · Status-Badge mit **Phase** bei Läuft · Fertig→Links Notiz/PDF · Fehler→Ursache + Erneut versuchen · Entfernen), **Bibliothek** (Polling `GET /library`), **Duplikat-Dialog** (D9: 409 → Überschreiben/Neue Version; bei „in Bearbeitung" deaktiviert), **EmptyState**, **Lade-/Fehlerzustand**. Queue-Polling alle 3 s.
+- `nextjs_app/lib/types.ts` — Typen `BookNuggets*` (Item/WorkerState/Queue/AddRequest/AddResult/Duplicate/AddOutcome/Estimate/Settings/LibraryItem).
+- `nextjs_app/lib/api.ts` — Client-Funktionen `getBookNuggetsQueue`, `estimateBookNuggets`, `addBookNuggets` (eigener Fetch, der den **409-Body inkl. `existing_id`** als diskriminiertes `BookNuggetsAddOutcome` zurückgibt statt zu werfen), `deleteBookNuggetsItem`, `retryBookNuggetsItem`, `runBookNuggetsNow`, `getBookNuggetsLibrary`, `getBookNuggetsSettings`, `patchBookNuggetsSettings`.
+- `nextjs_app/lib/microapps-registry.ts` — `book_nuggets: lazy(() => import(…))`.
+- `backend/config/engines.yaml` (prod) **und** `backend/config/engines.example.yaml` (getrackt) — Eintrag `book_nuggets` (`kind: native`, `group: micro`, `icon: book-open`).
+
+### Entscheidungen
+- **Upload-Fluss:** Datei → `uploadFiles([file])` (bestehendes `/files/upload`, Scope-Guard + Größenlimit) → zurückgegebener `path` wird `source_ref` mit `source_type=upload`. Kein zweiter Upload-Endpunkt.
+- **Stufen-Logik-UI:** bei `single` wird nur ein Modell-Dropdown gezeigt; im Request `model_extract = model_consolidate`.
+- **Kostenschätzung** ist „best-effort" (URL ohne Download → „erst nach Download bekannt").
+- **Ergebnis-Links:** Notiz via `mdReaderUrl` (PROJ-7), PDF via `fileDownloadUrl`.
+- **shadcn/ui** durchgängig; deutsche Texte; Loading/Error/Empty/Success explizit.
+- Render über bestehenden native-Zweig in `app/(cockpit)/apps/[key]/page.tsx` (keine Routen-Änderung). Direkt-URL `/apps/book_nuggets` bleibt auch bei ausgeblendeter Sektion erreichbar.
+
 ## QA Test Results
 _To be added by /abc-qa_
 
