@@ -304,8 +304,59 @@ Modelle: `haiku|sonnet|opus`. Modi: `staged|single`.
 - **shadcn/ui** durchgängig; deutsche Texte; Loading/Error/Empty/Success explizit.
 - Render über bestehenden native-Zweig in `app/(cockpit)/apps/[key]/page.tsx` (keine Routen-Änderung). Direkt-URL `/apps/book_nuggets` bleibt auch bei ausgeblendeter Sektion erreichbar.
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (/abc-qa, 2026-06-28)
+
+**Branch:** `dev` · **Ergebnis: PRODUCTION-READY** (keine Critical/High-Bugs).
+
+### Automatisierte Tests
+- **Backend:** `test_proj53_book_nuggets.py` (27) + `test_proj53_qa.py` (11) = **38 PROJ-53-Tests grün**. Volle Suite **977 passed**, keine Regression. Engine-YAML-Regression (`test_proj18_engines`, `test_proj40_microapps`, 34) grün nach `book_nuggets`-Eintrag.
+- **Frontend:** `tsc --noEmit` keine Fehler in den neuen Dateien · `eslint` 0 Fehler · **`next build` erfolgreich** (`/apps/[key]` inkl. lazy `book_nuggets`-Komponente).
+- 1 vorbestehender, fremder tsc-Fehler in `lib/md-tree.test.ts` (nicht von PROJ-53) — kein Blocker, nicht angefasst.
+
+### Acceptance Criteria — Matrix
+| # | Kriterium | Status | Beleg |
+|---|-----------|--------|-------|
+| 1 | Eintrag in Sidebar „Micro-Apps" (group:micro, kind:native), Vollbild /apps/<key> | ✅ | engines.yaml/example.yaml + native-Route; `test_proj40_microapps` |
+| 2 | Native Micro-App (React, registriert) — kein iFrame | ✅ | Komponente + `microapps-registry.ts` |
+| 3 | Eingabe URL **+** Upload **+** Drag&Drop; Formate pdf/epub/txt/docx; andere abgewiesen | ✅ | UI-Umschalter/Dropzone; `validate_source`-Tests; `.zip`→400, `.mobi`→400 |
+| 4 | Metadaten-Link ohne Volltext abgewiesen (deutsch) | ✅ | URL-Schema-Prüfung (`keine-url`→400); UI-Hinweis „keine Produktseite" |
+| 5 | Kostenschätzung (Seitenzahl/Tokens) + optionales Seitenlimit vor dem Start | ✅ | `POST /estimate` + `estimate_cost`-Tests; UI „Kosten schätzen"; `page_limit` |
+| 6 | Modell-Dropdown + Umschalter Stufen-Logik ↔ ein Modell | ✅ | UI staged/single + Dropdowns; `single` kollabiert (Test) |
+| 7 | Warteschlangenliste mit Status + Phase bei Läuft | ✅ | `StatusBadge` + `parse_phase`; QueueRead |
+| 8 | Sequenzielle Verarbeitung (eine Session zur Zeit) | ✅ | Worker `_poll_current`-Gate; `test_add_source_auto_drains_and_completes` |
+| 9 | Vault-Ablage md + figures/ + PDF unter `04 Resources/Buch_Nuggets/<Autor>-<Titel>/` | ⚠️ Vertraglich | output_subdir + Prompt-Vertrag + `extract_book.py`/`pdf`-Skill; **Skill-Laufzeit, nicht live ausgeführt** (s. u.) |
+| 10 | „Numbers/Evidence" mit Seitenzitat (S. N) | ⚠️ Vertraglich | `[[PAGE n]]`-Marker im Extrakt + SKILL.md-Vorgabe; Skill-Laufzeit |
+| 11 | Contra-Kapitel recherchegestützt mit Quellen | ⚠️ Vertraglich | SKILL.md (max. 3 Thesen×1–2 Suchen, „nichts erfinden"); Skill-Laufzeit |
+| 12 | Duplikat (Titel/Hash) → „überschreiben/neue Version" statt stillem Überschreiben | ✅ | 409 + `existing_id`/`existing_status` (Tests); UI-Dialog; on_duplicate overwrite/new_version |
+| 13 | Fertig → Links Notiz + PDF | ✅ | `mdReaderUrl`/`fileDownloadUrl`; `test_marker_driver_records_result` |
+| 14 | Fehler → Ursache + „Erneut versuchen"; übrige unberührt | ✅ | `error_message` + `retry` (409 bei Nicht-Fehler); Worker isoliert je Eintrag |
+| 15 | Einträge entfernen | ✅ | DELETE 204/404; laufende Session wird gestoppt |
+| 16 | Queue + Einstellungen überleben Reload/Neustart | ✅ | SQLite; `test_running_reset_to_pending_on_restart`, Settings-Roundtrip |
+| 17 | Verarbeitung läuft serverseitig weiter (Tab zu); Status beim Wiederöffnen korrekt | ✅ | Worker im Lifespan; Polling `GET /queue` |
+| 18 | Inhalte + UI deutsch (Eigenname „Buch-Nuggets") | ✅ | UI-Texte + Fehlermeldungen deutsch; SKILL.md erzwingt deutsche Nuggets |
+
+**⚠️ Vertraglich (AC 9/10/11):** Der eigentliche Buch→Nugget-**Inhalt** entsteht zur Laufzeit in der headless `hal-book-nuggets`-Session mit echtem Modell — in diesem QA-Lauf **nicht live ausgeführt** (kein realer Modell-Lauf in der Test-Pipeline; FakeDriver liefert nur den Marker-Vertrag). Backend-Vertrag (Prompt, Result-Marker, Seiten-Marker, Output-Pfad) und Parsing sind getestet. **Empfehlung:** beim Deploy ein **Live-Smoke** mit einem echten kleinen Buch (1× pdf, 1× epub) — Block-Vollständigkeit, Seitenzitate, Contra-Quellen sichten.
+
+### Edge Cases (Spec) — abgedeckt
+mobi/unsupported→400 (Test) · ungültige URL→400 (Test) · Duplikat pending/done→409 (Test) · DRM/Scan ohne Textebene→`extract_book.py` bricht mit `EXTRACT_ERROR` ab (kein Halluzinieren) · Buch ohne Abbildungen→md ohne figures (Skript: figure_count 0) · Backend-Neustart→running→pending (Test) · Sektion ausgeblendet→Direkt-URL erreichbar (page.tsx unabhängig von Sidebar).
+
+### Security-Audit (Red-Team)
+- **SQL-Injection:** keine — alle Queries parametrisiert; `add`/`update` zusätzlich mit Spalten-Whitelist. Belegt: `test_sql_injection_in_source_ref_is_inert`, `test_update_ignores_non_whitelisted_column`, `test_add_ignores_non_insertable_fields`. ✅
+- **Status-/Feld-Injection:** `add` erzwingt `status='pending'` (injizierter `status`/`result_note_path` ignoriert) — kein Unterschieben eines „done"-Eintrags mit fremdem Pfad. ✅
+- **Modell-Whitelist:** Pydantic-`Literal` (422 bei unbekanntem Modell) + Worker-Whitelist → keine beliebigen CLI-`--model`-Slugs (PROJ-18-Falle). ✅
+- **Pfad-Scope (Ergebnis-Download):** über `/files/download` → erzwingt `allowed_roots`. Session-cwd `book_nuggets_project_path` via `validate_project_path` auf `allowed_roots` geprüft. ✅
+- **Auth/RLS:** im MVP bewusst keins (Projekt-Entscheidung); `owner` gestempelt, nicht gefiltert — wie der Rest von Jupiter. Endpunkte hinter `auth_gate`. Akzeptiert.
+
+### Bugs / Findings
+- **LOW-1 (akzeptiert, Defense-in-Depth):** `POST /book-nuggets/queue` validiert bei `source_type=upload` den `source_ref`-**Pfad nicht** gegen `allowed_roots` — ein authentifizierter Nutzer könnte einen beliebigen lesbaren Host-Pfad (z. B. `/etc/passwd`) als „Buch" einreihen. **Eingegrenzt:** Endpunkte sind hinter App-JWT ([[jupiter-auth-model]]); im Single-User-MVP hat der einzige (Owner-)Nutzer ohnehin Shell-Zugriff (VPS-Admin-Terminal). Kein Tenant-Leak. **Empfehlung (Fast-Follow):** Upload-Pfad serverseitig auf `allowed_roots` prüfen (FileService-`_validate_dir`-Muster), analog zum Upload selbst.
+- **LOW-2 (akzeptiert, dokumentiert):** Verarbeitungs-Sessions laufen mit `bypassPermissions` (headless, kein Decision-Card-Gate) — identische, bereits akzeptierte Architektur-Entscheidung wie PROJ-41. Eingegrenzt durch festen Prompt `/hal-book-nuggets` + vault-skopierten cwd.
+
+Keine Critical/High/Medium gefunden.
+
+**Production-Ready: JA** — mit der Empfehlung, beim Deploy einen Live-Smoke (echtes Buch) für AC 9/10/11 zu fahren und LOW-1 als Fast-Follow zu härten.
+
+## Deployment
+_To be added by /abc-deploy_
 
 ## Deployment
 _To be added by /abc-deploy_
