@@ -2,11 +2,12 @@
 
 ## Status: Deployed
 **Created:** 2026-06-25
-**Last Updated:** 2026-06-25
+**Last Updated:** 2026-06-29
 
 ## Deployment
 - **Production URL:** https://jupiter.auxevo.tech
 - **Deployed:** 2026-06-25 · **Version:** 0.12.0 · **Host:** Dev-VPS (host-native systemd + Caddy, GitHub-Webhook Auto-Deploy aus `main`)
+- **Patch:** 2026-06-29 · **Version:** 0.26.2 · Chat-Modus darf ohne Initial-Prompt starten; Backend akzeptiert `initial_prompt: ""` bei `POST /sessions`, Folgeeingaben bleiben nicht-leer validiert.
 - **Geliefert:** Modus-Umschalter „Workflow/ABC ↔ Chat" im Neue-Session-Dialog; Chat-Modus graut den ABC-Block aus und startet eine normale Session ohne abc-/Rollen-Verknüpfung. Reiner Frontend-Change.
 - **Browser-Smoke (auf Prod zu verifizieren):** Dialog öffnen → „Chat" → ABC-Block ausgegraut, Rolle deaktiviert → „Session starten" erzeugt normale Session. Nach Frontend-Rebuild ggf. Hard-Refresh (Strg+Shift+R).
 
@@ -88,7 +89,7 @@ Gewünscht: ein **kleiner Umschalter** (z. B. Knopf/Segment „Chat" neben dem D
 ## Edge Cases
 - **Wechsel mit bereits gewähltem Feature:** Nutzer wählt im Workflow-Modus ein Feature und schaltet dann auf „Chat" → Feature-Auswahl wird verworfen; schaltet er zurück, ist nichts vorausgewählt (kein „Geister"-Feature).
 - **Projekt ohne abc-Struktur:** Im Workflow-Modus liefert der Launcher „kein abc erkannt"; der Chat-Modus muss auch hier sauber funktionieren (gleicher freier Start).
-- **Leerer Initial-Prompt:** Pflichtfeld-Verhalten bleibt wie im Workflow-Modus (Start nur mit Prompt) — der Chat-Modus hebt keine bestehenden Pflichtfelder auf.
+- **Leerer Initial-Prompt:** Im Chat-Modus darf eine Session ohne Starttext erzeugt werden; das Backend akzeptiert `initial_prompt: ""` und wartet dann auf die erste normale Chat-Eingabe. Im Workflow-Modus bleibt der UI-Submit weiterhin an einen Prompt gebunden.
 - **Pfadwechsel im Chat-Modus:** Ein Pfadwechsel soll im Chat-Modus **keinen** störenden Launcher-Request auslösen bzw. dessen Ergebnis nicht sichtbar einblenden (Block bleibt ausgegraut).
 - **Schmaler Viewport:** Der Umschalter darf das Dialog-Layout auf 375 px nicht sprengen.
 
