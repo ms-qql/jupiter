@@ -26,7 +26,7 @@ from ..config import settings
 Runner = Callable[[str, str], Awaitable[str]]
 
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-GROQ_MODEL = "whisper-large-v3"
+GROQ_MODEL = "whisper-large-v3-turbo"
 _GROQ_TIMEOUT = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=15.0)
 
 
@@ -68,7 +68,7 @@ class TranscriptionService:
     async def transcribe(self, audio: bytes, language: str | None = None) -> TranscriptionOutcome:
         if not audio:
             raise TranscriptionError("Leere Aufnahme — bitte erneut sprechen.")
-        lang = (language or settings.whisper_language or "de").strip() or "de"
+        lang = (language or settings.whisper_language or "").strip()
 
         # Audio nur transient als Temp-Datei (faster-whisper/ffmpeg dekodiert webm/opus).
         suffix = ".webm"
@@ -109,7 +109,7 @@ class TranscriptionService:
                 self._model = WhisperModel(
                     settings.whisper_model, device="cpu", compute_type="int8"
                 )
-            segments, _info = self._model.transcribe(audio_path, language=language)
+            segments, _info = self._model.transcribe(audio_path, language=language or None)
             return "".join(seg.text for seg in segments)
 
         try:
@@ -126,7 +126,9 @@ class TranscriptionService:
         try:
             with open(audio_path, "rb") as fh:
                 files = {"file": ("aufnahme.webm", fh, "audio/webm")}
-                data = {"model": GROQ_MODEL, "language": language, "response_format": "json"}
+                data: dict = {"model": GROQ_MODEL, "response_format": "json"}
+                if language:
+                    data["language"] = language
                 headers = {"Authorization": f"Bearer {key}"}
                 async with httpx.AsyncClient(timeout=_GROQ_TIMEOUT) as client:
                     resp = await client.post(GROQ_URL, headers=headers, data=data, files=files)
