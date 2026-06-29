@@ -80,6 +80,11 @@ def test_empty_input_422(client: TestClient):
     assert client.post(f"/sessions/{sid}/input", json={"text": ""}).status_code == 422
 
 
+def test_empty_initial_prompt_allowed_for_chat_session(client: TestClient):
+    r = client.post("/sessions", json={"project_path": PROJECT, "initial_prompt": ""})
+    assert r.status_code == 201
+
+
 # --- Permission-Modi: `plan` gesperrt; bypassPermissions auf Nutzerwunsch frei ----
 
 @pytest.mark.parametrize("mode", ["plan"])
