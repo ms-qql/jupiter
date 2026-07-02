@@ -114,7 +114,9 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
     selectedEngine.models.length > 0 ? selectedEngine.models : ["haiku", "sonnet", "opus"];
 
   const valid =
-    projectPath.trim().length > 0 && prompt.trim().length > 0 && selectedEngine.available;
+    projectPath.trim().length > 0 &&
+    (chatMode || prompt.trim().length > 0) &&
+    selectedEngine.available;
 
   // Engine-Wechsel: Modell auf das Default-Modell des neuen Profils setzen.
   // Plain function (kein useCallback): `effectiveEngines` wird je Render neu

@@ -17,7 +17,7 @@ PermissionMode = Literal["default", "acceptEdits", "bypassPermissions"]
 class SessionCreate(BaseModel):
     project_path: str = Field(..., min_length=1, description="Arbeitsverzeichnis der Session.")
     initial_prompt: str = Field(
-        ..., min_length=1, max_length=MAX_INPUT_CHARS, description="Erster Auftrag an die Session."
+        ..., max_length=MAX_INPUT_CHARS, description="Erster Auftrag an die Session."
     )
     model: str = Field(
         default="sonnet",

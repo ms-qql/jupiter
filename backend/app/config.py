@@ -325,14 +325,15 @@ class Settings(BaseSettings):
     # laufenden Kosten). Modellgröße als Kompromiss aus Deutsch-Qualität und
     # CPU-Latenz/RAM auf dem GPU-losen Dev-VPS; via Env hoch-/runterschaltbar.
     whisper_model: str = "small"
-    # Transkriptions-Sprache (Default Deutsch); pro Request überschreibbar.
-    whisper_language: str = "de"
+    # Transkriptions-Sprache; leer = auto-detect (mehrsprachig, empfohlen).
+    # Explizit setzen (z.B. "de") nur wenn Spracherkennung zu ungenau.
+    whisper_language: str = ""
     # Optionaler Groq-Cloud-Fallback (pay-per-use). Leerer Key = nicht verfügbar.
     # Secret NUR aus der .env (JUPITER_GROQ_API_KEY), nie im Repo.
     groq_api_key: str = ""
-    # Cloud-Fallback bewusst an/aus. Default AUS (DSGVO: Audio bleibt lokal).
-    # Greift nur, wenn zusätzlich ein Key gesetzt ist.
-    use_groq_transcription: bool = False
+    # Cloud-Transcription via Groq (whisper-large-v3-turbo). Greift nur wenn Key gesetzt.
+    # DSGVO-Hinweis: Audio verlässt den VPS bei aktiviertem Groq.
+    use_groq_transcription: bool = True
     # Längenlimit der Aufnahme (Sek.) — Schutz vor Riesen-Uploads. Das Frontend
     # stoppt zusätzlich clientseitig; hier ist die serverseitige Obergrenze.
     max_audio_seconds: int = 120
