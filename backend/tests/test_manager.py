@@ -134,3 +134,21 @@ async def test_invalid_path_rejected():
 async def test_invalid_model_rejected():
     with pytest.raises(ValueError):
         await _mgr().create(project_path=PROJECT, initial_prompt="x", model="gpt-9")
+
+
+@pytest.mark.asyncio
+async def test_fable_model_accepted():
+    """PROJ-54: `fable` ist ein gültiger Claude-Alias und wird — anders als `gpt-9` —
+    NICHT an der Modell-Validierung abgewiesen."""
+    rt = await _mgr().create(project_path=PROJECT, initial_prompt="x", model="fable")
+    assert rt.state.status == WAITING
+
+
+def test_model_alias_maps_fable():
+    """PROJ-54: Eine aufgelöste `claude-fable-…`-ID muss auf den Alias `fable`
+    zurückfallen (sonst „n/v" in Usage/Token-Zuordnung)."""
+    from app.engine.manager import _model_alias
+
+    assert _model_alias("claude-fable-5") == "fable"
+    # Bestandsaliase bleiben unverändert (keine Kollision).
+    assert _model_alias("claude-sonnet-5-20260101") == "sonnet"

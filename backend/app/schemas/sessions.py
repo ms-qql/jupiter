@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from ..config import MAX_INPUT_CHARS
 
-ModelName = Literal["haiku", "sonnet", "opus"]
-CLAUDE_MODELS: frozenset[str] = frozenset({"haiku", "sonnet", "opus"})
+ModelName = Literal["haiku", "sonnet", "opus", "fable"]
+CLAUDE_MODELS: frozenset[str] = frozenset({"haiku", "sonnet", "opus", "fable"})
 # QA-1: `plan` bleibt gesperrt. `bypassPermissions` ist auf Nutzerwunsch wählbar
 # (Vollautonomie) — ACHTUNG: umgeht die Decision-Card-Freigaben (siehe config.py).
 PermissionMode = Literal["default", "acceptEdits", "bypassPermissions"]

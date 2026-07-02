@@ -160,7 +160,7 @@ def _model_alias(model: str) -> str:
     """Mappt eine ggf. aufgelöste Modell-ID (z. B. ``claude-haiku-4-5-…``) zurück
     auf den kurzen, garantiert von ``--model`` akzeptierten Alias."""
     m = model.lower()
-    for alias in ("haiku", "sonnet", "opus"):
+    for alias in ("haiku", "sonnet", "opus", "fable"):
         if alias in m:
             return alias
     return model

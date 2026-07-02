@@ -200,6 +200,7 @@ export function modelLabel(model: string): string {
   if (m.includes("haiku")) return "Haiku";
   if (m.includes("sonnet")) return "Sonnet";
   if (m.includes("opus")) return "Opus";
+  if (m.includes("fable")) return "Fable 5 (temporär)"; // PROJ-54: zeitlich begrenzt verfügbar
   return model;
 }
 
