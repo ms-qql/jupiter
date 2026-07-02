@@ -46,7 +46,11 @@ _DEFAULT_LIVENESS_PATH = str(Path(__file__).resolve().parent.parent / "config" /
 _DEFAULT_REGISTRY_ROOT = str(Path(__file__).resolve().parent.parent / "registry")
 
 # Im MVP unterstützte Modell-Aliase (werden 1:1 an `claude --model` durchgereicht).
-VALID_MODELS: set[str] = {"haiku", "sonnet", "opus"}
+# PROJ-54: `fable` ist ein von der Claude-Code-CLI offiziell akzeptierter Alias
+# (leistungsstärkstes Modell, zeitlich begrenzt verfügbar). Wählbar im Neue-Session-
+# Dialog; kein Default. Verfällt Fable serverseitig, lehnt die CLI `--model fable` zur
+# Laufzeit ab → Session endet mit klarer Fehlermeldung (kein Auto-Deaktivieren).
+VALID_MODELS: set[str] = {"haiku", "sonnet", "opus", "fable"}
 
 # Alle Headless-Permission-Modi, die Claude Code kennt.
 VALID_PERMISSION_MODES: set[str] = {"default", "acceptEdits", "plan", "bypassPermissions"}

@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-54
+**Next Available ID:** PROJ-55
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -66,6 +66,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-51 | Engine- und Modellverwaltung in den App-Einstellungen | P1 | Deployed | PROJ-18, PROJ-48, PROJ-50, PROJ-9 | [Spec](PROJ-51-engine-modellverwaltung-einstellungen.md) |
 | PROJ-52 | Sidebar Token-Budget-Monitor für Claude und Codex | P1 | Approved (Iter. 2: Live-Werte) | PROJ-3, PROJ-19, PROJ-48, PROJ-51 | [Spec](PROJ-52-sidebar-token-budget-monitor.md) |
 | PROJ-53 | Buch-Nuggets (native Micro-App: Buch-Upload/URL → KI-Kurzform inkl. Contra → Hal) | P1 | Deployed | PROJ-40, PROJ-1, PROJ-2, PROJ-11, PROJ-51 | [Spec](PROJ-53-buch-nuggets-microapp.md) |
+| PROJ-54 | Fable 5 als wählbares Claude-Modell (temporär, nur Neue-Session-Dialog) | P1 | In Progress | PROJ-1, PROJ-51 | [Spec](PROJ-54-fable-5-modellauswahl.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
