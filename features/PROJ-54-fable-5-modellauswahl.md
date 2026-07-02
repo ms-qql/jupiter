@@ -1,6 +1,6 @@
 # PROJ-54: Fable 5 als wählbares Claude-Modell (temporär)
 
-## Status: Architected
+## Status: Deployed
 **Created:** 2026-07-02
 **Last Updated:** 2026-07-02
 
@@ -159,4 +159,10 @@ Reine Allowlist-Freischaltung, kein neuer Code-Pfad:
 _To be added by /abc-qa_
 
 ## Deployment
-_To be added by /abc-deploy_
+- **Deployed:** 2026-07-02 · **Version:** 0.26.4 · **Host:** host-native (systemd) auf Dev-VPS, GitHub-Webhook baut `main` → **https://jupiter.auxevo.tech**
+- **Promotion:** `dev → main` (`--no-ff`), Push `origin/main` löst Rebuild aus. Tag `v0.26.4-PROJ-54`.
+- **QA-Gate:** grüne Automatentests akzeptiert (Backend `test_manager.py` 12/12 inkl. `test_fable_model_accepted`/`test_model_alias_maps_fable`; Frontend `status.test.ts` 41/41 inkl. Fable-Label). Kein separater `/abc-qa`-Lauf.
+- **Smoke-Test (Prod, manuell):**
+  - [ ] Neue-Session-Dialog → Modell-Dropdown listet „Fable 5 (temporär)"
+  - [ ] Session mit Modell `fable` startet (kein „Unbekanntes Modell") → `claude --model fable`
+  - [ ] Sonnet/Opus/Haiku-Sessions + Codex/OpenRouter unverändert (keine Regression)
