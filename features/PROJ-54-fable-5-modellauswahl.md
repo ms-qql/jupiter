@@ -148,6 +148,13 @@ Reine Allowlist-Freischaltung, kein neuer Code-Pfad:
 
 **Offen für Frontend (/abc-frontend):** `lib/types.ts` (`ModelName`), `new-session-dialog.tsx:65,114` (Fallback-Listen), `lib/status.ts:198` (`modelLabel` → „Fable 5 (temporär)").
 
+## Implementation Notes — Frontend (/abc-frontend, 2026-07-02)
+- `nextjs_app/lib/types.ts:3` — `ModelName` um `"fable"` erweitert (Spiegel zu Backend-`VALID_MODELS`).
+- `nextjs_app/components/cockpit/new-session-dialog.tsx` — `fable` in `CLAUDE_FALLBACK.models` (Z. 65) + `modelOptions`-Fallback (Z. 114). Das Dropdown zieht die Modelliste primär aus der Backend-Engine-Antwort; die Fallback-Listen greifen nur, wenn keine Engine geliefert wird — beide jetzt inkl. `fable`.
+- `nextjs_app/lib/status.ts:198` — `modelLabel()` mappt `fable`/`claude-fable-…` → „Fable 5 (temporär)".
+- Tests: `lib/status.test.ts` — Fable-Label-Case ergänzt (41/41 grün). `npm run lint` sauber; `tsc --noEmit` ohne neue Fehler (einziger Fehler `lib/md-tree.test.ts` ist vorbestehend/unabhängig).
+- **Primärpfad verifiziert:** Die eingebaute Claude-Engine (`registry.py:196 _builtin_claude`) liefert `models=sorted(VALID_MODELS)` — durch den Backend-Change (`fable` in `VALID_MODELS`) erscheint Fable **automatisch im echten Engine-Listing** des Dropdowns, nicht nur im Frontend-Fallback. Sortierung ist alphabetisch (`fable, haiku, opus, sonnet`); Default bleibt `sonnet` (`default_model`).
+
 ## QA Test Results
 _To be added by /abc-qa_
 

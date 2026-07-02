@@ -62,7 +62,7 @@ const CLAUDE_FALLBACK: EngineRead = {
   driver: "claude",
   available: true,
   unavailable_reason: null,
-  models: ["haiku", "sonnet", "opus"],
+  models: ["haiku", "sonnet", "opus", "fable"],
   default_model: "sonnet",
   capabilities: ["usage", "resume", "multi_turn", "tools"],
   url: null,
@@ -111,7 +111,7 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
   const selectedEngine =
     effectiveEngines.find((e) => e.key === engine) ?? effectiveEngines[0];
   const modelOptions =
-    selectedEngine.models.length > 0 ? selectedEngine.models : ["haiku", "sonnet", "opus"];
+    selectedEngine.models.length > 0 ? selectedEngine.models : ["haiku", "sonnet", "opus", "fable"];
 
   const valid =
     projectPath.trim().length > 0 &&

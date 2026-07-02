@@ -171,6 +171,10 @@ describe("modelLabel — auch aufgelöste IDs (Backend liefert volle ID nach Sta
     expect(modelLabel("sonnet")).toBe("Sonnet");
     expect(modelLabel("claude-opus-4-8")).toBe("Opus");
   });
+  it("PROJ-54: fable → Fable 5 (temporär), auch aufgelöste ID", () => {
+    expect(modelLabel("fable")).toBe("Fable 5 (temporär)");
+    expect(modelLabel("claude-fable-5")).toBe("Fable 5 (temporär)");
+  });
   it("unbekanntes Modell unverändert", () => {
     expect(modelLabel("gpt-foo")).toBe("gpt-foo");
   });

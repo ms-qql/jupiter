@@ -1,6 +1,8 @@
 // Spiegelt backend/app/schemas/sessions.py (SessionRead / SessionCreate).
 
-export type ModelName = "haiku" | "sonnet" | "opus";
+// PROJ-54: `fable` ist ein zeitlich begrenzt verfügbarer Claude-Alias (leistungsstärkstes
+// Modell). Wählbar im Neue-Session-Dialog; kein Default. Spiegelt VALID_MODELS im Backend.
+export type ModelName = "haiku" | "sonnet" | "opus" | "fable";
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions";
 
 /** Roher Session-Status aus dem Backend (engine/manager.py). */
