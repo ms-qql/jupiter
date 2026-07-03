@@ -42,6 +42,7 @@ from .engine.metrics import MetricsService
 from .engine.recovery import RecoveryService
 from .engine.scout import ScoutService
 from .engine.transcription import TranscriptionService
+from .engine.ui_check import UiCheckService
 from .engine.provider_budget import provider_budget_store
 from .engine.provider_budget_live import build_live_probes
 from .engine.usage import ProviderBudgetService, UsageService
@@ -68,6 +69,7 @@ from .routes import (
     settings as settings_routes,
     terminal,
     transcription,
+    ui_check,
     usage,
     vault,
     vault_v1,
@@ -292,6 +294,9 @@ def create_app(
     # PROJ-53: Buch-Nuggets-Worker (Warteschlange + sequenzielle Verarbeitung).
     app.state.book_nuggets_repo = bn_repo
     app.state.book_nuggets = BookNuggetsWorker(app.state.manager, bn_repo)
+    # PROJ-14: UI-Check-Micro-App liest/schreibt lokale Run-Artefakte im
+    # UI-Check-Projekt; keine eigene Datenbank.
+    app.state.ui_check = UiCheckService()
     # PROJ-22: Multi-Agent-Dispatch — Koordinator über dem Session-Treiber + Vault-Vertrag.
     app.state.coordinator = CoordinatorService(app.state.manager, vault_service)
     # PROJ-23: Cross-Agent-Review — Challenge eines Artefakts durch eine andere Engine.
@@ -320,6 +325,7 @@ def create_app(
     app.include_router(transcription.router, dependencies=auth_gate)
     app.include_router(video_summary.router, dependencies=auth_gate)
     app.include_router(book_nuggets.router, dependencies=auth_gate)  # PROJ-53
+    app.include_router(ui_check.router, dependencies=auth_gate)  # PROJ-14
     app.include_router(coordinator.router, dependencies=auth_gate)
     app.include_router(challenge.router, dependencies=auth_gate)
     app.include_router(terminal.router, dependencies=auth_gate)

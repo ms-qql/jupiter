@@ -392,6 +392,12 @@ class Settings(BaseSettings):
     # eigenen Unterordner `<Autor>-<Titel>/`. Speist auch die Bibliotheks-Kachel.
     book_nuggets_output_subdir: str = "04 Resources/Buch_Nuggets"
 
+    # --- UI-Check (PROJ-14 native Micro-App) -----------------------------
+    # Dünne lokale Runner-Schicht für /ui-check/*: Quelle der Wahrheit bleiben
+    # data/runs.jsonl + runs/<run-id>/ im UI-Check-Projekt. Keine eigene DB.
+    ui_check_project_path: str = "/home/dev/projects/design/ui-check"
+    ui_check_process_timeout_seconds: int = 900
+
     # --- VPS-Admin Metriken (PROJ-42) ------------------------------------
     # Read-only Host-Metriken (CPU/RAM/Disk/Load/Swap/Netz/Uptime/Prozesse) +
     # systemd-Service-Health. Ein Hintergrund-Worker misst periodisch und cached

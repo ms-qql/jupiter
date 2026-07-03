@@ -53,6 +53,10 @@ describe("Micro-Apps Sidebar-Konfig (PROJ-40)", () => {
 });
 
 describe("native Micro-App-Registry (PROJ-40)", () => {
+  it("registriert UI-Check als native Micro-App", () => {
+    expect(resolveMicroApp("ui_check")).toBeTruthy();
+  });
+
   it("liefert null für einen (noch) nicht registrierten key — kein Crash", () => {
     expect(resolveMicroApp("rechner")).toBeNull();
     expect(resolveMicroApp("")).toBeNull();

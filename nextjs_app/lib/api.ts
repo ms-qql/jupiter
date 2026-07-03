@@ -72,6 +72,10 @@ import type {
   BookNuggetsEstimate,
   BookNuggetsSettings,
   BookNuggetsLibraryItem,
+  UiCheckRunDetail,
+  UiCheckRunsResponse,
+  UiCheckStartRequest,
+  UiCheckStartResponse,
   MetricsSnapshot,
   MetricsStatus,
   TerminalInfo,
@@ -1160,6 +1164,49 @@ export function patchBookNuggetsSettings(
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+// --- PROJ-14: UI-Check (native Micro-App) ---------------------------------
+
+export function getUiCheckRuns(signal?: AbortSignal): Promise<UiCheckRunsResponse> {
+  return request<UiCheckRunsResponse>("/ui-check/runs", { signal });
+}
+
+export function getUiCheckRun(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<UiCheckRunDetail> {
+  return request<UiCheckRunDetail>(
+    `/ui-check/runs/${encodeURIComponent(runId)}`,
+    { signal },
+  );
+}
+
+export function startUiCheckRun(
+  req: UiCheckStartRequest,
+): Promise<UiCheckStartResponse> {
+  return request<UiCheckStartResponse>("/ui-check/runs", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export function cancelUiCheckRun(runId: string): Promise<UiCheckRunDetail> {
+  return request<UiCheckRunDetail>(
+    `/ui-check/runs/${encodeURIComponent(runId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export function runUiCheckRedesign(runId: string): Promise<UiCheckRunDetail> {
+  return request<UiCheckRunDetail>(
+    `/ui-check/runs/${encodeURIComponent(runId)}/redesign`,
+    { method: "POST" },
+  );
+}
+
+export function uiCheckArtifactUrl(runId: string, kind: string): string {
+  return `${API_BASE}/ui-check/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(kind)}`;
 }
 
 // --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------

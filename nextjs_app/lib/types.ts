@@ -32,6 +32,7 @@ export interface PendingDecision {
   rationale: string; // „Warum"
   context: {
     project_path?: string;
+    engine?: string;
     role?: string | null;
     phase?: string | null;
     /** PROJ-15: bei knowledge_proposal die erkannte Marker-Art (bug_geloest|adr|sackgasse). */
@@ -906,6 +907,93 @@ export interface BookNuggetsAddRequest {
   model_consolidate: BookNuggetsModel;
   page_limit?: number | null;
   on_duplicate?: BookNuggetsOnDuplicate | null;
+}
+
+// --- PROJ-14: UI-Check (native Micro-App) ---------------------------------
+
+export type UiCheckRunStatus = "queued" | "running" | "done" | "error" | "cancelled";
+export type UiCheckMode = "auto" | "landing" | "app";
+export type UiCheckDepth = "audit" | "redesign";
+export type UiCheckAiProvider = "claude" | "codex" | "openrouter";
+
+export interface UiCheckDimensionScore {
+  key: string;
+  label: string;
+  source: string;
+  score: number | null;
+}
+
+export interface UiCheckFinding {
+  severity: "high" | "medium" | "low";
+  title: string;
+  description: string;
+  location: string;
+}
+
+export interface UiCheckBranding {
+  name: string;
+  domain: string;
+  logo_path: string | null;
+  colors: string[];
+  fonts: string[];
+  voice: string | null;
+  token_count: number | null;
+}
+
+export interface UiCheckArtifactLinks {
+  report?: string | null;
+  scores?: string | null;
+  tokens?: string | null;
+  mockup?: string | null;
+  screenshots?: string[] | null;
+}
+
+export interface UiCheckRunSummary {
+  run_id: string;
+  created_at: string | null;
+  url_hash: string;
+  display_url: string | null;
+  mode: UiCheckMode;
+  depth: UiCheckDepth;
+  industry: string | null;
+  status: UiCheckRunStatus;
+  rubric_version: string | null;
+  score_total: number | null;
+  redesign_score: number | null;
+  ai_provider: UiCheckAiProvider | string | null;
+  ai_model: string | null;
+}
+
+export interface UiCheckRunDetail extends UiCheckRunSummary {
+  phase: string | null;
+  progress: number | null;
+  prompt: string | null;
+  dimensions: UiCheckDimensionScore[];
+  findings: UiCheckFinding[];
+  branding: UiCheckBranding | null;
+  artifacts: UiCheckArtifactLinks;
+  status_message: string | null;
+}
+
+export interface UiCheckRunsResponse {
+  runs: UiCheckRunSummary[];
+  active_run_id: string | null;
+}
+
+export interface UiCheckStartRequest {
+  url: string;
+  mode: UiCheckMode;
+  depth: UiCheckDepth;
+  ai_provider: UiCheckAiProvider;
+  ai_model: string;
+  prompt?: string;
+  industry?: string | null;
+  desktop?: boolean;
+}
+
+export interface UiCheckStartResponse {
+  run_id: string;
+  status: UiCheckRunStatus;
 }
 
 /** Ergebnis von POST /book-nuggets/queue (Erfolg). */
