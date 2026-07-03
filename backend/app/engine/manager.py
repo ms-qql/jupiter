@@ -7,8 +7,10 @@ PROJ-2) wird über das hier offen gehaltene Repository-Seam nachgerüstet.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import re
 import signal
 import uuid
 from collections.abc import Callable
@@ -58,6 +60,22 @@ DriverFactory = Callable[[], EngineDriver]
 
 logger = logging.getLogger(__name__)
 
+_QUESTION_BLOCK_RE = re.compile(
+    r"```jupiter-question\s*(?P<fenced>\{.*?\})\s*```|"
+    r"<jupiter-question>\s*(?P<tag>\{.*?\})\s*</jupiter-question>",
+    re.DOTALL,
+)
+
+_CODEX_QUESTION_CARD_INSTRUCTION = """\
+Wenn du dem Nutzer eine Multiple-Choice- oder Auswahlfrage stellen musst, gib zuerst
+kurz den Kontext aus und danach genau einen Fragekarten-Block in diesem Format aus:
+```jupiter-question
+{"questions":[{"question":"...","header":"...","options":[{"label":"...","description":"..."}]}]}
+```
+Nutze den Block nur fuer echte Rueckfragen. Nach dem Block nicht weiterarbeiten, sondern
+auf die Antwort im naechsten Turn warten.
+"""
+
 
 class SessionLimitError(RuntimeError):
     """PROJ-14: Erstellung abgelehnt, weil das Limit aktiver Sessions erreicht ist.
@@ -79,6 +97,62 @@ class SessionAliveError(RuntimeError):
     Die Route übersetzt das in HTTP 409 — eine laufende Session braucht keine
     Reanimierung (nur „hängt"/„tot" sind Kandidaten).
     """
+
+
+def _normalize_question_input(value: object) -> dict | None:
+    """Validate the small Jupiter question-card contract from generic CLI text."""
+    if not isinstance(value, dict):
+        return None
+    questions = value.get("questions")
+    if not isinstance(questions, list) or not questions:
+        return None
+    out: list[dict] = []
+    for raw in questions[:3]:
+        if not isinstance(raw, dict):
+            continue
+        question = str(raw.get("question") or "").strip()
+        if not question:
+            continue
+        options: list[dict] = []
+        for opt in raw.get("options") or []:
+            if not isinstance(opt, dict):
+                continue
+            label = str(opt.get("label") or "").strip()
+            if not label:
+                continue
+            item = {"label": label}
+            description = str(opt.get("description") or "").strip()
+            if description:
+                item["description"] = description
+            options.append(item)
+        if not options:
+            continue
+        item = {"question": question, "options": options}
+        header = str(raw.get("header") or "").strip()
+        if header:
+            item["header"] = header
+        if bool(raw.get("multiSelect")):
+            item["multiSelect"] = True
+        out.append(item)
+    return {"questions": out} if out else None
+
+
+def _extract_question_block(text: str) -> tuple[dict | None, str]:
+    """Return a question-card payload and the assistant text without the marker."""
+    found: dict | None = None
+
+    def repl(match: re.Match) -> str:
+        nonlocal found
+        raw = match.group("fenced") or match.group("tag") or ""
+        if found is None:
+            try:
+                found = _normalize_question_input(json.loads(raw))
+            except (json.JSONDecodeError, ValueError):
+                found = None
+        return ""
+
+    visible = _QUESTION_BLOCK_RE.sub(repl, text).strip()
+    return found, visible
 
 
 class EngineUnavailableError(RuntimeError):
@@ -474,19 +548,24 @@ class SessionRuntime:
         elif event.type == "assistant":
             self.state.status = RUNNING
             thinking = extract_thinking(event)
+            visible_text: str | None = None
             if thinking:
                 self.transcript.append(
                     TranscriptEntry("assistant", "thinking", thinking, _now().isoformat())
                 )
             text = extract_text(event)
             if text:
-                self.transcript.append(
-                    TranscriptEntry("assistant", "text", text, _now().isoformat())
-                )
-                self._broadcast({"kind": "message", "role": "assistant", "text": text})
+                question_input, visible_text = _extract_question_block(text)
+                if visible_text:
+                    self.transcript.append(
+                        TranscriptEntry("assistant", "text", visible_text, _now().isoformat())
+                    )
+                    self._broadcast({"kind": "message", "role": "assistant", "text": visible_text})
+                if question_input is not None:
+                    self._open_user_question(question_input)
             # „Warum" der nächsten Decision Card: jüngste Assistenten-Äußerung —
             # bevorzugt der Text, sonst der Denk-Block (oft folgt direkt der Tool-Aufruf).
-            reasoning = text or thinking
+            reasoning = (visible_text if text else None) or thinking
             if reasoning:
                 self._last_assistant_text = reasoning
                 # PROJ-15: denselben Strom auf Kuratierungs-Marker scannen (entprellt).
@@ -528,7 +607,11 @@ class SessionRuntime:
                 )
             else:
                 # Turn fertig → wartet auf nächste Eingabe (bzw. done, falls Prozess endet).
-                self.state.status = WAITING if self.driver.is_alive else DONE
+                blocking = [c for c in self.pending.values() if c.card_type != "knowledge_proposal"]
+                if blocking:
+                    self.state.status = AWAITING_APPROVAL
+                else:
+                    self.state.status = WAITING if self.driver.is_alive else DONE
 
         elif event.type == "rate_limit_event":
             self.state.rate_limit = extract_rate_limit(event)
@@ -787,6 +870,36 @@ class SessionRuntime:
         self._maybe_persist()  # PROJ-14: awaiting_approval spiegeln (zählt aktiv).
         return await fut
 
+    def _open_user_question(self, tool_input: dict) -> None:
+        """Generic CLI/Codex question marker → existing AskUserQuestion card UI."""
+        first = (tool_input.get("questions") or [{}])[0]
+        question = str(first.get("question") or "Frage an den Nutzer").strip()
+        decision_id = f"question-{uuid.uuid4()}"
+        card = PendingDecision(
+            decision_id=decision_id,
+            session_id=self.state.session_id,
+            tool_name="AskUserQuestion",
+            action=question,
+            excerpt=question,
+            rationale=policy.clip_rationale(self._last_assistant_text),
+            context={
+                "project_path": self.state.project_path,
+                "role": self.state.role,
+                "phase": self.state.abc_phase,
+                "engine": self.state.engine,
+            },
+            created_at=_now().isoformat(),
+            tool_input=tool_input,
+            triggering_rule="Frage aus Engine-Antwortstrom",
+            card_type="normal",
+        )
+        self.pending[decision_id] = card
+        self.state.status = AWAITING_APPROVAL
+        self.state.last_activity = _now()
+        self._broadcast({"kind": "decision", "event": "opened", "decision": card.to_read()})
+        self._broadcast({"kind": "state", **self.to_read()})
+        self._maybe_persist()
+
     def _apply_phase(self, tool_name: str, tool_input: dict | None, prospective: tuple) -> None:
         """Übernimmt die (zuvor seiteneffektfrei berechnete) ABC-Phase — DER Recognizer.
 
@@ -866,7 +979,11 @@ class SessionRuntime:
         if fut is None:
             # Future-lose Notiz (z. B. deny, QA-Bug A): nur quittieren/entfernen — die
             # Aktion war nie blockierend, es gibt nichts zu entsperren.
+            card.resolution = "approve" if approve else "deny"
+            card.state = RESOLVED
             self.pending.pop(decision_id, None)
+            if not self._futures and self.state.status == AWAITING_APPROVAL:
+                self.state.status = WAITING
             self.state.last_activity = _now()
             self._broadcast({"kind": "decision", "event": "resolved", "decision": card.to_read()})
             self._broadcast({"kind": "state", **self.to_read()})
@@ -1338,6 +1455,8 @@ class SessionManager:
             seeded = abc_phases.seed_triple_from_prompt(initial_prompt)
             if seeded[0] is not None:
                 state.abc_phase, state.abc_phase_reached, state.abc_feature = seeded
+        if profile.key == "codex":
+            initial_prompt = f"{_CODEX_QUESTION_CARD_INSTRUCTION}\n\n{initial_prompt}"
 
         driver = self._make_driver(profile)
         runtime = SessionRuntime(

@@ -200,6 +200,55 @@ async def test_question_card_carries_tool_input():
 
 
 @pytest.mark.asyncio
+async def test_codex_question_marker_opens_question_card_and_answer_resumes():
+    """Codex/generic_cli has no PreToolUse hook. A Jupiter question marker in the
+    assistant stream still becomes the existing QuestionCard, and the answer returns
+    as the next user turn."""
+    from app.engine.events import StreamEvent
+
+    app = create_app(driver_factory=lambda: FakeDriver())
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        sid = (await ac.post(
+            "/sessions",
+            json={
+                "project_path": PROJECT,
+                "initial_prompt": "Hi",
+                "model": "haiku",
+                "engine": "claude",
+            },
+        )).json()["session_id"]
+        rt = app.state.manager.get(sid)
+        rt.state.engine = "codex"
+
+        marker = (
+            "Bitte waehle:\n"
+            "```jupiter-question\n"
+            '{"questions":[{"question":"Branch?","header":"Branch",'
+            '"options":[{"label":"dev"},{"label":"main","description":"direkt"}]}]}\n'
+            "```"
+        )
+        await rt.handle_event(
+            StreamEvent("assistant", None, {"message": {"content": [{"type": "text", "text": marker}]}})
+        )
+        await rt.handle_event(StreamEvent("result", "success", {"is_error": False, "num_turns": 1}))
+
+        data = (await ac.get(f"/sessions/{sid}")).json()
+        assert data["status"] == AWAITING_APPROVAL
+        card = data["pending_decisions"][0]
+        assert card["tool_name"] == "AskUserQuestion"
+        assert card["context"]["engine"] == "codex"
+        assert card["tool_input"]["questions"][0]["options"][0]["label"] == "dev"
+        assert "jupiter-question" not in "\n".join(e.text for e in rt.transcript)
+
+        res = await ac.post(
+            f"/sessions/{sid}/decisions/{card['decision_id']}",
+            json={"decision": "deny", "comment": "Antwort des Nutzers — Branch: dev"},
+        )
+        assert res.status_code == 202
+        assert "Antwort des Nutzers — Branch: dev" in rt.driver.sent
+
+
+@pytest.mark.asyncio
 async def test_multiple_cards_resolved_independently():
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")
