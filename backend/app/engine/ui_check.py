@@ -100,13 +100,20 @@ class UiCheckService:
         run_dir.mkdir(parents=True, exist_ok=False)
         self._write_initial_status(run_dir, payload)
 
-        cmd = [str(self.project_path / "scripts" / "ui-check.sh"), str(payload.url), "--out", str(run_dir)]
+        # ui-check-auto.sh verkettet Collect → Judge-Pass (headless Claude) →
+        # Finalize in EINEM Prozess. Ohne den automatischen Judge-Pass blieb der
+        # Lauf sonst dauerhaft bei awaiting_judge stehen (UI: „Läuft").
+        cmd = [str(self.project_path / "scripts" / "ui-check-auto.sh"), str(payload.url), "--out", str(run_dir)]
         if payload.industry:
             cmd += ["--industry", payload.industry]
         if payload.prompt:
             cmd += ["--prompt", payload.prompt]
         if payload.desktop:
             cmd.append("--desktop")
+        # Der Judge ist immer Claude (visuelle Rubrik-Bewertung). Bei Claude-Läufen
+        # das gewählte Modell durchreichen; sonst nutzt das Skript seinen Default.
+        if payload.ai_provider == "claude" and payload.ai_model:
+            cmd += ["--judge-model", payload.ai_model]
         proc = subprocess.Popen(
             cmd,
             cwd=str(self.project_path),
@@ -265,9 +272,15 @@ class UiCheckService:
         if has_scores:
             return "Audit abgeschlossen."
         if status.get("phase") == "awaiting_judge":
-            return "Datenerfassung abgeschlossen, Judge-Pass steht aus."
-        if status.get("status") == "cancelled":
-            return "Lauf abgebrochen."
+            return "Datenerfassung abgeschlossen, Judge-Pass läuft …"
+        if status.get("phase") == "judge_failed":
+            err = status.get("phases", {}).get("scoring", {}).get("error")
+            return err or "Judge-Pass fehlgeschlagen."
+        if status.get("status") == "error":
+            return "Lauf fehlgeschlagen."
+        if status.get("status") in {"cancelled", "aborted"}:
+            err = status.get("phases", {}).get("scoring", {}).get("error")
+            return err or "Lauf abgebrochen."
         return status.get("phase") or "Lauf wird vorbereitet."
 
     def _dimensions(self, scores: dict[str, Any]) -> list[dict[str, Any]]:

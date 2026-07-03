@@ -20,6 +20,8 @@ def _fixture_project(tmp_path: Path) -> Path:
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "ui-check.sh").write_text("#!/usr/bin/env bash\nsleep 60\n", encoding="utf-8")
     (root / "scripts" / "ui-check.sh").chmod(0o755)
+    (root / "scripts" / "ui-check-auto.sh").write_text("#!/usr/bin/env bash\nsleep 60\n", encoding="utf-8")
+    (root / "scripts" / "ui-check-auto.sh").chmod(0o755)
     (root / "scripts" / "redesign.sh").write_text("#!/usr/bin/env bash\nsleep 60\n", encoding="utf-8")
     (root / "scripts" / "redesign.sh").chmod(0o755)
     run = root / "runs" / "2026-07-03-example.com-001"
@@ -117,3 +119,40 @@ def test_ui_check_start_and_cancel_run(tmp_path, monkeypatch):
     cancelled = client.post(f"/ui-check/runs/{run_id}/cancel")
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+
+
+def test_start_run_uses_auto_script_with_judge_model(tmp_path, monkeypatch):
+    from app.engine import ui_check as ui_check_mod
+
+    root = _fixture_project(tmp_path)
+    monkeypatch.setattr(settings, "ui_check_project_path", str(root))
+
+    captured = {}
+
+    class _FakeProc:
+        pid = 4242
+
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(ui_check_mod.subprocess, "Popen", _FakeProc)
+
+    class _Payload:
+        url = "https://new.example"
+        mode = "auto"
+        depth = "audit"
+        industry = None
+        prompt = None
+        desktop = False
+        ai_provider = "claude"
+        ai_model = "opus"
+
+    service = ui_check_mod.UiCheckService(str(root))
+    service.start_run(_Payload())
+
+    cmd = captured["cmd"]
+    assert cmd[0].endswith("scripts/ui-check-auto.sh")
+    assert "--judge-model" in cmd and cmd[cmd.index("--judge-model") + 1] == "opus"

@@ -9,6 +9,7 @@ import {
   BarChart3Icon,
   BlocksIcon,
   ExternalLinkIcon,
+  GlobeIcon,
   ImageIcon,
   LayoutDashboardIcon,
   PaletteIcon,
@@ -175,6 +176,7 @@ function ArtifactButton({
 
 export default function UiCheckApp() {
   const [runs, setRuns] = useState<UiCheckRunSummary[]>([]);
+  const [activeTab, setActiveTab] = useState("dashboard");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [detail, setDetail] = useState<UiCheckRunDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -346,7 +348,7 @@ export default function UiCheckApp() {
           </div>
         )}
 
-        <Tabs defaultValue="dashboard" className="gap-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-4">
           <TabsList className="w-full justify-start overflow-x-auto" variant="line">
             <TabsTrigger value="dashboard">
               <LayoutDashboardIcon className="size-3.5" /> Dashboard
@@ -364,6 +366,39 @@ export default function UiCheckApp() {
               <BlocksIcon className="size-3.5" /> Portfolio
             </TabsTrigger>
           </TabsList>
+
+          {/* Website-Indikator: außerhalb des Dashboards zeigt sonst nichts an,
+              zu welchem Lauf die Tab-Inhalte gehören. */}
+          {activeTab !== "dashboard" && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+              <GlobeIcon className="size-4 shrink-0 text-muted-foreground" />
+              {current ? (
+                <>
+                  <span
+                    className="max-w-[24rem] truncate font-medium"
+                    title={current.display_url ?? undefined}
+                  >
+                    {current.display_url ?? "Unbekannte URL"}
+                  </span>
+                  <StatusBadge status={current.status} />
+                  {typeof current.score_total === "number" && (
+                    <span className="text-muted-foreground">
+                      Score {fmtScore(current.score_total)}
+                    </span>
+                  )}
+                  {detail?.status_message && (
+                    <span className="max-w-[28rem] truncate text-xs text-muted-foreground">
+                      · {detail.status_message}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="text-muted-foreground">
+                  Kein Lauf ausgewählt — im Dashboard einen Lauf aus der Historie wählen.
+                </span>
+              )}
+            </div>
+          )}
 
           <TabsContent value="dashboard">
             <DashboardTab
