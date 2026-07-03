@@ -148,11 +148,45 @@ def test_start_run_uses_auto_script_with_judge_model(tmp_path, monkeypatch):
         prompt = None
         desktop = False
         ai_provider = "claude"
-        ai_model = "opus"
+        ai_model = "Claude Opus"
 
     service = ui_check_mod.UiCheckService(str(root))
     service.start_run(_Payload())
 
     cmd = captured["cmd"]
     assert cmd[0].endswith("scripts/ui-check-auto.sh")
+    # UI-Label "Claude Opus" muss zum CLI-Alias "opus" werden (nicht wörtlich).
     assert "--judge-model" in cmd and cmd[cmd.index("--judge-model") + 1] == "opus"
+
+
+def test_start_run_omits_judge_model_for_unknown_label(tmp_path, monkeypatch):
+    from app.engine import ui_check as ui_check_mod
+
+    root = _fixture_project(tmp_path)
+    monkeypatch.setattr(settings, "ui_check_project_path", str(root))
+    captured = {}
+
+    class _FakeProc:
+        pid = 4243
+
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(ui_check_mod.subprocess, "Popen", _FakeProc)
+
+    class _Payload:
+        url = "https://new.example"
+        mode = "auto"
+        depth = "audit"
+        industry = None
+        prompt = None
+        desktop = False
+        ai_provider = "openrouter"
+        ai_model = "OpenRouter Auto"
+
+    ui_check_mod.UiCheckService(str(root)).start_run(_Payload())
+    # Nicht-Claude-Provider: kein --judge-model → Skript nutzt seinen sonnet-Default.
+    assert "--judge-model" not in captured["cmd"]

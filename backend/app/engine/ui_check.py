@@ -29,6 +29,12 @@ _DIMENSION_LABELS = {
     "accessibility": "Accessibility",
     "conversion": "Conversion",
 }
+# UI-Label → claude-CLI-Modell-Alias (die CLI kennt keine Labels mit Leerzeichen).
+_CLAUDE_MODEL_ALIAS = {
+    "Claude Sonnet": "sonnet",
+    "Claude Opus": "opus",
+    "Claude Haiku": "haiku",
+}
 _SEVERITY = {
     "hoch": "high",
     "high": "high",
@@ -111,9 +117,13 @@ class UiCheckService:
         if payload.desktop:
             cmd.append("--desktop")
         # Der Judge ist immer Claude (visuelle Rubrik-Bewertung). Bei Claude-Läufen
-        # das gewählte Modell durchreichen; sonst nutzt das Skript seinen Default.
-        if payload.ai_provider == "claude" and payload.ai_model:
-            cmd += ["--judge-model", payload.ai_model]
+        # das gewählte Modell als CLI-Alias durchreichen. Das Frontend schickt ein
+        # Label ("Claude Sonnet") — die claude-CLI kennt nur Aliasse (sonnet/opus/
+        # haiku); ein unbekanntes Modell ließe den Judge mit Exit 1 scheitern.
+        if payload.ai_provider == "claude":
+            alias = _CLAUDE_MODEL_ALIAS.get(payload.ai_model or "")
+            if alias:
+                cmd += ["--judge-model", alias]
         proc = subprocess.Popen(
             cmd,
             cwd=str(self.project_path),
