@@ -1209,6 +1209,33 @@ export function uiCheckArtifactUrl(runId: string, kind: string): string {
   return `${API_BASE}/ui-check/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(kind)}`;
 }
 
+// Inline-freundliche MIME-Typen: die Artefakt-Route ist Bearer-geschützt, ein
+// direktes window.open() kann keinen Auth-Header setzen → 401. Darum authentifiziert
+// laden und als Blob-URL öffnen. Für Text-Artefakte einen anzeigbaren Typ erzwingen.
+const _ARTIFACT_INLINE_TYPE: Record<string, string> = {
+  report: "text/plain; charset=utf-8",
+  scores: "application/json",
+  tokens: "application/json",
+  mockup: "text/html; charset=utf-8",
+};
+
+export async function openUiCheckArtifact(runId: string, kind: string): Promise<void> {
+  const path = `/ui-check/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(kind)}`;
+  let resp = await rawFetch(path, { method: "GET" });
+  if (resp.status === 401 && (await refreshAccessToken())) {
+    resp = await rawFetch(path, { method: "GET" });
+  }
+  if (!resp.ok) {
+    throw new ApiError(`Artefakt konnte nicht geladen werden (${resp.status}).`, resp.status);
+  }
+  const raw = await resp.blob();
+  const inlineType = _ARTIFACT_INLINE_TYPE[kind];
+  const blob = inlineType ? new Blob([await raw.text()], { type: inlineType }) : raw;
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener,noreferrer");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 // --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------
 
 /** Vollständiger Host-Metrik-Snapshot inkl. Verlauf (für die geöffnete App,

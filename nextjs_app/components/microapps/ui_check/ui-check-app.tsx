@@ -47,9 +47,9 @@ import {
   cancelUiCheckRun,
   getUiCheckRun,
   getUiCheckRuns,
+  openUiCheckArtifact,
   runUiCheckRedesign,
   startUiCheckRun,
-  uiCheckArtifactUrl,
 } from "@/lib/api";
 import type {
   UiCheckAiProvider,
@@ -161,12 +161,23 @@ function ArtifactButton({
   kind: string;
   label: string;
 }) {
+  const [loading, setLoading] = useState(false);
   return (
     <Button
       type="button"
       variant="outline"
       size="sm"
-      onClick={() => window.open(uiCheckArtifactUrl(runId, kind), "_blank", "noopener,noreferrer")}
+      disabled={loading}
+      onClick={async () => {
+        setLoading(true);
+        try {
+          await openUiCheckArtifact(runId, kind);
+        } catch (err) {
+          toast.error(err instanceof ApiError ? err.message : "Artefakt konnte nicht geöffnet werden.");
+        } finally {
+          setLoading(false);
+        }
+      }}
     >
       <ExternalLinkIcon className="size-3.5" />
       {label}

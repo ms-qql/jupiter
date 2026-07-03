@@ -160,7 +160,15 @@ class UiCheckService:
             raise UiCheckConflict("Redesign braucht einen abgeschlossenen Audit-Lauf mit scores.json.")
         if run_id in self._processes and self._processes[run_id].poll() is None:
             raise UiCheckConflict("Fuer diesen Lauf arbeitet bereits ein Prozess.")
-        cmd = [str(self.project_path / "scripts" / "redesign.sh"), str(path)]
+        # redesign-auto.sh verkettet INIT → Generierung (headless Claude,
+        # ui-redesign) → Verify. redesign.sh allein scaffoldet nur und stoppt bei
+        # awaiting_generation — die Generierung würde sonst nie ausgelöst.
+        cmd = [str(self.project_path / "scripts" / "redesign-auto.sh"), str(path)]
+        ctx = _read_json(path / "ui-check.json")
+        if ctx.get("ai_provider") == "claude":
+            alias = _CLAUDE_MODEL_ALIAS.get(ctx.get("ai_model") or "")
+            if alias:
+                cmd += ["--gen-model", alias]
         proc = subprocess.Popen(
             cmd,
             cwd=str(self.project_path),
