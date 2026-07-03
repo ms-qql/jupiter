@@ -147,6 +147,14 @@ engines:
     group: micro
     icon: book-open
 
+  # UI-Check PROJ-14 — native Micro-App fuer Website-Audit, Branding-Extraktion,
+  # Redesign-Artefakte und Run-Historie. Code unter components/microapps/ui_check/.
+  - key: ui_check
+    label: "UI-Check"
+    kind: native
+    group: micro
+    icon: wand-sparkles
+
   # --- Tiefe 3: Launch-Button ---------------------------------------------
   # Für nicht integrierbare Tools: öffnet/startet extern.
   - key: gpt-web

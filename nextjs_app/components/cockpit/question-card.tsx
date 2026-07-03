@@ -76,6 +76,12 @@ export function QuestionCard({
   }
 
   const proj = decision.context?.project_path ? projectName(decision.context.project_path) : null;
+  const asker =
+    decision.context?.engine === "codex"
+      ? "Codex fragt dich"
+      : decision.context?.engine && decision.context.engine !== "claude"
+        ? "KI fragt dich"
+        : "Claude fragt dich";
 
   return (
     <div
@@ -92,7 +98,7 @@ export function QuestionCard({
         >
           Frage
         </Badge>
-        <span className="text-sm font-medium">Claude fragt dich</span>
+        <span className="text-sm font-medium">{asker}</span>
         {proj && <span className="text-[11px] text-muted-foreground">· {proj}</span>}
       </div>
 

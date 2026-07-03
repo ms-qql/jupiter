@@ -44,6 +44,10 @@ export const MICROAPP_REGISTRY: Record<string, MicroAppComponent> = {
   book_nuggets: lazy(
     () => import("@/components/microapps/book_nuggets/book-nuggets-app"),
   ),
+  // UI-Check PROJ-14: Website-Audit + Branding + Redesign-Artefakte.
+  ui_check: lazy(
+    () => import("@/components/microapps/ui_check/ui-check-app"),
+  ),
 };
 
 /** Liefert die native Komponente zu einem key — oder null, wenn nicht registriert

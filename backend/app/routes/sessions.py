@@ -160,6 +160,15 @@ async def resolve_decision(
         raise HTTPException(
             status_code=503, detail=f"Wissensnotiz nicht geschrieben (Vault): {exc}"
         ) from exc
+    if (
+        card.tool_name == "AskUserQuestion"
+        and card.triggering_rule == "Frage aus Engine-Antwortstrom"
+        and payload.comment
+    ):
+        try:
+            await manager.send_input(session_id, payload.comment)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "decision": card.to_read()}
 
 
