@@ -20,8 +20,12 @@ def _fixture_project(tmp_path: Path) -> Path:
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "ui-check.sh").write_text("#!/usr/bin/env bash\nsleep 60\n", encoding="utf-8")
     (root / "scripts" / "ui-check.sh").chmod(0o755)
+    (root / "scripts" / "ui-check-auto.sh").write_text("#!/usr/bin/env bash\nsleep 60\n", encoding="utf-8")
+    (root / "scripts" / "ui-check-auto.sh").chmod(0o755)
     (root / "scripts" / "redesign.sh").write_text("#!/usr/bin/env bash\nsleep 60\n", encoding="utf-8")
     (root / "scripts" / "redesign.sh").chmod(0o755)
+    (root / "scripts" / "redesign-auto.sh").write_text("#!/usr/bin/env bash\nsleep 60\n", encoding="utf-8")
+    (root / "scripts" / "redesign-auto.sh").chmod(0o755)
     run = root / "runs" / "2026-07-03-example.com-001"
     _write(run / "status.json", {
         "run_id": run.name,
@@ -36,7 +40,7 @@ def _fixture_project(tmp_path: Path) -> Path:
         "url": "https://example.com",
         "rubric_version": "2026.07-1",
         "ai_provider": "claude",
-        "ai_model": "sonnet",
+        "ai_model": "Claude Sonnet",
         "mode": "landing",
         "depth": "audit",
     })
@@ -117,3 +121,100 @@ def test_ui_check_start_and_cancel_run(tmp_path, monkeypatch):
     cancelled = client.post(f"/ui-check/runs/{run_id}/cancel")
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+
+
+def test_start_run_uses_auto_script_with_judge_model(tmp_path, monkeypatch):
+    from app.engine import ui_check as ui_check_mod
+
+    root = _fixture_project(tmp_path)
+    monkeypatch.setattr(settings, "ui_check_project_path", str(root))
+
+    captured = {}
+
+    class _FakeProc:
+        pid = 4242
+
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(ui_check_mod.subprocess, "Popen", _FakeProc)
+
+    class _Payload:
+        url = "https://new.example"
+        mode = "auto"
+        depth = "audit"
+        industry = None
+        prompt = None
+        desktop = False
+        ai_provider = "claude"
+        ai_model = "Claude Opus"
+
+    service = ui_check_mod.UiCheckService(str(root))
+    service.start_run(_Payload())
+
+    cmd = captured["cmd"]
+    assert cmd[0].endswith("scripts/ui-check-auto.sh")
+    # UI-Label "Claude Opus" muss zum CLI-Alias "opus" werden (nicht wörtlich).
+    assert "--judge-model" in cmd and cmd[cmd.index("--judge-model") + 1] == "opus"
+
+
+def test_start_run_omits_judge_model_for_unknown_label(tmp_path, monkeypatch):
+    from app.engine import ui_check as ui_check_mod
+
+    root = _fixture_project(tmp_path)
+    monkeypatch.setattr(settings, "ui_check_project_path", str(root))
+    captured = {}
+
+    class _FakeProc:
+        pid = 4243
+
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(ui_check_mod.subprocess, "Popen", _FakeProc)
+
+    class _Payload:
+        url = "https://new.example"
+        mode = "auto"
+        depth = "audit"
+        industry = None
+        prompt = None
+        desktop = False
+        ai_provider = "openrouter"
+        ai_model = "OpenRouter Auto"
+
+    ui_check_mod.UiCheckService(str(root)).start_run(_Payload())
+    # Nicht-Claude-Provider: kein --judge-model → Skript nutzt seinen sonnet-Default.
+    assert "--judge-model" not in captured["cmd"]
+
+
+def test_start_redesign_uses_auto_script_with_gen_model(tmp_path, monkeypatch):
+    from app.engine import ui_check as ui_check_mod
+
+    root = _fixture_project(tmp_path)
+    monkeypatch.setattr(settings, "ui_check_project_path", str(root))
+    captured = {}
+
+    class _FakeProc:
+        pid = 4244
+
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(ui_check_mod.subprocess, "Popen", _FakeProc)
+
+    ui_check_mod.UiCheckService(str(root)).start_redesign("2026-07-03-example.com-001")
+
+    cmd = captured["cmd"]
+    assert cmd[0].endswith("scripts/redesign-auto.sh")
+    # ai_model "Claude Sonnet" (aus ui-check.json) → CLI-Alias "sonnet".
+    assert "--gen-model" in cmd and cmd[cmd.index("--gen-model") + 1] == "sonnet"

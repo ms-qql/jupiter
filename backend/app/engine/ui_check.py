@@ -29,6 +29,12 @@ _DIMENSION_LABELS = {
     "accessibility": "Accessibility",
     "conversion": "Conversion",
 }
+# UI-Label → claude-CLI-Modell-Alias (die CLI kennt keine Labels mit Leerzeichen).
+_CLAUDE_MODEL_ALIAS = {
+    "Claude Sonnet": "sonnet",
+    "Claude Opus": "opus",
+    "Claude Haiku": "haiku",
+}
 _SEVERITY = {
     "hoch": "high",
     "high": "high",
@@ -100,13 +106,24 @@ class UiCheckService:
         run_dir.mkdir(parents=True, exist_ok=False)
         self._write_initial_status(run_dir, payload)
 
-        cmd = [str(self.project_path / "scripts" / "ui-check.sh"), str(payload.url), "--out", str(run_dir)]
+        # ui-check-auto.sh verkettet Collect → Judge-Pass (headless Claude) →
+        # Finalize in EINEM Prozess. Ohne den automatischen Judge-Pass blieb der
+        # Lauf sonst dauerhaft bei awaiting_judge stehen (UI: „Läuft").
+        cmd = [str(self.project_path / "scripts" / "ui-check-auto.sh"), str(payload.url), "--out", str(run_dir)]
         if payload.industry:
             cmd += ["--industry", payload.industry]
         if payload.prompt:
             cmd += ["--prompt", payload.prompt]
         if payload.desktop:
             cmd.append("--desktop")
+        # Der Judge ist immer Claude (visuelle Rubrik-Bewertung). Bei Claude-Läufen
+        # das gewählte Modell als CLI-Alias durchreichen. Das Frontend schickt ein
+        # Label ("Claude Sonnet") — die claude-CLI kennt nur Aliasse (sonnet/opus/
+        # haiku); ein unbekanntes Modell ließe den Judge mit Exit 1 scheitern.
+        if payload.ai_provider == "claude":
+            alias = _CLAUDE_MODEL_ALIAS.get(payload.ai_model or "")
+            if alias:
+                cmd += ["--judge-model", alias]
         proc = subprocess.Popen(
             cmd,
             cwd=str(self.project_path),
@@ -143,7 +160,15 @@ class UiCheckService:
             raise UiCheckConflict("Redesign braucht einen abgeschlossenen Audit-Lauf mit scores.json.")
         if run_id in self._processes and self._processes[run_id].poll() is None:
             raise UiCheckConflict("Fuer diesen Lauf arbeitet bereits ein Prozess.")
-        cmd = [str(self.project_path / "scripts" / "redesign.sh"), str(path)]
+        # redesign-auto.sh verkettet INIT → Generierung (headless Claude,
+        # ui-redesign) → Verify. redesign.sh allein scaffoldet nur und stoppt bei
+        # awaiting_generation — die Generierung würde sonst nie ausgelöst.
+        cmd = [str(self.project_path / "scripts" / "redesign-auto.sh"), str(path)]
+        ctx = _read_json(path / "ui-check.json")
+        if ctx.get("ai_provider") == "claude":
+            alias = _CLAUDE_MODEL_ALIAS.get(ctx.get("ai_model") or "")
+            if alias:
+                cmd += ["--gen-model", alias]
         proc = subprocess.Popen(
             cmd,
             cwd=str(self.project_path),
@@ -265,9 +290,15 @@ class UiCheckService:
         if has_scores:
             return "Audit abgeschlossen."
         if status.get("phase") == "awaiting_judge":
-            return "Datenerfassung abgeschlossen, Judge-Pass steht aus."
-        if status.get("status") == "cancelled":
-            return "Lauf abgebrochen."
+            return "Datenerfassung abgeschlossen, Judge-Pass läuft …"
+        if status.get("phase") == "judge_failed":
+            err = status.get("phases", {}).get("scoring", {}).get("error")
+            return err or "Judge-Pass fehlgeschlagen."
+        if status.get("status") == "error":
+            return "Lauf fehlgeschlagen."
+        if status.get("status") in {"cancelled", "aborted"}:
+            err = status.get("phases", {}).get("scoring", {}).get("error")
+            return err or "Lauf abgebrochen."
         return status.get("phase") or "Lauf wird vorbereitet."
 
     def _dimensions(self, scores: dict[str, Any]) -> list[dict[str, Any]]:
