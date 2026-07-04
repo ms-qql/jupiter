@@ -17,10 +17,12 @@ Geschriebene Dateien sind valides Obsidian-MD mit YAML-Frontmatter
 """
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import unicodedata
 from dataclasses import dataclass
@@ -505,6 +507,107 @@ class VaultService:
                 "project_name": state.project_name or title,
             },
         )
+
+    # --- Session-Kondensierung (PROJ-55) -----------------------------------
+    #
+    # Wochen-Sweep: alte rohe Session-Logs werden vom Skill zu Knowledge kondensiert
+    # und danach hier **archiviert + gzip-komprimiert** (Sessions/_archiv/), damit der
+    # aktive Sessions-Ordner nicht endlos wächst — Recovery bleibt über das Archiv möglich.
+    # ``write_at`` weist Nicht-``.md`` bewusst ab; das Archiv ist daher ein eigener,
+    # gehärteter Datei-Pfad (kein Umweg über ``write``/``write_at``).
+
+    _SESSIONS_DIR = "Sessions"
+    _ARCHIVE_DIR = "Sessions/_archiv"
+
+    @staticmethod
+    def _bare_name(filename: str) -> str:
+        """Nur den Basisnamen zulassen (kein ``/``/``..`` — zweite Verteidigungslinie
+        zur Pfad-Sandbox in ``_resolve_write``)."""
+        name = os.path.basename((filename or "").strip())
+        if not name or name.startswith("."):
+            raise ValueError("Ungültiger Session-Dateiname.")
+        return name
+
+    def session_log_abspath(self, filename: str) -> str:
+        """Absoluter Pfad eines rohen Session-Logs (für den headless Skill-Lauf)."""
+        return self._resolve_write(os.path.join(self._SESSIONS_DIR, self._bare_name(filename)))
+
+    def list_session_logs(self) -> list[dict]:
+        """Rohe Session-Logs auf oberster ``Sessions/``-Ebene (``_archiv/`` ausgenommen,
+        da ``os.listdir`` nicht rekursiv absteigt) — je Datei Frontmatter-Auszug
+        (``session_id``, ``created``, ``title``). Fehlender Ordner → leere Liste."""
+        base = self._resolve_write(self._SESSIONS_DIR)
+        try:
+            names = os.listdir(base)
+        except FileNotFoundError:
+            return []
+        out: list[dict] = []
+        for name in names:
+            if not name.endswith(".md"):
+                continue
+            full = os.path.join(base, name)
+            if not os.path.isfile(full):
+                continue
+            try:
+                with open(full, encoding="utf-8") as fh:
+                    fm, _body = _parse_frontmatter(fh.read())
+            except OSError:
+                continue
+            out.append({
+                "filename": name,
+                "session_id": fm.get("session_id"),
+                "created": fm.get("created"),
+                "title": fm.get("title"),
+            })
+        out.sort(key=lambda f: f["filename"])
+        return out
+
+    def read_session_log(self, filename: str) -> dict:
+        """Ein rohes Session-Log lesen (Frontmatter + Body + absoluter Pfad)."""
+        real = self.session_log_abspath(filename)
+        with open(real, encoding="utf-8") as fh:  # FileNotFoundError → Aufrufer behandelt
+            content = fh.read()
+        fm, body = _parse_frontmatter(content)
+        return {"path": self._rel(real), "abspath": real, "frontmatter": fm, "body": body}
+
+    def archive_session_log(self, filename: str) -> str:
+        """Verschiebt ``Sessions/<name>`` → ``Sessions/_archiv/<name>.gz`` (gzip).
+
+        Erst die gzip-Kopie schreiben, **dann** die Quelle löschen → bei Absturz
+        dazwischen bleibt das Roh-Log erhalten (kein Datenverlust). Gibt den
+        vault-relativen Archivpfad zurück."""
+        name = self._bare_name(filename)
+        src = self._resolve_write(os.path.join(self._SESSIONS_DIR, name))
+        archive_dir = self._resolve_write(self._ARCHIVE_DIR)
+        os.makedirs(archive_dir, exist_ok=True)
+        dst = os.path.join(archive_dir, name + ".gz")
+        with open(src, "rb") as fin, gzip.open(dst, "wb") as fout:
+            shutil.copyfileobj(fin, fout)
+        os.remove(src)
+        return self._rel(dst)
+
+    def prune_archive(self, max_age_days: int) -> int:
+        """Archivierte ``.gz``-Logs älter als ``max_age_days`` (nach mtime) löschen.
+        Gibt die Anzahl gelöschter Dateien zurück (fehlender Ordner → 0)."""
+        try:
+            archive_dir = self._resolve_write(self._ARCHIVE_DIR)
+        except ValueError:
+            return 0
+        if not os.path.isdir(archive_dir):
+            return 0
+        cutoff = _now().timestamp() - max(0, max_age_days) * 86_400
+        removed = 0
+        for name in os.listdir(archive_dir):
+            if not name.endswith(".gz"):
+                continue
+            full = os.path.join(archive_dir, name)
+            try:
+                if os.path.getmtime(full) < cutoff:
+                    os.remove(full)
+                    removed += 1
+            except OSError:
+                continue
+        return removed
 
     # --- Geteilter Dienst /vault/v1 (PROJ-24) ------------------------------
     #

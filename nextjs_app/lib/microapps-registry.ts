@@ -48,6 +48,10 @@ export const MICROAPP_REGISTRY: Record<string, MicroAppComponent> = {
   ui_check: lazy(
     () => import("@/components/microapps/ui_check/ui-check-app"),
   ),
+  // PROJ-55: Session-Kondensierung — Wochen-Sweep alter Sessions → Hal-Knowledge.
+  session_condense: lazy(
+    () => import("@/components/microapps/session_condense/session-condense-app"),
+  ),
 };
 
 /** Liefert die native Komponente zu einem key — oder null, wenn nicht registriert

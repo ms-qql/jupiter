@@ -392,6 +392,31 @@ class Settings(BaseSettings):
     # eigenen Unterordner `<Autor>-<Titel>/`. Speist auch die Bibliotheks-Kachel.
     book_nuggets_output_subdir: str = "04 Resources/Buch_Nuggets"
 
+    # --- Session-Kondensierung (PROJ-55) ---------------------------------
+    # Wochen-Sweep: rohe Session-Logs (`Agentic OS/Jupiter/Sessions/`) älter als
+    # `age_days` werden von einer headless Claude-Session über den
+    # `hal-session-condense`-Skill zu kuratierten Knowledge-Notizen verdichtet und
+    # danach archiviert+gzip-komprimiert. Queue + Einstellungen + Lauf-Protokoll leben
+    # in einer eigenen SQLite-Datei (überlebt Neustart, Idempotenz).
+    session_condense_db_path: str = str(Path.home() / "jupiter-data" / "session_condense.db")
+    # Poll-Frequenz des Hintergrund-Workers (Sek.) — niedrigfrequent, die Skill-Läufe
+    # dauern Minuten; der Tick sammelt nur Zustandswechsel ein und rückt nach.
+    session_condense_poll_interval_seconds: float = 10.0
+    # Modell + Permission-Mode der Kondensier-Sessions. bypassPermissions, weil headless
+    # kein interaktives Decision-Card-Gate bedienen kann.
+    session_condense_model: str = "sonnet"
+    session_condense_permission_mode: str = "bypassPermissions"
+    # Arbeitsverzeichnis (cwd/Scope) der Kondensier-Sessions. Default = Hal-Vault, in dem
+    # der Skill liest (Sessions/) und schreibt (Knowledge/). MUSS in allowed_roots liegen.
+    session_condense_project_path: str = "/home/dev/tools/Hal"
+    # Zwei-Fenster-Modell: kondensieren ab `age_days` Tagen, archivierte .gz endgültig
+    # löschen nach `archive_retention_days` Tagen. Beide pro App-Einstellungen persistiert.
+    session_condense_age_days: int = 7
+    session_condense_archive_retention_days: int = 30
+    # Trivial-Vorfilter: Netto-Body unter so vielen Zeichen UND ohne Kuratierungs-Marker
+    # gilt als trivial (nur archivieren, kein Skill-Lauf).
+    session_condense_min_body_chars: int = 800
+
     # --- UI-Check (PROJ-14 native Micro-App) -----------------------------
     # Dünne lokale Runner-Schicht für /ui-check/*: Quelle der Wahrheit bleiben
     # data/runs.jsonl + runs/<run-id>/ im UI-Check-Projekt. Keine eigene DB.
