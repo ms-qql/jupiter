@@ -1283,3 +1283,71 @@ export interface RegistryImportPreview {
   /** Warnungen (unbekannte/gefährliche Tools, „Quelle nicht verifiziert" …). */
   warnings: string[];
 }
+
+// --- PROJ-55: Session-Kondensierung (native Micro-App) ---------------------
+
+/** Status eines Warteschlangen-Eintrags (= UI-Badges). */
+export type SessionCondenseStatus = "pending" | "running" | "done" | "error";
+
+/** Fachliche Klassifikation einer verarbeiteten Session. */
+export type SessionCondenseOutcome = "condensed" | "trivial";
+
+/** Laufzeit-Zustand des Backend-Workers. */
+export type SessionCondenseWorkerStatus = "idle" | "draining" | "running";
+
+/** Ein Eintrag der Sweep-Warteschlange (eine Zeile pro alter Session). */
+export interface SessionCondenseItem {
+  id: number;
+  session_filename: string;
+  session_id: string | null;
+  project: string | null;
+  session_created: string | null;
+  status: SessionCondenseStatus;
+  outcome: SessionCondenseOutcome | null;
+  /** JSON-Array der geschriebenen Knowledge-Notiz-Pfade. */
+  knowledge_paths: string | null;
+  archived_path: string | null;
+  error_message: string | null;
+  worker_session_id: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** Worker-Zustand für die UI (Leerlauf · Läuft · nächster Plan-Lauf). */
+export interface SessionCondenseWorkerState {
+  status: SessionCondenseWorkerStatus;
+  draining: boolean;
+  current_id: number | null;
+  next_scheduled_run: string | null;
+}
+
+/** Antwort von GET /session-condense/queue (+ scan/run/retry). */
+export interface SessionCondenseQueue {
+  items: SessionCondenseItem[];
+  state: SessionCondenseWorkerState;
+}
+
+/** Ein Lauf-Protokoll (Kurzbilanz eines Sweeps). */
+export interface SessionCondenseRun {
+  id: number;
+  started_at: string | null;
+  finished_at: string | null;
+  checked: number;
+  condensed: number;
+  trivial: number;
+  archived: number;
+  errors: number;
+  pruned: number;
+}
+
+/** Sweep-Einstellungen (persistiert). */
+export interface SessionCondenseSettings {
+  /** Wochenplan „DOW HH:MM" (z. B. „MON 03:00") oder leer = nur manuell. */
+  schedule: string;
+  age_days: number;
+  retention_days: number;
+  min_chars: number;
+  /** Kondensier-Modell (haiku | sonnet | opus). */
+  model: string;
+}

@@ -23,6 +23,11 @@ from .book_nuggets_queue import (
     SqliteBookNuggetsRepository,
     build_book_nuggets_repo,
 )
+from .session_condense_queue import (
+    SessionCondenseRepository,
+    SqliteSessionCondenseRepository,
+    build_session_condense_repo,
+)
 from .auth_store import SqliteAuthRepository, build_auth_repo
 
 __all__ = [
@@ -36,6 +41,9 @@ __all__ = [
     "BookNuggetsRepository",
     "SqliteBookNuggetsRepository",
     "build_book_nuggets_repo",
+    "SessionCondenseRepository",
+    "SqliteSessionCondenseRepository",
+    "build_session_condense_repo",
     "SqliteAuthRepository",
     "build_auth_repo",
 ]

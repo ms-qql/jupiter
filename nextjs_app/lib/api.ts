@@ -72,6 +72,9 @@ import type {
   BookNuggetsEstimate,
   BookNuggetsSettings,
   BookNuggetsLibraryItem,
+  SessionCondenseQueue,
+  SessionCondenseRun,
+  SessionCondenseSettings,
   UiCheckRunDetail,
   UiCheckRunsResponse,
   UiCheckStartRequest,
@@ -1480,5 +1483,60 @@ export function importRegistryConfirm(token: string): Promise<RegistryEntry> {
   return request<RegistryEntry>("/registry/import/confirm", {
     method: "POST",
     body: JSON.stringify({ token }),
+  });
+}
+
+// --- PROJ-55: Session-Kondensierung (native Micro-App) ---------------------
+
+/** Warteschlange + Worker-Zustand (für das Polling). */
+export function getSessionCondenseQueue(
+  signal?: AbortSignal,
+): Promise<SessionCondenseQueue> {
+  return request<SessionCondenseQueue>("/session-condense/queue", { signal });
+}
+
+/** Alte Session-Logs (> Altersschwelle) einreihen — ohne Start. */
+export function scanSessionCondense(): Promise<SessionCondenseQueue> {
+  return request<SessionCondenseQueue>("/session-condense/scan", { method: "POST" });
+}
+
+/** „Jetzt kondensieren": scannen + Sweep sofort starten (idempotent). */
+export function runSessionCondense(): Promise<SessionCondenseQueue> {
+  return request<SessionCondenseQueue>("/session-condense/run", { method: "POST" });
+}
+
+/** Einen Eintrag entfernen (laufenden: Session wird gestoppt). */
+export function deleteSessionCondenseItem(id: number): Promise<void> {
+  return request<void>(`/session-condense/queue/${id}`, { method: "DELETE" });
+}
+
+/** Fehlgeschlagenen Eintrag erneut versuchen (→ pending + Drain). */
+export function retrySessionCondenseItem(id: number): Promise<SessionCondenseQueue> {
+  return request<SessionCondenseQueue>(`/session-condense/queue/${id}/retry`, {
+    method: "POST",
+  });
+}
+
+/** Letzte Lauf-Protokolle (neueste zuerst). */
+export function getSessionCondenseRuns(
+  signal?: AbortSignal,
+): Promise<SessionCondenseRun[]> {
+  return request<SessionCondenseRun[]>("/session-condense/runs", { signal });
+}
+
+/** Einstellungen (Wochenplan / Schwellen / Modell) lesen. */
+export function getSessionCondenseSettings(
+  signal?: AbortSignal,
+): Promise<SessionCondenseSettings> {
+  return request<SessionCondenseSettings>("/session-condense/settings", { signal });
+}
+
+/** Einstellungen ändern (Teil-Update). */
+export function patchSessionCondenseSettings(
+  patch: Partial<SessionCondenseSettings>,
+): Promise<SessionCondenseSettings> {
+  return request<SessionCondenseSettings>("/session-condense/settings", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
   });
 }

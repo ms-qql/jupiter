@@ -7,6 +7,7 @@
 import {
   AppWindowIcon,
   BotIcon,
+  BrainCircuitIcon,
   Code2Icon,
   FileTextIcon,
   FolderIcon,
@@ -128,6 +129,7 @@ const ORCHESTRATION_ICONS: Record<string, LucideIcon> = {
   appwindow: AppWindowIcon,
   pentool: PenToolIcon,
   server: ServerIcon, // PROJ-42: VPS-Admin
+  "brain-circuit": BrainCircuitIcon, // PROJ-55: Session-Kondensierung
 };
 
 /** Icon-Name (aus der Registry) → Komponente; Fallback ist ein neutrales App-Icon. */
