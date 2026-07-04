@@ -328,8 +328,60 @@ Native Micro-App „Session-Kondensierung" nach dem Video-/Buch-Muster (Next.js,
 clean, Micro-App-Registry-Vitest 7/7 grün (Registry ↔ engines.yaml konsistent), Backend
 `test_proj18_engines`/`test_proj40_microapps` 34/34 grün.
 
-## QA Test Results
-_To be added by /abc-qa_
+## QA Test Results (/abc-qa, 2026-07-04)
+**Branch:** dev · **Ergebnis:** ✅ Production-ready — keine Critical/High-Bugs.
+**Automatisiert:** 25 PROJ-55-Tests grün (`test_proj55_session_condense.py` 17 + `test_proj55_qa.py` 8);
+Regression 182 grün (video/book/microapps/engines/vault/manager/auth/haertung); Frontend-Vitest
+173/174 (1 pre-existing unrelated Fail, s. u.).
+
+### Akzeptanzkriterien
+| # | Kriterium | Status | Nachweis |
+|---|-----------|--------|----------|
+| Auswahl 1 | Alter aus Frontmatter `created` > 7 d | ✅ | `is_older_than`, `test_scan_enqueues_only_old_sessions` |
+| Auswahl 2 | Archivierte nicht erneut verarbeitet (idempotent) | ✅ | `test_repeated_run_without_new_sessions_is_noop` |
+| Auswahl 3 | Triviale ohne Kondensat archiviert | ✅ | `test_trivial_is_archived_without_session`, `is_trivial` |
+| Auswahl 4 | Signal-Sessions zur Kondensierung ausgewählt | ✅ | `test_signal_condensed_records_notes_and_archives` |
+| Kond. 1 | Gefülltes `## Erkenntnis` (kein Platzhalter) | ⚠️ by design | Skill-Prompt erzwingt es (LLM); nicht backend-unit-testbar |
+| Kond. 2 | Bestehenden Stub füllen statt Duplikat | ↺ Abweichung | Bewusst **pro-Session-Notiz** (`<marker>-<projekt>-<sess8>`), hand-kuratierte nie überschrieben |
+| Kond. 3 | Frontmatter inkl. `project`-Tag | ⚠️ by design | Prompt gibt Feldset + Projekt-Tag vor (Skill schreibt) |
+| Kond. 4 | Knapp/handlungsorientiert | ⚠️ by design | Prompt (Konstitution) |
+| Kond. 5 | Keine Secrets im Kondensat | ⚠️ Limitation | Scrub nur skill-seitig instruiert, **nicht** backend-erzwungen (s. Findings) |
+| Archiv 1 | Archiv + gzip nach Verarbeitung | ✅ | `test_vault_archive_gzips_and_removes_source`, Worker-Tests |
+| Archiv 2 | `.gz` > Retention gelöscht | ✅ | `test_vault_prune_archive_by_age` |
+| Archiv 3 | Fehler → Roh-Log bleibt | ✅ | `test_missing_marker_keeps_raw_log`, `test_archive_failure_keeps_raw_log` |
+| Auslös. 1 | Manuell auslösbar | ✅ | `POST /session-condense/run` |
+| Auslös. 2 | Wochen-Lauf einrichtbar | ✅ | `test_schedule_fires_once_and_advances`, `_next_weekly_run_at` |
+| Auslös. 3 | Lauf-Protokoll (geprüft/kond./trivial/arch./gelöscht/Fehler) | ✅ | Runs-Tabelle + `list_runs`, Worker-Tests |
+| Auslös. 4 | Idempotent & re-entrant | ✅ | Idempotenz-Test |
+
+**Edge Cases:** kaputtes Frontmatter → übersprungen ✅ (`skipped_broken`); Projekt-Slug unbestimmbar →
+`unbekannt` ✅; Archiv-Ordner fehlt → wird angelegt ✅; erneuter Lauf am selben Tag → keine Doppel ✅.
+Große Logs / mehrere Signale / Namenskollision / PII-Scrub sind **skill-seitig** (Prompt) — manuell
+bzw. by design, nicht backend-unit-testbar.
+
+### Security-Red-Team
+| Angriff | Ergebnis |
+|---------|----------|
+| Pfad-Traversal beim Archivieren (`../../../etc/passwd`) | ✅ Abgewehrt — `_bare_name` reduziert auf Basisname, `_resolve_write`-Sandbox; bleibt in `Sessions/` (`test_archive_traversal_cannot_escape`) |
+| Absoluter „Dateiname" (`/etc/shadow`) | ✅ Abgewehrt (`test_archive_absolute_path_rejected`) |
+| `session_log_abspath` Ausbruch | ✅ bleibt unter `Sessions/` (`test_session_log_abspath_stays_in_sandbox`) |
+| Dotfiles/leer als Dateiname | ✅ `ValueError` (`test_bare_name_rejects_dotfiles_and_empty`) |
+| SQL-Injection via Update-Spalten | ✅ Spalten-Whitelist (`_UPDATABLE`) + `?`-Parameter |
+| Auth | ✅ Router unter `auth_gate` (JWT, `owner` serverseitig) |
+| Datenverlust bei Absturz | ✅ Archiv = kopieren→dann löschen; Fehler ⇒ Roh-Log bleibt |
+
+### Findings
+- **Medium (by design):** Der **Secret-Scrub liegt allein beim Skill** (LLM-instruiert), das Backend
+  erzwingt ihn nicht — konsistent zum Video-/Buch-Micro-App-Muster (Skill schreibt die Artefakte).
+  Empfehlung: bei sensiblen Vaults später einen backend-seitigen Redaction-Pass vor/nach dem Schreiben
+  ergänzen. Kein Blocker.
+- **Deploy-Hinweis (nicht Bug):** `backend/config/engines.yaml` ist **gitignored** → die Micro-App-
+  Kachel `session_condense` (kind=native) muss auf prod **manuell** ergänzt werden (`/abc-deploy`).
+- **Pre-existing, unrelated (kein PROJ-55):** `test_proj50_codex_abc` (Codex-Skill-Spiegel-Drift von
+  `abc-customer-journey`), Frontend `file-preview.test.tsx` (Ladezustand), `md-tree.test.ts` (tsc-Cast).
+
+**Produktionsreife:** ✅ READY — keine Critical/High. Status → **Approved**.
+Vor Deploy: engines.yaml-Kachel auf prod nachziehen; Trivial-Schwelle an echten Alt-Sessions kalibrieren (P2).
 
 ## Deployment
 _To be added by /abc-deploy_
