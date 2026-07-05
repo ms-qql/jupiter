@@ -9,6 +9,8 @@ import {
   BarChart3Icon,
   BlocksIcon,
   ExternalLinkIcon,
+  EyeIcon,
+  EyeOffIcon,
   GlobeIcon,
   ImageIcon,
   LayoutDashboardIcon,
@@ -18,6 +20,7 @@ import {
   RotateCcwIcon,
   ShieldAlertIcon,
   SquareIcon,
+  Trash2Icon,
   WandSparklesIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -34,6 +37,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -45,6 +56,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   ApiError,
   cancelUiCheckRun,
+  deleteUiCheckRun,
   getUiCheckRun,
   getUiCheckRuns,
   openUiCheckArtifact,
@@ -320,6 +332,24 @@ export default function UiCheckApp() {
     }
   }
 
+  async function handleDeleteRun(runId: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await deleteUiCheckRun(runId);
+      toast.success("Lauf gelöscht");
+      if (activeRunId === runId) {
+        setActiveRunId(null);
+        setDetail(null);
+      }
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Löschen fehlgeschlagen");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function handleProvider(next: UiCheckAiProvider) {
     setProvider(next);
     const first = PROVIDERS.find((p) => p.value === next)?.models[0];
@@ -438,6 +468,7 @@ export default function UiCheckApp() {
               runs={runs}
               activeRunId={activeRunId}
               onSelectRun={selectRun}
+              onDeleteRun={handleDeleteRun}
               detail={detail}
             />
           </TabsContent>
@@ -489,6 +520,7 @@ function DashboardTab({
   runs,
   activeRunId,
   onSelectRun,
+  onDeleteRun,
   detail,
 }: {
   url: string;
@@ -516,6 +548,7 @@ function DashboardTab({
   runs: UiCheckRunSummary[];
   activeRunId: string | null;
   onSelectRun: (runId: string) => void;
+  onDeleteRun: (runId: string) => void;
   detail: UiCheckRunDetail | null;
 }) {
   return (
@@ -653,7 +686,12 @@ function DashboardTab({
           <StatCard label="Ø Score" value={fmtScore(stats.avg)} />
           <StatCard label="Deltas" value={String(stats.deltas)} />
         </div>
-        <RunHistory runs={runs} activeRunId={activeRunId} onSelectRun={onSelectRun} />
+        <RunHistory
+          runs={runs}
+          activeRunId={activeRunId}
+          onSelectRun={onSelectRun}
+          onDeleteRun={onDeleteRun}
+        />
       </div>
     </div>
   );
@@ -702,58 +740,220 @@ function ProgressPanel({ detail }: { detail: UiCheckRunDetail | null }) {
   );
 }
 
+const HIDDEN_RUNS_KEY = "ui-check:hidden-runs";
+
+function loadHiddenRuns(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_RUNS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function storeHiddenRuns(set: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(HIDDEN_RUNS_KEY, JSON.stringify([...set]));
+  } catch {
+    /* ignore quota / privacy errors */
+  }
+}
+
 function RunHistory({
   runs,
   activeRunId,
   onSelectRun,
+  onDeleteRun,
 }: {
   runs: UiCheckRunSummary[];
   activeRunId: string | null;
   onSelectRun: (runId: string) => void;
+  onDeleteRun: (runId: string) => void;
 }) {
+  const [hidden, setHidden] = useState<Set<string>>(() => loadHiddenRuns());
+  const [showHidden, setShowHidden] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<UiCheckRunSummary | null>(null);
+
+  useEffect(() => {
+    storeHiddenRuns(hidden);
+  }, [hidden]);
+
+  function toggleHidden(runId: string) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }
+
+  const visibleRuns = useMemo(
+    () => (showHidden ? runs : runs.filter((r) => !hidden.has(r.run_id))),
+    [runs, hidden, showHidden],
+  );
+  const hiddenCount = runs.filter((r) => hidden.has(r.run_id)).length;
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Lauf-Historie</CardTitle>
-        <CardDescription>Aus runs.jsonl und Run-Artefakten.</CardDescription>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <CardTitle>Lauf-Historie</CardTitle>
+            <CardDescription>Aus runs.jsonl und Run-Artefakten.</CardDescription>
+          </div>
+          {hiddenCount > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowHidden((v) => !v)}
+              title={showHidden ? "Ausgeblendete Läufe verbergen" : "Ausgeblendete Läufe anzeigen"}
+            >
+              {showHidden ? (
+                <EyeOffIcon className="size-3.5" />
+              ) : (
+                <EyeIcon className="size-3.5" />
+              )}
+              {showHidden ? "Verbergen" : `Ausgeblendete (${hiddenCount})`}
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         {runs.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
             Noch keine UI-Check-Läufe vorhanden.
           </div>
+        ) : visibleRuns.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+            Alle Läufe sind ausgeblendet.{' '}
+            <button
+              type="button"
+              className="text-foreground underline underline-offset-2"
+              onClick={() => setShowHidden(true)}
+            >
+              Eingeblendete anzeigen
+            </button>
+          </div>
         ) : (
-          <div className="space-y-2">
-            {runs.map((run) => (
-              <button
-                key={run.run_id}
-                type="button"
-                onClick={() => onSelectRun(run.run_id)}
-                className={`w-full rounded-lg border p-3 text-left transition-colors ${
-                  run.run_id === activeRunId ? "border-primary bg-primary/10" : "border-border hover:bg-muted"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">
-                      {run.display_url ?? run.url_hash}
+          <div className="max-h-[28rem] space-y-2 overflow-y-auto pr-1">
+            {visibleRuns.map((run) => {
+              const isHidden = hidden.has(run.run_id);
+              const isRunning = run.status === "queued" || run.status === "running";
+              return (
+                <div
+                  key={run.run_id}
+                  className={`w-full rounded-lg border p-3 transition-colors ${
+                    run.run_id === activeRunId
+                      ? "border-primary bg-primary/10"
+                      : "border-border hover:bg-muted"
+                  } ${isHidden ? "opacity-60" : ""}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSelectRun(run.run_id)}
+                    className="block w-full text-left"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium">
+                          {run.display_url ?? run.url_hash}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {fmtDate(run.created_at)} · {providerLabel(run.ai_provider)} · {run.ai_model ?? "n/v"}
+                        </div>
+                      </div>
+                      <StatusBadge status={run.status} />
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {fmtDate(run.created_at)} · {providerLabel(run.ai_provider)} · {run.ai_model ?? "n/v"}
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span>Score {fmtScore(run.score_total)}</span>
+                      <span>Nachher {fmtScore(run.redesign_score)}</span>
+                      <span>Rubrik {run.rubric_version ?? "n/v"}</span>
                     </div>
+                  </button>
+                  <div className="mt-2 flex justify-end gap-1 border-t border-border/60 pt-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      title={isHidden ? "Lauf wieder einblenden" : "Lauf ausblenden"}
+                      onClick={() => toggleHidden(run.run_id)}
+                    >
+                      {isHidden ? (
+                        <EyeOffIcon className="size-3.5" />
+                      ) : (
+                        <EyeIcon className="size-3.5" />
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      title="Lauf endgültig löschen"
+                      disabled={isRunning}
+                      onClick={() => setConfirmDelete(run)}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                    </Button>
                   </div>
-                  <StatusBadge status={run.status} />
                 </div>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <span>Score {fmtScore(run.score_total)}</span>
-                  <span>Nachher {fmtScore(run.redesign_score)}</span>
-                  <span>Rubrik {run.rubric_version ?? "n/v"}</span>
-                </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>
+
+      <Dialog open={confirmDelete !== null} onOpenChange={(open) => !open && setConfirmDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Lauf löschen</DialogTitle>
+            <DialogDescription>
+              Der Lauf wird unwiderruflich gelöscht — inklusive aller Artefakte (Audit,
+              Branding, Redesign, Mockup) auf dem Server. Diese Aktion kann nicht rückgängig
+              gemacht werden.
+            </DialogDescription>
+          </DialogHeader>
+          {confirmDelete && (
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+              <div className="truncate font-medium">
+                {confirmDelete.display_url ?? confirmDelete.url_hash}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {fmtDate(confirmDelete.created_at)} · Status: {STATUS_LABEL[confirmDelete.status]}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setConfirmDelete(null)}>
+              Abbrechen
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={async () => {
+                const target = confirmDelete;
+                setConfirmDelete(null);
+                if (target) {
+                  setHidden((prev) => {
+                    const next = new Set(prev);
+                    next.delete(target.run_id);
+                    return next;
+                  });
+                  await onDeleteRun(target.run_id);
+                }
+              }}
+            >
+              <Trash2Icon className="size-3.5" />
+              Endgültig löschen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

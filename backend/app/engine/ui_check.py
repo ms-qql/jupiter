@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 from datetime import datetime, timezone
@@ -178,6 +179,21 @@ class UiCheckService:
         )
         self._processes[run_id] = proc
         return self._detail(path)
+
+    def delete_run(self, run_id: str) -> None:
+        run_id = _safe_run_id(run_id)
+        proc = self._processes.get(run_id)
+        if proc and proc.poll() is None:
+            raise UiCheckConflict("Lauf kann nicht geloescht werden, waehrend er noch laeuft — erst abbrechen.")
+        path = self._run_path(run_id)
+        if not path.exists():
+            raise UiCheckNotFound(run_id)
+        # Defensive Pfadbegrenzung: nur direkte Kinder des runs-Ordner duerfen
+        # geloescht werden, niemals der Elternordner selbst (Path-Traversal).
+        if path.resolve() == self.runs_dir.resolve():
+            raise UiCheckNotFound(run_id)
+        shutil.rmtree(path, ignore_errors=False)
+        self._processes.pop(run_id, None)
 
     def artifact_path(self, run_id: str, kind: str) -> Path:
         path = self._run_path(run_id)

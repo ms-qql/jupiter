@@ -218,3 +218,51 @@ def test_start_redesign_uses_auto_script_with_gen_model(tmp_path, monkeypatch):
     assert cmd[0].endswith("scripts/redesign-auto.sh")
     # ai_model "Claude Sonnet" (aus ui-check.json) → CLI-Alias "sonnet".
     assert "--gen-model" in cmd and cmd[cmd.index("--gen-model") + 1] == "sonnet"
+
+
+def test_delete_run_removes_folder_and_404s_after(tmp_path, monkeypatch):
+    root = _fixture_project(tmp_path)
+    monkeypatch.setattr(settings, "ui_check_project_path", str(root))
+    client = TestClient(create_app())
+
+    run_dir = root / "runs" / "2026-07-03-example.com-001"
+    assert run_dir.exists()
+
+    resp = client.delete("/ui-check/runs/2026-07-03-example.com-001")
+    assert resp.status_code == 204
+    assert not run_dir.exists()
+
+    # Zweiter Aufruf: Ordner weg → 404.
+    assert client.delete("/ui-check/runs/2026-07-03-example.com-001").status_code == 404
+    # Path-Traversal bleibt verboten.
+    assert client.delete("/ui-check/runs/../..").status_code == 404
+    # Listing ist nach dem Loeschen leer.
+    assert client.get("/ui-check/runs").json()["runs"] == []
+
+
+def test_delete_run_refuses_running_process(tmp_path, monkeypatch):
+    from app.engine import ui_check as ui_check_mod
+
+    root = _fixture_project(tmp_path)
+    monkeypatch.setattr(settings, "ui_check_project_path", str(root))
+
+    service = ui_check_mod.UiCheckService(str(root))
+
+    class _FakeProc:
+        pid = 4245
+
+        def poll(self):
+            return None  # Prozess lebt noch.
+
+    run_id = "2026-07-03-example.com-001"
+    service._processes[run_id] = _FakeProc()  # noqa: SLF001 — internes Wiring im Test.
+
+    try:
+        service.delete_run(run_id)
+    except ui_check_mod.UiCheckConflict as exc:
+        assert "laeuft" in str(exc)
+    else:
+        raise AssertionError("Laufender Lauf haette nicht geloescht werden duerfen.")
+
+    # Ordner ist unangetastet.
+    assert (root / "runs" / run_id).exists()

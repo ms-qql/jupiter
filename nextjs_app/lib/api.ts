@@ -1208,6 +1208,13 @@ export function runUiCheckRedesign(runId: string): Promise<UiCheckRunDetail> {
   );
 }
 
+export function deleteUiCheckRun(runId: string): Promise<void> {
+  return request<void>(
+    `/ui-check/runs/${encodeURIComponent(runId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export function uiCheckArtifactUrl(runId: string, kind: string): string {
   return `${API_BASE}/ui-check/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(kind)}`;
 }

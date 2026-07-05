@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from ..engine.ui_check import UiCheckConflict, UiCheckNotFound, UiCheckService
 from ..schemas.ui_check import (
@@ -63,6 +63,17 @@ async def start_redesign(request: Request, run_id: str) -> dict:
         raise HTTPException(status_code=404, detail="UI-Check-Lauf nicht gefunden.") from exc
     except UiCheckConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+async def delete_run(request: Request, run_id: str) -> Response:
+    try:
+        _svc(request).delete_run(run_id)
+    except UiCheckNotFound as exc:
+        raise HTTPException(status_code=404, detail="UI-Check-Lauf nicht gefunden.") from exc
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=204)
 
 
 @router.get("/runs/{run_id}/artifacts/{kind}")
