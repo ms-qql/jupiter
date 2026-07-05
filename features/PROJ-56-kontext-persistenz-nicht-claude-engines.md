@@ -1,6 +1,6 @@
 # PROJ-56: Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-04
 **Last Updated:** 2026-07-05
 
@@ -227,4 +227,12 @@ Umgesetzt auf `dev` (backend-only, keine neuen Pakete). Wichtige Abweichung zur 
 **READY** — keine Critical/High-Bugs; Kernlogik unit-verifiziert, Claude regressionsfrei. Empfehlung: vor/direkt nach Deploy einen kurzen Live-Smoke der zwei Engines fahren (Residual 1).
 
 ## Deployment
-_To be added by /deploy_
+- **Produktion:** https://jupiter.auxevo.tech · **Deployed:** 2026-07-05 · **Version:** 0.27.5 · **Tag:** `v0.27.5-PROJ-56`
+- **Weg:** `dev → main` (Merge) → GitHub-Webhook → host-native Rebuild (systemd `jupiter-backend`/`jupiter-frontend`) + Caddy TLS. Kein Dokploy.
+- **Geliefert:** engine-bewusste Kontext-Persistenz für Nicht-Claude-Engines — Codex behält Kontext über Restart/Reanimierung (persistierte `resume_id`), GLM/OpenRouter über persistierten & gedeckelten Verlauf-Replay (`session_context`-Store); `context_status` sichtbar; Claude unverändert.
+- **DB-Migration:** idempotentes ADD COLUMN (`resume_id`, `context_status`) + neue Tabelle `session_context` auf der bestehenden SQLite-`session_index.db` — läuft automatisch beim Backend-Start (`repo.init()`), daher greift der Backend-Restart des Deploys.
+- **Smoke nach Deploy (Live-Residual aus QA):**
+  - [ ] `https://jupiter.auxevo.tech/api/health` → ok; Cockpit zeigt `v0.27.5`
+  - [ ] Codex-Session: Turn, dann Backend-Restart → nächster Turn kennt den Kontext (`context_status = mit Kontext`)
+  - [ ] GLM-5.2-Session: Turn, dann Reanimierung/Restart → Faden bleibt erhalten
+  - [ ] Claude-Regression: bestehende Session unverändert fortsetzbar
