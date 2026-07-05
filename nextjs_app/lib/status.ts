@@ -209,10 +209,11 @@ export function contextLabel(pct: number, known: boolean): string {
   return known ? `${Math.round(pct)}%` : "unbekannt";
 }
 
-/** PROJ-18: Nur der Claude-Treiber liefert echte Kosten; andere Engines (OpenAI/CLI)
+/** PROJ-18/PROJ-57: Engines mit echter USD-Abrechnung. Claude (CLI meldet total_cost_usd)
+ *  + OpenCode (OpenRouter liefert `cost` je Turn). Übrige Engines (Codex/Hermes/Swisscom)
  *  haben keine Kosten-Extraktion → die Anzeige degradiert sauber zu „n/v". */
 export function engineShowsCost(engine: string): boolean {
-  return engine === "claude";
+  return engine === "claude" || engine === "opencode";
 }
 
 /** Kosten-Label der Kachel: „$x.xxx" für Claude, sonst „n/v" (engine-agnostische Degradation). */

@@ -20,6 +20,13 @@ Vier Adapter decken das Spektrum:
                   ``turn.completed.usage``). Der Adapter mappt sie auf die Claude-Form
                   und reicht die ``thread_id`` (für ``resume``) als ``system/resume_token``
                   an den Treiber durch.
+- ``opencode``  — OpenCode-CLI (PROJ-57): ``opencode run --format json`` liefert je Zeile
+                  ein Event mit top-level ``type`` + ``sessionID`` + ``part``. Der Adapter
+                  reicht die ``sessionID`` (für ``-s <id>``-Resume) als ``system/resume_token``
+                  durch, mappt ``text``→assistant, ``tool_use``→tool_use und **jedes**
+                  ``step_finish`` (auch die Zwischen-Schritte eines Tool-Turns, reason
+                  ``tool-calls``) auf ein result-Event inkl. Usage **und echter USD-Kosten**
+                  (``part.cost``). Referenz: opencode v1.17.13, real am Live-System verifiziert.
 """
 from __future__ import annotations
 
@@ -216,12 +223,130 @@ def _codex_file_change_event(item: dict) -> StreamEvent | None:
     return StreamEvent("tool_use", "file_change", {"name": name, "input": {"file_path": str(path)}})
 
 
+# ---------------------------------------------------------------------------
+# OpenCode-Adapter (PROJ-57)
+# ---------------------------------------------------------------------------
+
+# OpenCode-Tool-Namen, die eine Datei berühren → auf Claude-Namen (Write/Edit) mappen,
+# damit der engine-agnostische `detect_phase_signal`-Fallback (feature_from_path) und der
+# Aktivitäts-Ticker den Pfad sehen (analog codex file_change → PROJ-50).
+_OPENCODE_FILE_TOOLS: dict[str, str] = {"write": "Write", "edit": "Edit"}
+# Schlüssel, unter denen OpenCode-Tools ihren Datei-Pfad ablegen (defensiv mehrere prüfen).
+_OPENCODE_PATH_KEYS: tuple[str, ...] = ("filePath", "file_path", "path")
+
+
+def _opencode_tool_event(part: dict) -> StreamEvent | None:
+    """OpenCodes ``tool_use``-Part → Claude-förmiges ``tool_use``-Event (sichtbare Aktivität).
+
+    Datei-Tools (write/edit) tragen den berührten Pfad als ``input.file_path``; sonstige
+    Tools (bash/read/grep …) reichen ihren Roh-Input durch. Ohne Tool-Namen → ``None``.
+    """
+    tool = part.get("tool")
+    if not isinstance(tool, str) or not tool:
+        return None
+    state = part.get("state") if isinstance(part.get("state"), dict) else {}
+    inp = state.get("input") if isinstance(state.get("input"), dict) else {}
+    mapped = _OPENCODE_FILE_TOOLS.get(tool.lower())
+    if mapped is not None:
+        path = next((str(inp[k]) for k in _OPENCODE_PATH_KEYS if inp.get(k)), None)
+        return StreamEvent("tool_use", "tool", {"name": mapped, "input": {"file_path": path or ""}})
+    return StreamEvent("tool_use", "tool", {"name": tool, "input": dict(inp)})
+
+
+def _opencode_result_event(part: dict) -> StreamEvent:
+    """OpenCodes ``step_finish``-Part → Claude-förmiges result-Event inkl. Usage + Kosten.
+
+    Token-Mapping (real verifiziert, opencode v1.17.13): ``tokens`` liefert
+    ``{total, input, output, reasoning, cache:{write, read}}``, wobei
+    ``total = input + output + reasoning + cache.read`` — d. h. ``input`` **enthält den Cache
+    NICHT** (anders als Codex, wo cached eine Teilmenge von input war). Wir spiegeln Claudes
+    Semantik direkt:
+
+    - ``input_tokens``            = ``tokens.input``        (neuer, nicht-gecachter Prompt)
+    - ``cache_read_input_tokens`` = ``tokens.cache.read``   (Cache-Sicht, separat)
+    - ``cache_creation_input_tokens`` = ``tokens.cache.write``
+    - ``output_tokens``           = ``tokens.output + tokens.reasoning`` (Reasoning = Output-Last)
+
+    Kontext-Füllstand (= input + cache_read + cache_write) = echter Prompt-Umfang;
+    abgerechnete Tokens (input + output) konsistent zur Claude-Engine. ``context_is_per_turn``
+    markiert die Usage als aktuellen Turn-Prompt (füllt den Gauge). ``part.cost`` ist die
+    **echte USD-Summe** dieses Schritts → als ``total_cost_usd`` durchgereicht (Novum: diese
+    Engine zeigt echte Kosten statt „n/v"). Zwischen-Schritte (reason ``tool-calls``) liefern
+    ebenfalls Usage/Kosten → sie akkumulieren korrekt über den Turn.
+    """
+    tokens = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
+    cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+
+    def _int(d: dict, key: str) -> int:
+        try:
+            return max(0, int(d.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    raw: dict = {
+        "is_error": False,
+        "result": "",
+        "num_turns": 1,
+        "context_is_per_turn": True,
+        "usage": {
+            "input_tokens": _int(tokens, "input"),
+            "cache_read_input_tokens": _int(cache, "read"),
+            "cache_creation_input_tokens": _int(cache, "write"),
+            "output_tokens": _int(tokens, "output") + _int(tokens, "reasoning"),
+        },
+    }
+    cost = part.get("cost")
+    if isinstance(cost, (int, float)):
+        raw["total_cost_usd"] = float(cost)
+    return StreamEvent("result", "success", raw)
+
+
+def opencode_parse_line(line: str) -> StreamEvent | None:
+    """OpenCode-CLI (``opencode run --format json``) → Claude-förmige StreamEvents.
+
+    - ``step_start``  → ``system/resume_token`` (top-level ``sessionID`` für ``-s``-Resume;
+      kein Anzeige-Event — der Treiber fängt es ab und merkt sich die ``resume_id``).
+    - ``text``        → assistant-Text aus ``part.text`` (sichtbar; kein stiller Stillstand).
+    - ``tool_use``    → Claude-``tool_use`` (sichtbare Aktivität; Datei-Pfad bei write/edit).
+    - ``step_finish`` → result-Event **inkl. gemappter Usage + Kosten** (Turn-/Schritt-Ende).
+    - unbekannte ``type`` (``reasoning``/``directory``/…) → ``None`` (defensiv, kein Hard-Fail).
+    """
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+
+    etype = obj.get("type")
+    if etype == "step_start":
+        sid = obj.get("sessionID")
+        if not sid:
+            return None
+        return StreamEvent("system", "resume_token", {"resume_token": str(sid)})
+    part = obj.get("part") if isinstance(obj.get("part"), dict) else {}
+    if etype == "text":
+        txt = part.get("text")
+        if isinstance(txt, str) and txt.strip():
+            return _assistant_event(txt)
+        return None
+    if etype == "tool_use":
+        return _opencode_tool_event(part)
+    if etype == "step_finish":
+        return _opencode_result_event(part)
+    return None
+
+
 # Registry der bekannten Adapter. ``claude`` = die bestehende, real verifizierte Logik.
 _ADAPTERS: dict[str, Adapter] = {
     "claude": _claude_parse_line,
     "jsonl": jsonl_parse_line,
     "plaintext": plaintext_parse_line,
     "codex": codex_parse_line,
+    "opencode": opencode_parse_line,
 }
 
 VALID_ADAPTERS: frozenset[str] = frozenset(_ADAPTERS)
