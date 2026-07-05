@@ -1,6 +1,6 @@
 # PROJ-59: Bugfix: OpenCode-Session hängt nach „Stopp" in „Aktive Sessions"
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -58,3 +58,39 @@ Bestätigt im Live-Index (`session_index.db`): Session `80d48f8a-…` (engine `o
 ### Offen für QA
 - Live-Cockpit-Test: eine OpenCode-Session so lange laufen lassen/reanimieren, dass sie in den Self-Resume-Leerlauf fällt (z. B. nach einem Deploy/Neustart), dann „Stopp" klicken → Session muss sofort ins Archiv wandern.
 - Regression Codex/Claude (automatisiert bereits grün, manueller Gegencheck schadet nicht).
+
+## QA Test Results
+
+**Tested:** 2026-07-05
+**Backend:** kein Zugriff auf den produktiven `jupiter-backend`-Dienst für einen echten Browser-Cockpit-Test (derselbe Grund wie bei PROJ-58: der Dienst hostet die aktive Claude-Code-Session, in der diese QA läuft — ein Neustart hätte die Session gekillt). Stattdessen Live-Verifikation direkt gegen `GenericCliDriver` + `SessionRuntime` (reale Klassen, kein HTTP-Layer nötig, da der Bug rein in der Treiber-/Manager-Statuslogik liegt).
+**Tester:** QA Engineer (AI)
+
+### Methodik
+- Automatisierte Suite: neuer Regressionstest `test_proj59_opencode_stop_hang.py` (1 Test) + Regressionslauf `test_proj58_opencode_stdin_race.py`/`test_proj57_opencode.py`/`test_proj48_codex.py`/`test_proj56_context_persistence.py` (57 Tests, 5× wiederholt für Stabilität) + Voll-Suite (1053 Tests).
+- **Live-Reproduktion der exakt gemeldeten Bug-Szene:** ein `GenericCliDriver` wurde so konstruiert, wie er nach `auto_resume_drained()` nach einem Deploy/Neustart tatsächlich vorliegt — `resume_id` bekannt, aber `self._proc is None` (noch kein Prozess gespawnt). An eine echte `SessionRuntime` mit `state.status = "waiting"` (= in „Aktive Sessions") gehängt, dann `driver.stop()` aufgerufen. Vor dem Fix hätte das kommentarlos nichts bewirkt; mit dem Fix wechselt `state.status` sofort auf `done` und verlässt `ACTIVE_STATES`.
+- Cross-Check im Live-Index (`~/jupiter-data/session_index.db`): die ursprünglich gemeldete Session `80d48f8a-…` diente als Ausgangsbeleg für die Root-Cause-Analyse (Status blieb nach `/stop`-200-OK auf `running` eingefroren) — durch den Fix ist dieser Pfad jetzt geschlossen.
+
+### Acceptance Criteria Status
+- [x] `GenericCliDriver.stop()` emittiert `closed` auch bei `self._proc is None` — Unit-Test + Live-Reproduktion bestätigt: `state.status` wechselt von `waiting` zu `done`, verlässt `ACTIVE_STATES`.
+- [x] Verhalten bei laufendem Prozess unverändert — Code-Diff zeigt nur eine Zeilen-Verschiebung (`self._stopping = True` vor die Prüfung) + einen zusätzlichen frühen Return-Zweig; der bestehende Terminate/Kill/Emit-Pfad für `proc is not None` ist byte-identisch zum Vorzustand.
+- [x] Codex unverändert — `test_proj48_codex.py` 13/13 grün (5× wiederholt).
+- [x] Regressionstest `test_proj59_opencode_stop_hang.py` grün (1/1).
+- [x] Volle Suite grün bis auf den vorbestehenden, unabhängigen Codex-Skill-Drift-Test (`test_proj50_codex_abc.py::test_generator_check_passes_no_drift`) — via `git stash`-Vergleich bestätigt: reproduziert identisch auf `main` VOR diesem Fix, betrifft `.codex/skills`-Generator-Drift, nicht PROJ-59.
+
+### Edge Cases Status
+- [ ] Stop-Klick während `send_input()` parallel über den Resume-Pfad einen neuen Prozess spawnt (Race) — laut Spec bewusst nicht in Scope, nicht eigens durchgespielt. Niedrige Priorität, kein gemeldetes Symptom.
+
+### Security Audit Results
+- [x] Keine neue Angriffsfläche: Änderung betrifft ausschließlich interne Prozess-/Statuslogik in `generic_cli_driver.py`, kein neuer Endpunkt, kein neuer externer Input-Pfad.
+- [x] Kein Informationsleck: das emittierte `closed`-Event trägt kein Payload (`{}`), keine Pfade/Secrets.
+- [x] `routes/sessions.py`-Perimeter unverändert (kein Diff in dieser Datei, kein neuer Fehlerpfad).
+
+### Bugs Found
+Keine. Alle Acceptance Criteria erfüllt; die Live-Reproduktion bestätigt, dass die ursprünglich gemeldete Fehlerszene (Session hängt nach Stopp in „Aktive Sessions") behoben ist.
+
+### Summary
+- **Acceptance Criteria:** 5/5 bestanden (0 Fails).
+- **Bugs Found:** 0 total.
+- **Security:** Pass — keine neue Angriffsfläche, kein Informationsleck.
+- **Production Ready:** YES
+- **Empfehlung:** Approved. Bei nächster Gelegenheit deployen (`/abc-deploy`) — Auto-Deploy greift bei Jupiter nur bei Push nach `main` (bereits der aktuelle Branch), der Fix ist also nach Push produktionsbereit.

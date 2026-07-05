@@ -71,7 +71,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-56 | Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter) | P1 | Deployed | PROJ-48, PROJ-18, PROJ-14 | [Spec](PROJ-56-kontext-persistenz-nicht-claude-engines.md) |
 | PROJ-57 | Engine — OpenCode als Harness (OpenRouter-Modelle über OpenCode statt Direkt-HTTP) | P1 | Deployed | PROJ-18, PROJ-48, PROJ-56, PROJ-51 | [Spec](PROJ-57-engine-opencode-harness.md) |
 | PROJ-58 | Bugfix: OpenCode-Stdin-Race — falsches „Wartet auf dich" + Transport-Fehler bei Folge-Eingabe | P1 | Deployed | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-58-opencode-stdin-race-wartet-auf-dich.md) |
-| PROJ-59 | Bugfix: OpenCode-Session hängt nach „Stopp" in „Aktive Sessions" | P1 | In Review | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-59-opencode-stop-haengt-in-aktive-sessions.md) |
+| PROJ-59 | Bugfix: OpenCode-Session hängt nach „Stopp" in „Aktive Sessions" | P1 | Approved | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-59-opencode-stop-haengt-in-aktive-sessions.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
