@@ -615,13 +615,15 @@ class SessionRuntime:
                 self.state.error = (
                     f"API-Fehler {api_status}" if api_status else extract_result_text(event)
                 )
-            else:
+            elif event.raw.get("final", True):
                 # Turn fertig → wartet auf nächste Eingabe (bzw. done, falls Prozess endet).
                 blocking = [c for c in self.pending.values() if c.card_type != "knowledge_proposal"]
                 if blocking:
                     self.state.status = AWAITING_APPROVAL
                 else:
                     self.state.status = WAITING if self.driver.is_alive else DONE
+            # PROJ-58: `final: False` (OpenCode-Tool-Zwischenschritt) → Usage/Kosten oben
+            # bereits übernommen, aber KEIN Statuswechsel — der Turn läuft noch weiter.
 
         elif event.type == "rate_limit_event":
             self.state.rate_limit = extract_rate_limit(event)

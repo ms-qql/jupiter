@@ -273,6 +273,14 @@ def _opencode_result_event(part: dict) -> StreamEvent:
     **echte USD-Summe** dieses Schritts → als ``total_cost_usd`` durchgereicht (Novum: diese
     Engine zeigt echte Kosten statt „n/v"). Zwischen-Schritte (reason ``tool-calls``) liefern
     ebenfalls Usage/Kosten → sie akkumulieren korrekt über den Turn.
+
+    ``final`` (PROJ-58): NUR ``reason == "stop"`` ist das echte Turn-Ende. Ein
+    Tool-Zwischenschritt (``reason == "tool-calls"``) trägt ``final: False`` — der Manager
+    darf dafür Usage/Kosten übernehmen, aber NICHT auf „wartet" umschalten. Ohne dieses
+    Flag hielt der Treiber-Prozess während des ganzen Turns weiter ``is_alive``, während
+    stdin (oneshot) schon am Turn-Start geschlossen wurde — das UI zeigte fälschlich
+    „Wartet auf dich" mitten im Turn, eine Folge-Eingabe traf dann auf die geschlossene
+    Pipe (uvloop-Transport-Fehler, siehe ``generic_cli_driver._stdin_closed``).
     """
     tokens = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
     cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
@@ -288,6 +296,7 @@ def _opencode_result_event(part: dict) -> StreamEvent:
         "result": "",
         "num_turns": 1,
         "context_is_per_turn": True,
+        "final": part.get("reason") == "stop",
         "usage": {
             "input_tokens": _int(tokens, "input"),
             "cache_read_input_tokens": _int(cache, "read"),

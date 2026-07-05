@@ -79,6 +79,11 @@ class GenericCliDriver(EngineDriver):
         self._spec: LaunchSpec | None = None
         self._resume_id: str | None = None  # z. B. Codex' thread_id (aus system/resume_token)
         self._saw_result = False            # Turn lieferte ein Turn-Ende → kein DONE bei EOF
+        # PROJ-58: bei `oneshot`-CLIs schließt `_write_stdin` die Pipe bereits am TURN-START
+        # (nicht -ende) — der Prozess bleibt aber bis zum Turn-Ende `is_alive`. Ohne diesen
+        # Merker prüfte `send_input` nur `is_alive` und schrieb erneut auf die längst
+        # geschlossene Pipe → uvloop-Transport-Fehler ("handler is closed").
+        self._stdin_closed = False
 
     @property
     def is_alive(self) -> bool:
@@ -130,6 +135,7 @@ class GenericCliDriver(EngineDriver):
         self._stopping = False
         self._saw_result = False
         self._stderr_buf = []
+        self._stdin_closed = False
         self._proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
@@ -151,14 +157,30 @@ class GenericCliDriver(EngineDriver):
                 self._proc.stdin.close()
             except (RuntimeError, OSError):
                 pass
+            self._stdin_closed = True
 
     async def send_input(self, text: str) -> None:
         if self._paused:
             raise RuntimeError("Session ist pausiert — keine Eingaben möglich.")
-        # Lebt der Prozess noch → direkt in stdin (z. B. nicht-oneshot oder mid-turn).
-        if self.is_alive and self._proc is not None and self._proc.stdin is not None:
+        # Lebt der Prozess noch UND stdin ist noch offen → direkt schreiben (z. B.
+        # langlebiger Treiber wie Claude, oder ein oneshot-Prozess vor dem ersten Write).
+        if (
+            self.is_alive
+            and self._proc is not None
+            and self._proc.stdin is not None
+            and not self._stdin_closed
+        ):
             await self._write_stdin(text)
             return
+        # PROJ-58: Prozess läuft noch (Tool-Aufrufe etc.), stdin aber bereits zu (oneshot) —
+        # weder erneut schreiben (uvloop-Transport-Fehler) noch parallel einen zweiten
+        # Prozess über den Resume-Pfad spawnen (zwei Prozesse dürften nicht gleichzeitig
+        # dieselbe Resume-Session der Engine anfassen). Klare, abfangbare Fehlermeldung
+        # statt eines internen Crashs.
+        if self.is_alive:
+            raise RuntimeError(
+                "Antwort läuft noch — bitte warten, bis der aktuelle Turn abgeschlossen ist."
+            )
         # PROJ-48: oneshot-Turn beendet, Prozess weg → Folge-Turn als frischen Prozess
         # mit dem Resume-argv spawnen (Kontext bleibt serverseitig am resume_id).
         if self.supports_self_resume and self._spec is not None:
