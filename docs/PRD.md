@@ -75,6 +75,7 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-55 | Session-Kondensierung — Wochen-Sweep alter Sessions in Hal-Knowledge | P1 | Vault / Kuratierung | Planned |
 | PROJ-56 | Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter) | P1 | Engine-Layer / Persistenz | Deployed |
 | PROJ-57 | Engine — OpenCode als Harness (OpenRouter-Modelle über OpenCode statt Direkt-HTTP) | P1 | Engine-Layer / Harness | Architected |
+| PROJ-62 | Bugfix: OpenCode-Session endet lautlos ohne Transkript und ohne Fehler bei Tool-Only-Turn | P1 | Engine-Layer / Harness | Planned |
 
 ---
 

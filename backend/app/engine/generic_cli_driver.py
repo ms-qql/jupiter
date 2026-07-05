@@ -283,7 +283,11 @@ class GenericCliDriver(EngineDriver):
             # haben (Provider-Timeout/Crash nach einem Tool-Zwischenschritt o. Ä.) — das ist
             # KEIN normales Turn-Ende. `closed` emittieren, damit die Session terminiert
             # (sichtbar/archivierbar) statt für immer im letzten Status hängenzubleiben.
-            await self._emit(StreamEvent("system", "closed", {}))
+            # PROJ-62: Grund mitgeben, damit der Nutzer nicht vor einem stillen, unerklärten
+            # Sessionende steht (manager.py befüllt daraus state.error, falls noch leer).
+            await self._emit(
+                StreamEvent("system", "closed", {"reason": "no_final_result"})
+            )
         else:
             msg = "".join(self._stderr_buf).strip() or f"Prozess endete mit Code {rc}."
             await self._emit(StreamEvent("system", "error", {"message": msg}))

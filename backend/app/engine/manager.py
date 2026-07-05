@@ -259,8 +259,8 @@ def validate_project_path(path: str) -> str:
 
 @dataclass
 class TranscriptEntry:
-    role: str  # "assistant"
-    kind: str  # "text" | "thinking"
+    role: str  # "assistant" | "user" | "tool" (PROJ-62)
+    kind: str  # "text" | "thinking" | "tool_use" (PROJ-62)
     text: str
     ts: str
 
@@ -558,6 +558,13 @@ class SessionRuntime:
             elif event.subtype == "closed":
                 if self.state.status != ERROR:
                     self.state.status = DONE
+                # PROJ-62: der stille PROJ-60-Fallback (Prozess endete ohne echtes Turn-
+                # Ende) liefert einen Grund mit — nur setzen, falls noch kein aussage-
+                # kräftigerer Fehler (z. B. aus dem error-Zweig) vorhanden ist.
+                if event.raw.get("reason") == "no_final_result" and not self.state.error:
+                    self.state.error = (
+                        "Der Prozess wurde beendet, ohne den Turn regulär abzuschließen."
+                    )
             # hook_* / thinking_tokens: kein Zustandswechsel.
 
         elif event.type == "assistant":
@@ -601,6 +608,15 @@ class SessionRuntime:
             tool_input = event.raw.get("input") if isinstance(event.raw.get("input"), dict) else {}
             self.watchdog.note_progress()
             self._emit_activity(tool_name, tool_input)
+            # PROJ-62: zusätzlich zum flüchtigen Activity-Ticker (oben) einen persistenten
+            # Transkript-Eintrag hinterlassen — sonst bleibt ein Turn, der ausschließlich aus
+            # Tool-Aufrufen besteht (kein Assistant-Text), im Transkript vollständig leer,
+            # obwohl Kosten/Turns/Kontext dafür bereits verbucht werden (PROJ-58).
+            target = sanitize_target(tool_name, tool_input)
+            tool_text = f"{tool_name}: {target}" if target else tool_name
+            self.transcript.append(
+                TranscriptEntry("tool", "tool_use", tool_text, _now().isoformat())
+            )
             prospective = abc_phases.detect_phase_signal(
                 tool_name, tool_input,
                 phase=self.state.abc_phase,

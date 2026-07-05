@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-62
+**Next Available ID:** PROJ-63
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -74,6 +74,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-59 | Bugfix: OpenCode-Session hängt nach „Stopp" in „Aktive Sessions" | P1 | Deployed | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-59-opencode-stop-haengt-in-aktive-sessions.md) |
 | PROJ-60 | Bugfix: OpenCode-Session hängt lautlos in „Arbeitet" nach Absturz hinter Tool-Zwischenschritt | P1 | Deployed | PROJ-57, PROJ-58, PROJ-48 | [Spec](PROJ-60-opencode-lautloser-haenger-nach-absturz.md) |
 | PROJ-61 | Live-Aktivitäts-Ticker fehlt im Connect-Snapshot (OpenCode/Codex wirken eingefroren) | P1 | Deployed | PROJ-46, PROJ-49 | [Spec](PROJ-61-live-aktivitaets-ticker-bei-connect.md) |
+| PROJ-62 | Bugfix: OpenCode-Session endet lautlos ohne Transkript und ohne Fehler bei Tool-Only-Turn | P1 | In Progress | PROJ-57, PROJ-58, PROJ-60 | [Spec](PROJ-62-opencode-leeres-transkript-tool-only-turn.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
