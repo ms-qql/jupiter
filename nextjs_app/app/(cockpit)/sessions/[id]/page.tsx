@@ -293,7 +293,11 @@ export default function SessionDetailPage({
         </div>
       )}
 
-      {head?.status === "error" && head.error && (
+      {/* PROJ-62: neben echten Fehlern (status="error") auch den stillen PROJ-60-
+          Fallback zeigen — dort bleibt status="done", aber error trägt jetzt einen
+          Grund ("Prozess ohne Turn-Abschluss beendet"), damit die Session nicht
+          unerklärt bei "beendet/nicht steuerbar" hängen bleibt. */}
+      {(head?.status === "error" || head?.liveness === "tot") && head?.error && (
         <p className="my-2 rounded bg-red-500/10 px-3 py-2 text-sm text-red-400">
           {head.error}
         </p>

@@ -116,6 +116,19 @@ Kein neuer Screen, kein neuer Endpoint — reine Erweiterung bestehender Kompone
 - Backend-Teil (Transkript-Persistenz + `state.error`) vollständig testbar und getestet.
 - Der Frontend-Banner-Touch ist noch offen (separater `/abc-frontend`-Schritt) — bis dahin liefert die API zwar korrekt `error`, das Cockpit zeigt ihn im DONE-Fallback-Fall aber noch nicht an.
 
+## Implementation Notes (Frontend Developer, 2026-07-05)
+
+### Geänderte Dateien
+- `nextjs_app/app/(cockpit)/sessions/[id]/page.tsx`: die rote Fehlertext-Anzeige (bisher nur `head?.status === "error" && head.error`) zeigt jetzt zusätzlich `head.error`, wenn `head?.liveness === "tot"` — genau der Fall, den der stille PROJ-60-Fallback erzeugt (Status bleibt `done`, aber `error` trägt jetzt den PROJ-62-Hinweistext aus dem Backend). Kein neuer Typ, keine neue Komponente — der generische Transkript-Renderer (`role`/`text`) brauchte keine Änderung, da `TranscriptEntry.role` bereits als offener `string`-Typ typisiert ist (neuer Wert `"tool"` läuft automatisch mit).
+
+### Tests
+- `npm run lint`: sauber.
+- `npm run test`: 18/20 Testdateien grün, 172/174 Tests grün. Die 2 Fails (`file-preview.test.tsx`, `sidebar-prefs-provider.test.ts`) sind vorbestehend und unabhängig — per `git stash`-Vergleich verifiziert: identischer Fail-Stand auch ohne diese Änderung (gehören zu einer anderen, parallel laufenden Session/Feature im selben Working Tree, nicht zu PROJ-62).
+- Kein dediziertes Unit-Test-Setup für die Session-Detailseite (`page.tsx`) im Repo vorhanden — Abdeckung erfolgt visuell/über QA bzw. e2e.
+
+### Offen für QA
+- Visuelle Verifikation im Cockpit: eine Session, die über den PROJ-60-Fallback endet, sollte jetzt sowohl mindestens einen Tool-Transkript-Eintrag als auch den roten Fehlertext im "beendet/nicht steuerbar"-Zustand zeigen.
+
 ## QA Test Results
 _To be added by /qa_
 
