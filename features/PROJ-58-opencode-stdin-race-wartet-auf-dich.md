@@ -1,6 +1,6 @@
 # PROJ-58: OpenCode-Stdin-Race — falsches „Wartet auf dich" + Transport-Fehler bei Folge-Eingabe
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -161,3 +161,11 @@ Keine. Alle in der Spec geforderten Acceptance Criteria sind erfüllt; die Live-
 - **Security:** Pass — keine neue Angriffsfläche, kein Informationsleck, keine Prozess-Race-Bedingung.
 - **Production Ready:** YES
 - **Recommendation:** Approved. Empfehlung: bei nächster Gelegenheit auf `main` mergen/deployen (`/abc-deploy`), da `dev` nicht automatisch deployt wird und der Fix damit noch nicht produktiv ist.
+
+## Deployment
+
+**Production URL:** https://jupiter.auxevo.tech
+**Deployed:** 2026-07-05 · **Version:** 0.27.7
+**Host:** Dev-VPS (host-native, systemd `jupiter-backend`/`jupiter-frontend`), Auto-Deploy via GitHub-Webhook auf Push nach `main`
+**Was ausgeliefert wurde:** `opencode`-Adapter-Fix (`final`-Flag nur bei `reason=="stop"`), Manager-Statuswechsel nur bei `final=True`, `GenericCliDriver`-Guard gegen Schreiben auf bereits geschlossenes stdin (mit klarer 409-Fehlermeldung statt uvloop-Crash, kein paralleler Zweit-Prozess). 4 neue Regressionstests (`test_proj58_opencode_stdin_race.py`).
+**Hinweis für den nächsten Live-Check:** In dieser Session konnte der laufende `jupiter-backend`-Dienst nicht neugestartet werden, um selbst zu testen (er hostet die aktive Session) — die Live-Verifikation lief stattdessen direkt gegen die echte OpenCode-CLI (siehe QA-Abschnitt). Ein kurzer manueller Cockpit-Test nach dem Deploy (OpenCode-Session mit mehreren Tool-Aufrufen) ist empfehlenswert, ist aber kein Blocker.
