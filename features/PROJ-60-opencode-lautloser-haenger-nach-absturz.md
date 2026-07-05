@@ -1,6 +1,6 @@
 # PROJ-60: Bugfix: OpenCode-Session hängt lautlos in „Arbeitet", wenn der Prozess nach einem Tool-Zwischenschritt abbricht
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -60,3 +60,39 @@ Verifiziert mit einem Fake-CLI, das genau dieses Verhalten nachstellt: Tool-Zwis
 ### Offen für QA
 - Live-Smoke wäre ideal (echten Provider-Timeout reproduzieren), ist aber nicht deterministisch erzwingbar — die Fake-CLI-Regressionstests decken den Mechanismus exakt ab.
 - Regression Codex/Claude (automatisiert bereits grün).
+
+## QA Test Results
+
+**Tested:** 2026-07-05
+**Backend:** kein Zugriff auf den produktiven `jupiter-backend`-Dienst (hostet die aktive Session, in der diese QA läuft — siehe PROJ-58/59-Präzedenzfall). Live-Verifikation direkt gegen `GenericCliDriver` + `SessionRuntime` + `SessionManager`-Konstanten (reale Klassen, End-to-End über den echten Event-Pfad).
+**Tester:** QA Engineer (AI)
+
+### Methodik
+- Automatisierte Suite: `test_proj60_opencode_silent_hang.py` (2 Tests) + volle Backend-Suite (1060 Tests).
+- **Unabhängige Live-Reproduktion** (nicht nur der Implementierungs-Test): ein Fake-CLI, das einen Tool-Zwischenschritt liefert und danach ohne finalen `step_finish` abbricht, an eine ECHTE `SessionRuntime` gehängt (nicht nur den nackten Treiber) — Ende-zu-Ende über `driver.start()` → `_read_stdout` → `handle_event`. Geprüft: `state.status` verlässt `ACTIVE_STATES` (statt für immer `running` zu bleiben).
+
+### Acceptance Criteria Status
+- [x] `_saw_final_result` statt `_saw_result` — Code-Review + Test bestätigt.
+- [x] Absturz nach Tool-Zwischenschritt → `closed`-Event → Session terminiert — Live-Reproduktion: `state.status` == `done`, nicht mehr in `ACTIVE_STATES`.
+- [x] Sauberes Turn-Ende (`reason=stop`) bleibt ohne `closed`, Session self-resumable — Regressionstest `test_clean_turn_end_still_suppresses_closed_for_self_resume` grün.
+- [x] Codex/Claude unverändert — eigene Suiten (`test_proj48_codex.py`, Claude-Treiber-Tests) unangetastet, volle Suite grün.
+- [x] Neue Regressionstests für beide Fälle — 2/2 grün.
+- [x] Volle Backend-Suite grün bis auf den vorbestehenden, unabhängigen Codex-Skill-Drift-Test (1059 passed, 1 deselected in der gezielten Zählung / 1060 passed, 1 failed in der vollen Zählung — identisch vor dieser Änderung reproduzierbar).
+
+### Edge Cases Status
+- [x] Absturz VOR jedem `result`-Event: unverändert abgedeckt (`_saw_final_result` bleibt `False` von Anfang an) — Code-Review bestätigt, kein neuer Test nötig (Verhalten identisch zum Vorzustand).
+- [x] Exit-Code ≠ 0: unverändert, landet weiterhin im `error`-Zweig — Code-Review bestätigt (dieser Zweig wurde nicht verändert).
+
+### Security Audit Results
+- [x] Keine neue Angriffsfläche: reine interne Prozess-/Statuslogik, kein neuer Endpunkt, kein neuer Input-Pfad.
+- [x] Kein Informationsleck: das `closed`-Event trägt kein Payload.
+
+### Bugs Found
+Keine. Die ursprünglich gemeldete Fehlerszene (Session hängt lautlos bei „Arbeitet") ist durch die Live-Reproduktion bestätigt behoben.
+
+### Summary
+- **Acceptance Criteria:** 6/6 bestanden (0 Fails).
+- **Bugs Found:** 0 total.
+- **Security:** Pass.
+- **Production Ready:** YES
+- **Empfehlung:** Approved. Bei nächster Gelegenheit deployen (`/abc-deploy`) — Auto-Deploy greift bei Jupiter nur bei Push nach `main` (bereits der aktuelle Branch).

@@ -1,6 +1,6 @@
 # PROJ-61: Live-Aktivitäts-Ticker fehlt im Connect-Snapshot (OpenCode/Codex wirken dadurch eingefroren)
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -61,3 +61,40 @@ Bei Claude fällt das kaum auf: Claude liefert während längerer Turns sehr hä
 ### Offen für QA
 - Live-Cockpit-Test: eine OpenCode-Session mit einem Prompt starten, der mehrere Tool-Aufrufe braucht; Seite währenddessen neu laden/reconnecten → der zuletzt bekannte Tool-Chip muss SOFORT erscheinen, nicht erst beim nächsten Tool-Call.
 - Regressionscheck Claude: Ticker-Verhalten bei Claude-Sessions unverändert (insbesondere kein Doppel-Update-Flackern durch die zusätzliche Quelle im `state`-Broadcast).
+
+## QA Test Results
+
+**Tested:** 2026-07-05
+**Backend/Frontend:** kein Zugriff auf den produktiven `jupiter-backend`-Dienst für einen echten Browser-Cockpit-Test (aktive Session läuft darüber, siehe PROJ-58/59/60-Präzedenzfall). Live-Verifikation direkt gegen `SessionRuntime.to_read()` (reale Klasse) + Code-Review des Frontend-Diffs; ergänzend volle Frontend-Suite (Lint + Vitest + `tsc --noEmit`).
+**Tester:** QA Engineer (AI)
+
+### Methodik
+- Backend: volle Suite (1060 Tests) + gezielte Live-Verifikation von `SessionRuntime.to_read()` in drei Zuständen: vor jeglicher Aktivität, nach einem Tool-Aufruf, nach `_clear_activity()` (Session terminal).
+- Frontend: `npm run lint` (ESLint), `npm run test` (Vitest, 174 Tests), `npx tsc --noEmit` (vollständiger Typecheck des Projekts, nicht nur der geänderten Datei).
+- Kollisions-Check: `live_activity` (Ticker-Dict) vs. bestehendes `last_activity` (ISO-Zeitstempel) im selben `to_read()`-Dict — beide Keys gleichzeitig vorhanden und korrekt typisiert geprüft.
+
+### Acceptance Criteria Status
+- [x] `SessionRuntime.to_read()` enthält `live_activity` (`{tool,target,ts}` oder `null`) — live verifiziert: `None` vor Aktivität, korrektes Dict nach `_emit_activity("Bash", ...)`.
+- [x] Feld reist in JEDEM `to_read()`-Aufruf mit (Connect-Snapshot UND laufende State-Broadcasts nutzen dieselbe Methode) — Code-Review bestätigt (keine Sonderpfade, `to_read()` wird überall gleich aufgerufen).
+- [x] Frontend übernimmt `lastActivity` aus jedem `kind==="state"`-Broadcast — Code-Review des Diffs in `use-session-stream.ts` bestätigt (`setLastActivity(msg.live_activity ?? null)` im `state`-Zweig, vor der Transkript-Baseline-Logik, läuft also bei JEDER state-Nachricht).
+- [x] Terminale Sessions zeigen keinen veralteten Ticker — live verifiziert: nach `_clear_activity()` liefert `to_read()` wieder `live_activity: None`.
+- [x] Kein Verhaltensunterschied für Claude — rein additives Feld, bestehende `kind:"activity"`-Pushes unverändert (kein Diff in `_emit_activity`/`_broadcast`); volle Suite grün.
+- [x] Backend-Suite grün (1060 Tests, 1 vorbestehender unabhängiger Fail) — Frontend Lint sauber, Vitest 173/174 (1 vorbestehender unabhängiger Fail, `file-preview.test.tsx`, per `git stash`-Vergleich vor dieser Änderung identisch rot bestätigt), `tsc --noEmit` zeigt nur einen vorbestehenden, unabhängigen Fehler in `lib/md-tree.test.ts` (nicht in einer der geänderten Dateien).
+
+### Edge Cases Status
+- [x] Nie Tool-Aktivität gehabt (frischer Start): `live_activity` bleibt `null`, Ticker bleibt eingeklappt — durch den `None`-Ausgangszustand im Live-Check bestätigt.
+- [ ] Sehr schneller Reconnect mitten in einem Tool-Aufruf: nicht live gegen den echten Browser durchgespielt (kein Zugriff auf den laufenden Dienst, siehe oben); Verhalten folgt aber direkt aus der Snapshot-Semantik (Code-Review), kein neuer Mechanismus nötig.
+
+### Security Audit Results
+- [x] Keine neue Angriffsfläche: `live_activity` enthält dieselben, bereits über `kind:"activity"`-Pushes live sichtbaren Daten (Tool-Name + serverseitig sanitisiertes Ziel) — kein neues Datenfeld, nur ein zusätzlicher Zeitpunkt der Auslieferung.
+- [x] Kein Informationsleck: `sanitize_target()` (unverändert) bleibt die einzige Quelle für den `target`-String.
+
+### Bugs Found
+Keine.
+
+### Summary
+- **Acceptance Criteria:** 6/6 bestanden (0 Fails).
+- **Bugs Found:** 0 total.
+- **Security:** Pass.
+- **Production Ready:** YES
+- **Empfehlung:** Approved. Ein manueller Live-Cockpit-Gegencheck (Reconnect während laufender Tool-Aufrufe) nach dem nächsten Deploy ist empfehlenswert, aber kein Blocker.
