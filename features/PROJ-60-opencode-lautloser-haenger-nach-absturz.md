@@ -1,6 +1,6 @@
 # PROJ-60: Bugfix: OpenCode-Session hängt lautlos in „Arbeitet", wenn der Prozess nach einem Tool-Zwischenschritt abbricht
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -96,3 +96,11 @@ Keine. Die ursprünglich gemeldete Fehlerszene (Session hängt lautlos bei „Ar
 - **Security:** Pass.
 - **Production Ready:** YES
 - **Empfehlung:** Approved. Bei nächster Gelegenheit deployen (`/abc-deploy`) — Auto-Deploy greift bei Jupiter nur bei Push nach `main` (bereits der aktuelle Branch).
+
+## Deployment
+
+**Production URL:** https://jupiter.auxevo.tech
+**Deployed:** 2026-07-05 · **Version:** 0.27.9
+**Host:** Dev-VPS (host-native, systemd `jupiter-backend`/`jupiter-frontend`), Auto-Deploy via GitHub-Webhook auf Push nach `main`
+**Was ausgeliefert wurde:** `GenericCliDriver` unterdrückt das `closed`-Event nur noch bei einem ECHTEN Turn-Ende (`final=True`), nicht mehr bei irgendeinem Zwischenergebnis — ein Absturz nach einem Tool-Zwischenschritt lässt die Session jetzt sichtbar terminieren statt lautlos zu hängen. Gemeinsam mit PROJ-59 und PROJ-61 in einem Deploy ausgeliefert.
+**Hinweis:** Deploy löst einen Neustart von `jupiter-backend` aus (beendet die aktuell aktive Claude-Code-Session, erwartet). Vor dem Push wurden uncommittete Änderungen einer parallel laufenden OpenCode-Session (`3a3111f2`, nicht Teil dieses Features) per Patch gesichert (`/home/dev/jupiter-deploy/backups/`), da derselbe Working Tree geteilt wird — Restrisiko für Schreibvorgänge nach dem Snapshot bewusst in Kauf genommen (User-Entscheidung).

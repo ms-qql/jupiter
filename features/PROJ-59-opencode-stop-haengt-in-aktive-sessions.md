@@ -1,6 +1,6 @@
 # PROJ-59: Bugfix: OpenCode-Session hängt nach „Stopp" in „Aktive Sessions"
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -94,3 +94,11 @@ Keine. Alle Acceptance Criteria erfüllt; die Live-Reproduktion bestätigt, dass
 - **Security:** Pass — keine neue Angriffsfläche, kein Informationsleck.
 - **Production Ready:** YES
 - **Empfehlung:** Approved. Bei nächster Gelegenheit deployen (`/abc-deploy`) — Auto-Deploy greift bei Jupiter nur bei Push nach `main` (bereits der aktuelle Branch), der Fix ist also nach Push produktionsbereit.
+
+## Deployment
+
+**Production URL:** https://jupiter.auxevo.tech
+**Deployed:** 2026-07-05 · **Version:** 0.27.9
+**Host:** Dev-VPS (host-native, systemd `jupiter-backend`/`jupiter-frontend`), Auto-Deploy via GitHub-Webhook auf Push nach `main`
+**Was ausgeliefert wurde:** `GenericCliDriver.stop()` emittiert `closed` jetzt auch im Self-Resume-Leerlauf (kein Prozess gespawnt) — Session verlässt `ACTIVE_STATES` zuverlässig. Gemeinsam mit PROJ-60 und PROJ-61 in einem Deploy ausgeliefert.
+**Hinweis:** Deploy löst einen Neustart von `jupiter-backend` aus, der die zu diesem Zeitpunkt aktive Claude-Code-Session beendet (erwartet, siehe Deploy-Notiz in PROJ-60/61).

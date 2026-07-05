@@ -1,6 +1,6 @@
 # PROJ-61: Live-Aktivitäts-Ticker fehlt im Connect-Snapshot (OpenCode/Codex wirken dadurch eingefroren)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -98,3 +98,11 @@ Keine.
 - **Security:** Pass.
 - **Production Ready:** YES
 - **Empfehlung:** Approved. Ein manueller Live-Cockpit-Gegencheck (Reconnect während laufender Tool-Aufrufe) nach dem nächsten Deploy ist empfehlenswert, aber kein Blocker.
+
+## Deployment
+
+**Production URL:** https://jupiter.auxevo.tech
+**Deployed:** 2026-07-05 · **Version:** 0.27.9
+**Host:** Dev-VPS (host-native, systemd `jupiter-backend`/`jupiter-frontend`), Auto-Deploy via GitHub-Webhook auf Push nach `main`
+**Was ausgeliefert wurde:** `SessionRuntime.to_read()` liefert jetzt `live_activity` (aktueller Ticker-Stand) in jedem State-Snapshot; Frontend übernimmt ihn aus jedem `kind:"state"`-Broadcast, nicht nur aus dedizierten `activity`-Pushes — behebt den leeren Ticker nach Connect/Reconnect für alle Engines. Gemeinsam mit PROJ-59 und PROJ-60 in einem Deploy ausgeliefert.
+**Hinweis für den nächsten Live-Check:** Reconnect-Verhalten (Ticker erscheint sofort statt erst beim nächsten Tool-Call) wurde nur live gegen die Backend-Klassen + per Code-Review verifiziert, nicht im echten Browser (siehe QA-Abschnitt) — kurzer manueller Cockpit-Test empfehlenswert.
