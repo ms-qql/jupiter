@@ -1,6 +1,6 @@
 # PROJ-62: Bugfix: OpenCode-Session endet lautlos ohne Transkript und ohne Fehler, wenn der Turn nur aus Tool-Calls besteht
 
-## Status: Planned
+## Status: Approved
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -130,7 +130,49 @@ Kein neuer Screen, kein neuer Endpoint — reine Erweiterung bestehender Kompone
 - Visuelle Verifikation im Cockpit: eine Session, die über den PROJ-60-Fallback endet, sollte jetzt sowohl mindestens einen Tool-Transkript-Eintrag als auch den roten Fehlertext im "beendet/nicht steuerbar"-Zustand zeigen.
 
 ## QA Test Results
-_To be added by /qa_
+
+**Tested:** 2026-07-05
+**Backend:** kein Zugriff auf den produktiven `jupiter-backend`-Dienst (Restart würde die aktive Session beenden — PROJ-58/59/60-Präzedenzfall). Live-Verifikation direkt gegen `GenericCliDriver` + `SessionRuntime` + `SessionState` (reale Produktionsklassen, End-zu-Ende über den echten Event-Pfad, NICHT nur die Implementierungstests des Backend-Devs).
+**Tester:** QA Engineer (AI)
+
+### Methodik
+- Automatisierte Suite: `test_proj62_opencode_leeres_transkript.py` (7 Tests) + volle Backend-Suite (1067 Tests) + Frontend-Suite (`npm run lint`, `npm run test`).
+- **Unabhängige Live-Reproduktion** des exakt gemeldeten Falls: eine Fake-CLI, die haargenau den Original-Screenshot nachstellt (`bash: git log --all --oneline | head -30`, Kosten `$0.0332`, dann Prozessende ohne finalen `step_finish`), an eine ECHTE `SessionRuntime` + `GenericCliDriver` gehängt (kein Mock der zu testenden Logik selbst). Geprüft: `state.status`, `state.error`, `runtime.transcript`, `runtime.derive_liveness()`.
+- Zusätzliche unabhängige Live-Reproduktionen für: sauberes Turn-Ende (Regression), sofortiger Absturz ohne jedes Event (Edge Case), mehrere Tool-Calls ohne Assistant-Text dazwischen (Edge Case).
+- Statische Prüfung aller bestehenden `state.error =`-Zuweisungsstellen in `manager.py`, um sicherzustellen, dass die neue Banner-Bedingung (`status==="error" || liveness==="tot"`) keine bestehende Fehleranzeige verdoppelt oder eine neue Stelle fälschlich triggert (alle bestehenden `error`-Zuweisungen koexistieren bereits mit `status=ERROR`, decken sich also mit der alten Bedingung).
+
+### Acceptance Criteria Status
+- [x] `tool_use`-Events erzeugen einen persistenten `TranscriptEntry` — Live-Repro: `role='tool', kind='tool_use', text='bash: git log --all --oneline | head -30'` erscheint in `runtime.transcript`.
+- [x] Tool-Only-Turn zeigt nach Sessionende mindestens einen Transkript-Eintrag — Live-Repro exakter gemeldeter Fall: 1 Eintrag statt „Noch keine Transkript-Historie".
+- [x] Stiller `closed`-Fallback setzt `state.error` — Live-Repro: `error == "Der Prozess wurde beendet, ohne den Turn regulär abzuschließen."`, `status == DONE`, `derive_liveness() == "tot"` (bestätigt die volle Kette bis zur Frontend-Bedingung).
+- [x] Sauberes Turn-Ende bleibt ohne Fehlerhinweis — Live-Repro: `status == "waiting"`, `error is None`, `derive_liveness() == "aktiv"` (self-resumable, unverändert).
+- [x] Turns/Kosten/Kontext-Buchung unverändert — Live-Repro: `num_turns == 1`, `total_cost_usd == 0.0332` (identisch zum Original-Screenshot) trotz leerem Assistant-Text.
+- [x] Codex/Claude unverändert — volle Regressionssuite (`test_proj48_codex.py`, `test_proj50_codex_abc.py`, Claude-Treiber-Tests) grün, kein neuer Fail.
+- [x] Neue Regressionstests (3 Fälle) vorhanden und grün — `test_proj62_opencode_leeres_transkript.py`, 7/7.
+- [x] Volle Backend-Suite grün bis auf den vorbestehenden, unabhängigen Codex-Skill-Drift-Test — per `git stash` + Checkout auf `main` verifiziert: identischer Fail auch ohne diese Änderung.
+
+### Edge Cases Status
+- [x] Mehrere Tool-Calls ohne Assistant-Text dazwischen: unabhängig verifiziert — alle 3 Tool-Calls erscheinen einzeln im Transkript (`bash: ls`, `Read: a.py`, `Edit: b.py`).
+- [x] Tool-Call gefolgt von Assistant-Text (Normalfall): durch bestehende Suite abgedeckt (`test_proj57_opencode.py`, `test_proj48_codex.py` unverändert grün) — kein Duplikat-Eintrag.
+- [x] Sofortiger Absturz VOR jedem Event: unabhängig verifiziert — `transcript` bleibt leer (nichts zu zeigen), aber `state.error` ist gesetzt (`"Der Prozess wurde beendet, ohne den Turn regulär abzuschließen."`) statt leer zu bleiben.
+- [x] Exit-Code ≠ 0: unverändert — Code-Review bestätigt, dieser Zweig (`generic_cli_driver.py`, `error`-Branch) wurde nicht angefasst.
+
+### Security Audit Results
+- [x] Keine neue Angriffsfläche: reine interne In-Memory-Zustands-/Transkriptlogik, kein neuer Endpoint, kein neues Auth-/Tenant-Feld (Jupiter-MVP: single-user, kein JWT/RLS-Scope betroffen — siehe Stack-Override-Konvention).
+- [x] XSS-Check: der neue `role="tool"`-Transkript-Eintrag wird identisch zu bestehenden Einträgen als reiner JSX-Textkindknoten gerendert (`<p>{t.text}</p>`, React escaped automatisch) — kein `dangerouslySetInnerHTML`, kein Injection-Risiko auch bei potenziell beliebigen Tool-Kommandozeilen.
+- [x] Kein Info-Leak: `sanitize_target` (PROJ-46, unverändert wiederverwendet) kappt bei 80 Zeichen und kollabiert Whitespace — dieselbe serverseitige Sanitisierung wie beim bestehenden Activity-Ticker. `state.error` trägt im neuen Pfad ausschließlich einen festen, statischen deutschen Text (keine Stacktraces/Rohdaten).
+- [x] Bestehende Fehlerpfade (Exit-Code ≠ 0, API-Fehler) unverändert — kein neuer Pfad, der Rohdaten/Exceptions in `error` durchreicht.
+
+### Bugs Found
+Keine. Der ursprünglich gemeldete Fehlerfall (leeres Transkript + unerklärtes Sessionende) ist durch die unabhängige Live-Reproduktion bestätigt behoben — inklusive exakter Nachstellung der Original-Screenshot-Werte (Kosten, Tool-Aufruf).
+
+### Summary
+- **Acceptance Criteria:** 8/8 bestanden (0 Fails).
+- **Edge Cases:** 4/4 bestanden.
+- **Bugs Found:** 0 total.
+- **Security:** Pass.
+- **Production Ready:** YES
+- **Empfehlung:** Approved. Bei nächster Gelegenheit deployen (`/abc-deploy`) — der offene Frontend-Punkt aus den Implementation Notes (Banner-Bedingung) ist bereits umgesetzt und Teil dieses QA-Durchlaufs.
 
 ## Deployment
 _To be added by /deploy_
