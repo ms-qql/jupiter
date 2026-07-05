@@ -584,7 +584,7 @@ class EngineRegistry:
 
     @staticmethod
     def _ordered_yaml_profiles(profiles: dict[str, EngineProfile]) -> list[EngineProfile]:
-        priority = {"openai": 0, "openrouter": 1, "swisscom": 2, "codex": 10, "ollama": 11}
+        priority = {"openai": 0, "openrouter": 1, "swisscom": 2, "codex": 10, "opencode": 12, "ollama": 11}
         return sorted(profiles.values(), key=lambda p: (priority.get(p.key, 50), p.key))
 
     def _ordered_settings_profiles(

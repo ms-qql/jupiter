@@ -30,9 +30,15 @@ UsageRange = str  # "today" | "7d" | "30d" | "all"
 CostStatus = str  # "complete" | "partial" | "none"
 
 
+# Engines mit echter, per-Turn gelieferter USD-Abrechnung. Claude (Max-Sub, aber die CLI
+# meldet echte total_cost_usd) + OpenCode (PROJ-57: OpenRouter liefert `cost` je step_finish
+# → echte € statt „n/v", im Gegensatz zu Codex/Hermes-Subscriptions).
+_COST_ENGINES: frozenset[str] = frozenset({"claude", "opencode"})
+
+
 def engine_shows_cost(engine: str | None) -> bool:
-    """Nur der Claude-Treiber liefert echte Kosten (PROJ-18-Konvention)."""
-    return (engine or "claude") == "claude"
+    """Liefert die Engine echte USD-Kosten? (PROJ-18-Konvention, PROJ-57 ergänzt OpenCode.)"""
+    return (engine or "claude") in _COST_ENGINES
 
 
 def range_start(range_: UsageRange, now: datetime) -> datetime | None:
