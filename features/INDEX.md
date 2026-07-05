@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-58
+**Next Available ID:** PROJ-59
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -70,6 +70,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-55 | Session-Kondensierung — Wochen-Sweep alter Sessions in Hal-Knowledge | P1 | Approved | PROJ-2, PROJ-1, PROJ-15 | [Spec](PROJ-55-session-kondensierung-hal-knowledge.md) |
 | PROJ-56 | Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter) | P1 | Deployed | PROJ-48, PROJ-18, PROJ-14 | [Spec](PROJ-56-kontext-persistenz-nicht-claude-engines.md) |
 | PROJ-57 | Engine — OpenCode als Harness (OpenRouter-Modelle über OpenCode statt Direkt-HTTP) | P1 | Deployed | PROJ-18, PROJ-48, PROJ-56, PROJ-51 | [Spec](PROJ-57-engine-opencode-harness.md) |
+| PROJ-58 | Bugfix: OpenCode-Stdin-Race — falsches „Wartet auf dich" + Transport-Fehler bei Folge-Eingabe | P1 | In Progress | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-58-opencode-stdin-race-wartet-auf-dich.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
