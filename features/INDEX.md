@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-60
+**Next Available ID:** PROJ-62
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -72,6 +72,8 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-57 | Engine — OpenCode als Harness (OpenRouter-Modelle über OpenCode statt Direkt-HTTP) | P1 | Deployed | PROJ-18, PROJ-48, PROJ-56, PROJ-51 | [Spec](PROJ-57-engine-opencode-harness.md) |
 | PROJ-58 | Bugfix: OpenCode-Stdin-Race — falsches „Wartet auf dich" + Transport-Fehler bei Folge-Eingabe | P1 | Deployed | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-58-opencode-stdin-race-wartet-auf-dich.md) |
 | PROJ-59 | Bugfix: OpenCode-Session hängt nach „Stopp" in „Aktive Sessions" | P1 | Approved | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-59-opencode-stop-haengt-in-aktive-sessions.md) |
+| PROJ-60 | Bugfix: OpenCode-Session hängt lautlos in „Arbeitet" nach Absturz hinter Tool-Zwischenschritt | P1 | In Review | PROJ-57, PROJ-58, PROJ-48 | [Spec](PROJ-60-opencode-lautloser-haenger-nach-absturz.md) |
+| PROJ-61 | Live-Aktivitäts-Ticker fehlt im Connect-Snapshot (OpenCode/Codex wirken eingefroren) | P1 | In Review | PROJ-46, PROJ-49 | [Spec](PROJ-61-live-aktivitaets-ticker-bei-connect.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

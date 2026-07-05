@@ -480,6 +480,11 @@ class SessionRuntime:
         data["liveness"] = self.derive_liveness()
         data["liveness_auto_attempts"] = self.liveness.auto_attempts
         data["liveness_last_result"] = self.liveness.last_result
+        # PROJ-61: aktuellen Aktivitäts-Ticker-Stand mitschicken (sonst sieht ein frisch
+        # (re)verbundener Client den Ticker leer, bis der NÄCHSTE Tool-Call kommt — bei
+        # OpenCode/Codex (seltener sichtbarer Zwischentext als bei Claude) wirkt eine
+        # Session dadurch minutenlang wie eingefroren, obwohl sie längst aktiv war).
+        data["live_activity"] = self.last_activity
         return data
 
     def _maybe_persist(self) -> None:

@@ -78,7 +78,14 @@ class GenericCliDriver(EngineDriver):
         # PROJ-48: Merker für den Resume-Pfad (oneshot-CLIs, die je Turn neu spawnen).
         self._spec: LaunchSpec | None = None
         self._resume_id: str | None = None  # z. B. Codex' thread_id (aus system/resume_token)
-        self._saw_result = False            # Turn lieferte ein Turn-Ende → kein DONE bei EOF
+        # PROJ-60: NUR ein echtes Turn-Ende (result.raw["final"] ist bei Claude/Codex immer
+        # True, da sie nur EIN result je Turn liefern; OpenCode markiert Tool-Zwischenschritte
+        # explizit mit final=False, siehe PROJ-58) unterdrückt das `closed`-Event bei EOF.
+        # Ein reines "irgendein result kam schon" reichte nicht: bricht der Prozess NACH einem
+        # Tool-Zwischenschritt ab (Provider-Timeout/Crash, rc=0, kein finaler step_finish),
+        # wurde das fälschlich als „Turn normal beendet, wartet auf nächste Eingabe" gewertet
+        # — die Session hing für immer im letzten Status (kein `closed`, kein Fehler, still).
+        self._saw_final_result = False
         # PROJ-58: bei `oneshot`-CLIs schließt `_write_stdin` die Pipe bereits am TURN-START
         # (nicht -ende) — der Prozess bleibt aber bis zum Turn-Ende `is_alive`. Ohne diesen
         # Merker prüfte `send_input` nur `is_alive` und schrieb erneut auf die längst
@@ -133,7 +140,7 @@ class GenericCliDriver(EngineDriver):
     async def _spawn(self, argv: list[str], cwd: str) -> None:
         """Startet einen Subprozess für GENAU einen Turn und hängt die Reader an."""
         self._stopping = False
-        self._saw_result = False
+        self._saw_final_result = False
         self._stderr_buf = []
         self._stdin_closed = False
         self._proc = await asyncio.create_subprocess_exec(
@@ -260,8 +267,8 @@ class GenericCliDriver(EngineDriver):
                 if token:
                     self._resume_id = str(token)
                 continue
-            if event.type == "result":
-                self._saw_result = True
+            if event.type == "result" and event.raw.get("final", True):
+                self._saw_final_result = True
             await self._emit(event)
         rc = await self._proc.wait()
         # Selbst gestoppt → closed (→ done). PROJ-48: ein resumefähiger oneshot-Turn, der
@@ -270,8 +277,12 @@ class GenericCliDriver(EngineDriver):
         if self._stopping:
             await self._emit(StreamEvent("system", "closed", {}))
         elif rc in (0, None):
-            if self.supports_self_resume and self._saw_result:
+            if self.supports_self_resume and self._saw_final_result:
                 return  # Turn fertig, Session fortsetzbar → kein DONE
+            # PROJ-60: Prozess endete (rc 0/None), OHNE je ein echtes Turn-Ende geliefert zu
+            # haben (Provider-Timeout/Crash nach einem Tool-Zwischenschritt o. Ä.) — das ist
+            # KEIN normales Turn-Ende. `closed` emittieren, damit die Session terminiert
+            # (sichtbar/archivierbar) statt für immer im letzten Status hängenzubleiben.
             await self._emit(StreamEvent("system", "closed", {}))
         else:
             msg = "".join(self._stderr_buf).strip() or f"Prozess endete mit Code {rc}."
