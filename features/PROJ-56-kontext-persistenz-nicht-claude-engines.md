@@ -1,6 +1,6 @@
 # PROJ-56: Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-07-04
 **Last Updated:** 2026-07-05
 
@@ -175,8 +175,56 @@ Umgesetzt auf `dev` (backend-only, keine neuen Pakete). Wichtige Abweichung zur 
 
 **Offen für QA:** reale End-to-End-Prüfung mit echter Codex-CLI + echtem OpenRouter/GLM-Key gegen die drei Auslöser (Restart · Reanimierung · `_resume`); Edge Cases „Thread serverseitig abgelaufen" und „sehr großer Verlauf" (Cap greift, Verdichtung bleibt PROJ-5/19).
 
-## QA Test Results
-_To be added by /qa_
+## QA Test Results (2026-07-05)
+**Tester:** QA/Red-Team · **Branch:** dev · **Automatisiert:** `backend/tests/test_proj56_context_persistence.py` (17 Tests, grün) + 122 grün über resume-nahe Suites (proj18/proj48/proj33/proj27/proj45/proj16/manager/proj1). Volle Suite zuvor 1024 passed.
+
+**Testart-Grenze:** Rein automatisiert/deterministisch (FakeDriver + echte GenericCli/OpenAI-Treiber + tmp-SQLite). Ein **Live-E2E mit echter Codex-CLI + echtem OpenRouter/GLM-Key** war in dieser Umgebung nicht möglich (kein Key/Subprozess; Codex braucht zudem `danger-full-access`/netns, siehe [[codex-sandbox-netns]]). → als Deploy-Smoke empfohlen, unten als Residual gelistet. Kein UI-Anteil (nur read-only `context_status`-Feld) → kein Flutter/Responsive-Test nötig.
+
+### Acceptance Criteria
+**Codex**
+- [x] `resume_id` persistiert (nicht nur RAM) — `_row` synct Treiber-ID → `session_index`; Roundtrip-Test.
+- [~] Restart → Fortsetzung via `resume_argv` mit Kontext — Unit-belegt (`_resume` codex-Zweig reicht ID durch; Driver-Priming ohne Fresh-Thread). *Live-Smoke offen.*
+- [x] `_resume` nutzt Resume-argv (nicht mehr `resume=is_claude`).
+- [~] RUNNING-Reanimierung setzt Thread fort — Unit-belegt (`_reanimate_once`→`_resume`→codex-Zweig). *Live-Smoke offen.*
+- [x] Fehlende `resume_id` → sauberer Erststart, kein Crash (`context_status="kontextlos (keine Resume-ID der Engine)"`).
+
+**GLM / OpenRouter**
+- [x] Verlauf persistiert (`session_context`-Store), übersteht Treiber-Neubau.
+- [x] Replay in frischen Treiber via `load_history` (kein doppelter System-Prompt).
+- [~] Restart führt Faden fort — Unit-belegt (rehydrate→`send_input`→`_resume`→Replay). *Live-Smoke offen.*
+- [x] Reanimierte GLM-Session verliert Konversation nicht (gleicher `_resume`-Pfad).
+
+**Übergreifend**
+- [x] Kein Kontextverlust bei den 3 Auslösern × 2 Engines — Unit je Auslöser (`_resume` direkt; via `send_input`; via `_reanimate_once`).
+- [x] Claude unverändert — Regressionstest (`resume=True`, `resume_id=None`, `context_status="mit Kontext"`); 122 resume-nahe Tests grün.
+- [x] Token-Erwartung kein Overspend-Fehlalarm — `_cap_history` (`openai_resume_max_messages=40`), System-Prompt bewahrt, ältester Teil gekürzt + `context_status="…(Verlauf gekürzt)"`.
+- [x] Keine Secrets in persistierten Artefakten — Red-Team-Test (kein Key/`Authorization`/`Bearer` im Verlauf; Key nur im HTTP-Header). Store liegt in der bestehenden `session_index_db_path`-Sandbox.
+- [x] Beobachtbar/transparent — `context_status` in `to_read()` (Cockpit) + Log-Grund.
+
+### Edge Cases
+- [x] Kaputter/manipulierter Verlauf-JSON → kontextloser Neustart, kein Crash.
+- [x] Halber Turn (RUNNING/ERROR) wird NICHT persistiert (nur SETTLED = waiting/done).
+- [x] Sehr großer Verlauf → Cap greift (System bewahrt, neuester Teil bleibt).
+- [~] Codex-Thread serverseitig abgelaufen → Resume-Spawn scheitert → Fehler sichtbar, Neustart möglich. *Nur Live prüfbar — Residual.*
+- [ ] Race Reanimierung + gleichzeitiger User-Input — nicht gezielt getestet (Low; bestehende Card-/Status-Guards greifen). *Residual.*
+- [ ] Modellwechsel innerhalb derselben Engine (GLM→anderes OpenRouter-Modell): Verlauf wird übernommen (kein Neu-Faden) — bewusst nicht gesondert behandelt; Design-offen (Low).
+
+### Security-Audit (Red Team)
+- Persistierter Verlauf enthält nur Chat-Text — **keine** API-Keys/Header (verifiziert). `resume_id` = nicht-geheime Thread-ID.
+- Kein Cross-Session-Leak: `session_context` PK = `session_id`, `load_context` liefert nur die eigene Zeile. Single-Owner-Jupiter (kein Mandant/RLS by design).
+- `delete()` räumt den Verlauf mit ab → kein verwaister Kontext nach Session-Löschung (PROJ-21).
+- Persistenz ist best-effort → DB-Ausfall blockiert den Hot-Path nicht (In-Memory gewinnt).
+
+### Bugs
+**Keine Critical/High/Medium/Low gefunden.** Der eine rote Test der Gesamtsuite (`test_proj50_codex_abc::…no_drift`) ist ein **pre-existing** Drift der `~/.codex`-Skill-Spiegelung außerhalb des Repos — von PROJ-56 unabhängig, kein Bug dieses Features.
+
+### Residuals (kein Blocker — Empfehlung: Deploy-Smoke)
+1. Live-E2E mit echter Codex-CLI + echtem OpenRouter/GLM-Key gegen Restart · Reanimierung · `_resume`.
+2. Codex „Thread abgelaufen"-Fallback live prüfen.
+3. Race Reanimierung+Input (Low) bei Gelegenheit härten.
+
+### Production-Ready
+**READY** — keine Critical/High-Bugs; Kernlogik unit-verifiziert, Claude regressionsfrei. Empfehlung: vor/direkt nach Deploy einen kurzen Live-Smoke der zwei Engines fahren (Residual 1).
 
 ## Deployment
 _To be added by /deploy_

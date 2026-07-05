@@ -379,3 +379,96 @@ def test_cap_history_noop_when_within_limit(monkeypatch):
     capped, trimmed = mgr._cap_history(msgs)
     assert trimmed is False
     assert capped == msgs
+
+
+# ===========================================================================
+# 7) QA — Red-Team + Robustheit
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_corrupt_persisted_history_degrades_not_crashes(tmp_path, monkeypatch):
+    """Manipulierter/kaputter Verlauf-JSON → sauberer kontextloser Neustart, KEIN Crash."""
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    await repo.save_context("s1", "{das ist kein gültiges json[[")
+    fake = _RecordingDriver(self_resume=False, has_history=True)
+    mgr = SessionManager(repo=repo, engine_factory=lambda p: fake)
+    monkeypatch.setattr(mgr_module.engine_registry, "get", lambda key: _Profile("openrouter"))
+    rt = SessionRuntime(
+        SessionState(session_id="s1", owner="dev", project_path=PROJECT, model="m",
+                     permission_mode="default", engine="openrouter"),
+        fake, on_persist=mgr._persist,
+    )
+
+    await mgr._resume(rt)  # darf nicht werfen
+    await _flush(mgr)
+
+    assert rt.state.context_status == "kontextlos (kein gespeicherter Verlauf)"
+    assert fake.loaded_history is None
+
+
+@pytest.mark.asyncio
+async def test_error_status_does_not_persist_history(tmp_path):
+    """ERROR (Turn abgebrochen, evtl. offener User-Turn ohne Antwort) → NICHT sichern."""
+    from app.engine.manager import ERROR
+
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    mgr = SessionManager(repo=repo)
+    fake = _RecordingDriver(self_resume=False, has_history=True)
+    fake._msgs = [{"role": "user", "content": "offen"}]  # kein assistant → halber Turn
+    rt = SessionRuntime(
+        SessionState(session_id="s1", owner="dev", project_path=PROJECT, model="m",
+                     permission_mode="default", engine="openrouter", status=ERROR),
+        fake, on_persist=mgr._persist,
+    )
+    mgr._persist(rt)
+    await _flush(mgr)
+    assert await repo.load_context("s1") is None
+
+
+@pytest.mark.asyncio
+async def test_claude_resume_unchanged_regression(tmp_path, monkeypatch):
+    """Claude-Pfad unberührt: nativer --resume (resume=True), context_status 'mit Kontext',
+    KEIN Verlauf-Replay/Priming (serverseitiger Kontext)."""
+    from .fakes import FakeDriver
+
+    class _ClaudeProfile:
+        key = "claude"
+        is_claude = True
+        driver = "claude"
+
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    fake = FakeDriver()
+    mgr = SessionManager(driver_factory=lambda: fake, repo=repo)
+    monkeypatch.setattr(mgr_module.engine_registry, "get", lambda key: _ClaudeProfile())
+    rt = SessionRuntime(
+        SessionState(session_id="s1", owner="dev", project_path=PROJECT, model="claude-opus-4-8",
+                     permission_mode="default", engine="claude"),
+        fake, on_persist=mgr._persist,
+    )
+
+    await mgr._resume(rt)
+    await _flush(mgr)
+
+    assert rt.state.context_status == "mit Kontext"
+    assert fake._spec is not None and fake._spec.resume is True
+    assert fake._spec.resume_id is None  # Claude nutzt Session-ID, keine engine-eigene ID
+
+
+@pytest.mark.asyncio
+async def test_persisted_context_contains_no_secrets(tmp_path):
+    """Red-Team: der gesicherte Verlauf enthält nur Chat-Inhalte — KEINE API-Keys.
+    (Der OpenAI-Key steckt im HTTP-Header, nie in ``_messages``.)"""
+    prof = EngineProfile(
+        key="openrouter", label="OpenRouter", driver="openai",
+        auth_env="OPENROUTER_API_KEY", api_base="https://x", api_path="/v1/chat/completions",
+    )
+    driver = OpenAIDriver(prof)
+    driver.load_history([{"role": "system", "content": "K"}, {"role": "user", "content": "hi"}])
+    dumped = json.dumps(driver.conversation_history)
+    assert "OPENROUTER_API_KEY" not in dumped
+    assert "Authorization" not in dumped
+    assert "Bearer" not in dumped

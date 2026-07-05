@@ -68,7 +68,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-53 | Buch-Nuggets (native Micro-App: Buch-Upload/URL → KI-Kurzform inkl. Contra → Hal) | P1 | Deployed | PROJ-40, PROJ-1, PROJ-2, PROJ-11, PROJ-51 | [Spec](PROJ-53-buch-nuggets-microapp.md) |
 | PROJ-54 | Fable 5 als wählbares Claude-Modell (temporär, nur Neue-Session-Dialog) | P1 | Deployed | PROJ-1, PROJ-51 | [Spec](PROJ-54-fable-5-modellauswahl.md) |
 | PROJ-55 | Session-Kondensierung — Wochen-Sweep alter Sessions in Hal-Knowledge | P1 | Approved | PROJ-2, PROJ-1, PROJ-15 | [Spec](PROJ-55-session-kondensierung-hal-knowledge.md) |
-| PROJ-56 | Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter) | P1 | In Progress | PROJ-48, PROJ-18, PROJ-14 | [Spec](PROJ-56-kontext-persistenz-nicht-claude-engines.md) |
+| PROJ-56 | Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter) | P1 | Approved | PROJ-48, PROJ-18, PROJ-14 | [Spec](PROJ-56-kontext-persistenz-nicht-claude-engines.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
