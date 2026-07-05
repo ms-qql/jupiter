@@ -177,6 +177,11 @@ class Settings(BaseSettings):
     # PROJ-33: Nach einem GEORDNETEN Backend-Neustart gedrainte Sessions automatisch via
     # `claude --resume` fortsetzen. False → Sessions bleiben verwaist + manueller Knopf.
     auto_resume_on_restart: bool = True
+    # PROJ-56: Obergrenze für den zurückgespielten Konversationsverlauf bei Engines OHNE
+    # serverseitiges Resume (OpenAI/OpenRouter, z. B. GLM 5.2). Ein unbegrenzter Replay
+    # würde Token-/Kontextfenster sprengen (PROJ-45-Overspend-Sorge). Bei Überschreitung
+    # wird der älteste Teil gekürzt (System-Prompt bleibt erhalten) + sichtbar markiert.
+    openai_resume_max_messages: int = 40
 
     # PROJ-19 (#27): Prompt-Caching. An → stabile Prompt-Bestandteile (Konstitution/
     # Rolle) bilden das cache-freundliche Präfix + werden über einen Inhalts-Hash

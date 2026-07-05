@@ -313,6 +313,13 @@ class SessionState:
     # PROJ-33: Zeitpunkt eines GEORDNETEN Drains (Backend-Shutdown). Gesetzt = bewusst
     # beendet → nach dem Neustart automatisch fortsetzen; None = Crash → kein Auto-Resume.
     drained_at: str | None = None
+    # PROJ-56: engine-eigene Wiederaufnahme-ID (z. B. Codex' thread_id). Am State gehalten,
+    # damit sie einen Treiber-Neubau (Restart/Reanimierung) überlebt und den Kontext-Faden
+    # wieder aufnimmt. None = keine (Erststart oder Engine ohne serverseitiges Resume).
+    resume_id: str | None = None
+    # PROJ-56: Ergebnis der letzten Kontext-Wiederherstellung — "mit Kontext" oder
+    # "kontextlos (<Grund>)". Rein informativ (Cockpit/Log), steuert nichts.
+    context_status: str | None = None
     # PROJ-22 — Multi-Agent-Dispatch (Flotte). Neben dem 1:1-Staffelstab (parent/child_
     # session_id) trägt eine dispatchte Spezialisten-Session hier die Rück-Referenz auf
     # ihren Koordinator + das bearbeitete Ticket; der Koordinator führt die Kind-Liste.
@@ -368,6 +375,9 @@ class SessionState:
             "abc_phase": self.abc_phase,
             "abc_phase_reached": self.abc_phase_reached,
             "abc_feature": self.abc_feature,
+            # PROJ-56: ob die Session nach einem Abbruch mit Kontext oder kontextlos
+            # fortgesetzt wurde (read-only; None = noch nie fortgesetzt).
+            "context_status": self.context_status,
             # PROJ-22 — Flotte (Eltern-Kind 1:N + Vertrag-Pointer).
             "parent_coordinator_id": self.parent_coordinator_id,
             "ticket_id": self.ticket_id,
@@ -1163,6 +1173,11 @@ class SessionManager:
     def _row(self, runtime: SessionRuntime) -> dict:
         """Persistierbarer Snapshot (Metadaten + PID) für den Live-Index."""
         s = runtime.state
+        # PROJ-56: eine vom Treiber frisch aufgefangene Resume-ID (z. B. Codex' thread_id)
+        # an den State übernehmen, damit sie den Treiber-Neubau/Restart überlebt.
+        driver_resume_id = getattr(runtime.driver, "resume_id", None)
+        if driver_resume_id:
+            s.resume_id = driver_resume_id
         return {
             "session_id": s.session_id,
             "owner": s.owner,
@@ -1188,6 +1203,8 @@ class SessionManager:
             "abc_feature": s.abc_feature,
             "recovery_dismissed": 1 if s.recovery_dismissed else 0,
             "drained_at": s.drained_at,  # PROJ-33
+            "resume_id": s.resume_id,  # PROJ-56
+            "context_status": s.context_status,  # PROJ-56
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -1202,6 +1219,16 @@ class SessionManager:
         task = asyncio.create_task(self._safe_upsert(row))
         self._persist_tasks.add(task)
         task.add_done_callback(self._persist_tasks.discard)
+        # PROJ-56: Konversationsverlauf sichern, wenn er NUR im Treiber lebt (OpenAI/
+        # OpenRouter, z. B. GLM 5.2). Nur bei SETTLED-Status (waiting/done) — so wird nie
+        # ein halber/abgebrochener Turn persistiert (der Verlauf bleibt konsistent).
+        history = getattr(runtime.driver, "conversation_history", None)
+        if history and runtime.state.status in (WAITING, DONE):
+            ctx_task = asyncio.create_task(
+                self._safe_save_context(runtime.state.session_id, list(history))
+            )
+            self._persist_tasks.add(ctx_task)
+            ctx_task.add_done_callback(self._persist_tasks.discard)
 
     async def _safe_upsert(self, row: dict) -> None:
         try:
@@ -1214,6 +1241,13 @@ class SessionManager:
             await self._repo.delete(session_id)
         except Exception as exc:  # noqa: BLE001 — Persistenz ist best-effort.
             logger.warning("Live-Index-Eintrag konnte nicht gelöscht werden: %s", exc)
+
+    async def _safe_save_context(self, session_id: str, messages: list[dict]) -> None:
+        """PROJ-56: Konversationsverlauf best-effort speichern (blockiert nie den Hot-Path)."""
+        try:
+            await self._repo.save_context(session_id, json.dumps(messages))
+        except Exception as exc:  # noqa: BLE001 — Persistenz ist best-effort.
+            logger.warning("Konversationsverlauf konnte nicht gespeichert werden: %s", exc)
 
     async def rehydrate(self) -> None:
         """PROJ-14: beim Startup den Live-Index laden und verwaiste Sessions markieren.
@@ -1360,6 +1394,8 @@ class SessionManager:
             abc_feature=row.get("abc_feature"),
             recovery_dismissed=bool(row.get("recovery_dismissed")),
             drained_at=row.get("drained_at"),  # PROJ-33
+            resume_id=row.get("resume_id"),  # PROJ-56
+            context_status=row.get("context_status"),  # PROJ-56
         )
 
     async def create(
@@ -1547,22 +1583,78 @@ class SessionManager:
         if not runtime.driver.is_alive:
             await self._resume(runtime)
 
-    async def _resume(self, runtime: SessionRuntime) -> None:
-        """Frischer Treiber mit `claude --resume` — lädt die bestehende Konversation.
+    def _cap_history(self, messages: list[dict]) -> tuple[list[dict], bool]:
+        """PROJ-56: den Replay-Verlauf auf ``openai_resume_max_messages`` deckeln.
 
-        Der alte Subprozess ist beendet; ein neuer übernimmt dieselbe Session-ID
-        und denselben Konstitutions-Kontext. Eingaben folgen via ``send_input``.
+        Ein unbegrenzter Replay sprengt Token-/Kontextfenster (PROJ-45-Overspend). Der
+        führende System-Prompt bleibt erhalten; gekürzt wird der ÄLTESTE Gesprächsteil.
+        Rückgabe ``(verlauf, wurde_gekürzt)``.
+        """
+        cap = settings.openai_resume_max_messages
+        if cap <= 0 or len(messages) <= cap:
+            return messages, False
+        head: list[dict] = []
+        rest = messages
+        if messages and messages[0].get("role") == "system":
+            head, rest = [messages[0]], messages[1:]
+        keep = rest[-(cap - len(head)):] if cap > len(head) else []
+        return head + keep, True
+
+    async def _load_history_capped(self, session_id: str) -> tuple[list[dict] | None, bool]:
+        """PROJ-56: persistierten Verlauf lesen + deckeln. ``(verlauf|None, gekürzt)``."""
+        try:
+            raw = await self._repo.load_context(session_id)
+        except Exception as exc:  # noqa: BLE001 — best-effort, degradiert zu kontextlos.
+            logger.warning("Konversationsverlauf nicht lesbar (Session %s): %s", session_id, exc)
+            return None, False
+        if not raw:
+            return None, False
+        try:
+            messages = json.loads(raw)
+        except (ValueError, TypeError):
+            return None, False
+        if not isinstance(messages, list) or not messages:
+            return None, False
+        return self._cap_history(messages)
+
+    async def _resume(self, runtime: SessionRuntime) -> None:
+        """Frischer Treiber, der den bestehenden Konversations-Kontext wieder aufnimmt.
+
+        Engine-bewusst (PROJ-56):
+        - **Claude**: nativer ``--resume`` lädt die serverseitige Konversation (unverändert).
+        - **Codex/generic_cli** (self-resume): der serverseitige Kontext hängt an der
+          persistierten ``resume_id`` — sie wird durchgereicht, der nächste ``send_input``
+          nimmt den Thread über das Resume-argv wieder auf.
+        - **OpenAI/OpenRouter** (GLM): kein serverseitiges Resume → der persistierte Verlauf
+          wird (gedeckelt) in den frischen Treiber zurückgespielt.
+        Fehlt das jeweilige Kontext-Material, degradiert es sauber auf einen sichtbaren
+        kontextlosen Neustart (``context_status``), statt zu crashen.
         """
         state = runtime.state
-        # PROJ-18: passenden Treiber zur Engine bauen. Nur Claude unterstützt echtes
-        # `--resume` (lädt die Konversation); generic_cli/openai starten frisch (die
-        # bisherige Konversation ist beim Nicht-Claude-Treiber nicht persistent → sauber
-        # degradiert: ein neuer Prozess/Chat mit derselben Session-ID + Konstitution).
         profile = engine_registry.get(state.engine)
         is_claude = profile is not None and profile.is_claude
         driver = self._make_driver(profile)
         runtime.driver = driver
         runtime._done_fired = False  # erlaubt erneutes Vault-Log beim nächsten DONE
+
+        # PROJ-56: Kontext-Wiederherstellungs-Strategie je Engine bestimmen.
+        resume_id: str | None = None
+        if is_claude:
+            state.context_status = "mit Kontext"
+        elif driver.supports_self_resume:
+            if state.resume_id:
+                resume_id = state.resume_id
+                state.context_status = "mit Kontext"
+            else:
+                state.context_status = "kontextlos (keine Resume-ID der Engine)"
+        else:
+            restored, trimmed = await self._load_history_capped(state.session_id)
+            if restored:
+                driver.load_history(restored)
+                state.context_status = "mit Kontext (Verlauf gekürzt)" if trimmed else "mit Kontext"
+            else:
+                state.context_status = "kontextlos (kein gespeicherter Verlauf)"
+
         spec = LaunchSpec(
             session_id=state.session_id,
             project_path=state.project_path,
@@ -1570,7 +1662,8 @@ class SessionManager:
             permission_mode=state.permission_mode,
             initial_prompt="",  # Eingabe kommt direkt danach via send_input
             system_prompt_append=state.effective_constitution,
-            resume=is_claude,
+            resume=is_claude or resume_id is not None,
+            resume_id=resume_id,
             settings_json=self._hook_settings() if is_claude else None,
         )
         try:

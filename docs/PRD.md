@@ -73,6 +73,8 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-53 | Buch-Nuggets (native Micro-App: Buch → KI-Kurzform inkl. Contra-Kapitel → Hal) | P1 | Micro-Apps | Planned |
 | PROJ-54 | Fable 5 als wählbares Claude-Modell (temporär, nur Neue-Session-Dialog) | P1 | Engine-Layer / Settings | Planned |
 | PROJ-55 | Session-Kondensierung — Wochen-Sweep alter Sessions in Hal-Knowledge | P1 | Vault / Kuratierung | Planned |
+| PROJ-56 | Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter) | P1 | Engine-Layer / Persistenz | Deployed |
+| PROJ-57 | Engine — OpenCode als Harness (OpenRouter-Modelle über OpenCode statt Direkt-HTTP) | P1 | Engine-Layer / Harness | Planned |
 
 ---
 

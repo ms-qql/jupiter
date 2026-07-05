@@ -56,6 +56,9 @@ class LaunchSpec:
     # Session-skopierte Settings-JSON (PROJ-4): registriert den PreToolUse-Freigabe-Hook.
     # Wird via `--settings` durchgereicht; None = ohne Decision Cards (z. B. in Tests).
     settings_json: str | None = None
+    # PROJ-56: engine-eigene Wiederaufnahme-ID (z. B. Codex' thread_id) für den
+    # kontext-erhaltenden Resume eines oneshot-CLI-Treibers. None = kein Resume-Kontext.
+    resume_id: str | None = None
 
 
 class EngineDriver(ABC):
@@ -97,6 +100,26 @@ class EngineDriver(ABC):
         fortsetzen? Default ``False`` — dann übernimmt der Manager den Resume-Pfad
         (frischer Treiber). Nur oneshot-CLIs mit ``resume_argv_template`` überschreiben das."""
         return False
+
+    @property
+    def resume_id(self) -> str | None:
+        """PROJ-56: Engine-eigene Wiederaufnahme-ID (z. B. Codex' thread_id), sobald der
+        Treiber sie aus dem Strom aufgefangen hat. Der Manager persistiert sie, damit ein
+        Backend-Restart den Kontext-Faden nicht verliert. Default ``None``."""
+        return None
+
+    @property
+    def conversation_history(self) -> list[dict] | None:
+        """PROJ-56: Kanonischer Konversationsverlauf, wenn der Kontext NUR im Treiber lebt
+        (HTTP-Engines ohne serverseitiges Resume, z. B. OpenAI/OpenRouter). Der Manager
+        persistiert ihn bei Turn-Abschluss. Default ``None`` = nichts zu sichern (Engines
+        mit serverseitigem Kontext wie Claude/Codex)."""
+        return None
+
+    def load_history(self, messages: list[dict]) -> None:
+        """PROJ-56: Persistierten Verlauf in einen frisch gebauten Treiber zurückspielen,
+        bevor der nächste Turn läuft. Default: No-op (Treiber ohne In-Memory-Verlauf)."""
+        return None
 
 
 class DeadDriver(EngineDriver):
