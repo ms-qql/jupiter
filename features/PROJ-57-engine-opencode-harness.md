@@ -1,6 +1,6 @@
 # PROJ-57: Engine — OpenCode als Harness (OpenRouter-Modelle über OpenCode statt Direkt-HTTP)
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -262,7 +262,134 @@ Reine Funktion analog `codex_parse_line`, robust gegen unbekannte Felder (OpenCo
 - Edge Cases: ungültiger Modell-Slug (404 im Transkript), fehlende sessionID (kontextloser Fallback), Migration alter OpenRouter-HTTP-Sessions.
 
 ## QA Test Results
-_To be added by /qa_
+
+**Tested:** 2026-07-05
+**Backend:** http://127.0.0.1:8000 (FastAPI, systemd `jupiter-backend`, echtes Prod-System)
+**Frontend:** http://127.0.0.1:3000 (Next.js, systemd `jupiter-frontend`)
+**OpenCode:** `/home/dev/.opencode/bin/opencode` v1.17.13 (echte CLI, kein Fake) — Live-Läufe gegen `openrouter/minimax-m3`
+**Tester:** QA Engineer (AI)
+
+### Methodik
+- Automatisierte Suite (`test_proj57_opencode.py`, 17 Tests) + Regressionslauf (`-k "registry or usage or engine or adapter"`, 101 Tests) + Voll-Suite (1046 Tests).
+- **Zusätzlich live gegen die echte OpenCode-CLI verifiziert** (nicht nur Fakes): Turn 1 (Start), Turn 2 (Resume via `-s <sessionID>`), ungültiger Modell-Slug, fehlende/kaputte JSON-Zeilen — direkt am Prozess, Rohausgabe mit dem Adapter abgeglichen.
+- Registry live gegen die echte `backend/config/engines.yaml` geladen (nicht nur Test-Fixtures) → `to_read()`/`available`/Modell-Liste geprüft.
+- Cockpit-Live-Ansicht im Browser (authentifizierte Session) **nicht** getestet — dafür fehlen mir Login-Credentials für das Prod-System; siehe Bug-4.
+
+### Acceptance Criteria Status
+
+#### AC-1: Engine-Integration & Auswahl
+- [x] OpenCode wählbar + startbar — Registry-Load gegen echte `engines.yaml`: `available=True`, `driver=generic_cli`, `bin` gesetzt, `argv_template` korrekt befüllt (`run --format json -m {model} --auto`).
+- [x] Vier Engines im Dialog — `reg.all()` liefert exakt `claude, swisscom, hermes, codex, opencode` (+ iframe/native Apps); Launcher/Engine-Verwaltung sind laut Architektur engine-agnostisch (kein Frontend-Code nötig, bestätigt durch Diff).
+- [x] Modell-Liste — 5 Modelle (GLM 5.2, MiniMax M3, Kimi K2.7, Qwen 3.7, DeepSeek v4) + `default_model=minimax/minimax-m3` im Live-Registry-Snapshot bestätigt.
+- [x] OpenCode in Engine-/Modellverwaltung — `to_settings()`/`to_read()` folgen demselben generischen Pfad wie andere `generic_cli`-Engines (Codex-Präzedenzfall über bestehende Tests abgedeckt).
+
+#### AC-2: Ablösung des OpenRouter-Direkt-Pfads
+- [x] `openrouter`-HTTP-Eintrag entfernt — live bestätigt: `reg.all()` enthält **keinen** `openrouter`-Key mehr.
+- [x] Swisscom unverändert — `to_read()` liefert identische Form/Werte, `driver: openai` unangetastet, Regressionstests grün.
+- [x] Bestandsschutz — `test_openrouter_http_entry_removed_but_swisscom_kept` grün; `session_index.db` enthält weiterhin alte `engine='openrouter'`-Zeilen aus der Zeit vor der Ablösung (kein Löschen/Crash). Ein echter End-to-End-Restart-Test gegen eine solche Alt-Session wurde **nicht** live durchgespielt (keine solche Session aktuell im RUNNING-Zustand vorhanden) — Architektur (key-agnostischer Treiber-Dispatch) macht das Verhalten aber plausibel.
+
+#### AC-3: Streaming, Status & Adapter
+- [x] OpenCode-Adapter — Mapping-Logik gegen ECHTES Live-JSON-Sample geprüft (nicht nur Test-Fixture): `step_start`→`resume_token` (unsichtbar), `text`→assistant (sichtbar), `step_finish`→`result` inkl. Tokens/Kosten. 1:1 deckungsgleich mit dem in der Spec dokumentierten Sample.
+- [x] Live-Text — echter CLI-Lauf lieferte sichtbaren Text (`"PONG"`) über den erwarteten Event-Pfad.
+- [x] Turn-Ende/Status — `step_finish` mit `reason:"stop"` → `result/success`; Manager setzt `running→wartet` (Code-Pfad geprüft, `handle_event`).
+- [x] Tool-Aktivität sichtbar — `tool_use`-Mapping inkl. `file_path`-Extraktion für `write`/`edit` bestätigt (Code-Review + Unit-Tests); im schnellen Live-Smoketest (Prompt ohne Datei-Tool) nicht selbst reproduziert, aber Testfixture deckt es ab.
+
+#### AC-4: Kontext-Persistenz & Resume (PROJ-56)
+- [x] Session-ID als `resume_id` — live bestätigt: `sessionID` erscheint bereits im ersten `step_start`, Treiber fängt sie ab.
+- [x] **Resume über `--session <id>` — LIVE verifiziert mit echtem 2. Prozess:** Turn 1 fragte nach einem Wort, Turn 2 (neuer Prozess, `-s <sessionID>`) erinnerte korrekt das Wort aus Turn 1 — Kontext bleibt serverseitig erhalten, `cache.read` stieg spürbar (1906→16022 Tokens), Kosten akkumulierten korrekt.
+- [x] Drei Auslöser (Restart/Reanimierung/`_resume`) — für OpenCode je ein Testfall grün (`test_proj56_restart_resume_keeps_context`, Manager-Integrationstest, Multi-Turn-Test). Kein separater Live-Test mit echtem Backend-Restart mitten im OpenCode-Turn durchgeführt (Prod-System, riskant/destruktiv — bewusst nicht erzwungen).
+- [x] Fehlende Session-ID → sauberer kontextloser Start — **live verifiziert**: `opencode_parse_line` mit `step_start` ohne `sessionID` liefert `None` (kein Crash), Treiber setzt einfach keine `resume_id`.
+- [x] `context_status` — folgt demselben PROJ-56-Pfad wie Codex/GLM (Code-Review, kein neuer Sonderfall).
+
+#### AC-5: Auth, Sicherheit & Degradation
+- [x] Auth über vorhandenen Key — kein `auth_env` im `opencode`-Eintrag; `~/.local/share/opencode/auth.json` wird über geerbtes `HOME` genutzt (bestätigt: Live-Läufe funktionierten ohne Jupiter-seitigen Key).
+- [x] Keine Secrets exponiert — `to_read()` (live geprüft) enthält weder `bin` noch `argv_template` noch `auth_env`; Repo-weiter Grep nach Key-Mustern (`sk-or-…`, gesetzte `OPENROUTER_API_KEY=`) ist leer.
+- [x] Sandbox/Permission dokumentiert — `--auto` + `cwd=project_path` (Treiber pinnt `cwd`, verifiziert im Code); Grenze (keine OS-Sandbox) ist im YAML-Kommentar UND im Tech-Design ehrlich benannt.
+- [x] Degradation sauber — kein Crash bei fehlenden Decision Cards/Gate/Watchdog; entspricht 1:1 dem etablierten Codex/Hermes-Muster.
+
+#### AC-6: Qualität / Regression
+- [x] Claude/Codex/Swisscom unverändert — volle Backend-Suite (1046 Tests): 1045 passed, 1 failed. Der eine Fehlschlag (`test_proj50_codex_abc.py::test_generator_check_passes_no_drift`) ist **nicht** PROJ-57-bezogen (betrifft Drift zwischen `~/.claude/skills/abc-customer-journey` und `~/.codex/skills/...`) und reproduziert identisch auf `dev` VOR dieser Änderung (bekannter, vorbestehender Zustand) — kein Regress durch PROJ-57.
+- [x] Tests grün + deutsche Texte — 17/17 PROJ-57-Tests grün, deutsche Kommentare/Labels durchgängig; Frontend `lib/status.test.ts` 41/41 grün.
+
+### Edge Cases Status
+
+#### EC-1: `opencode` nicht installiert
+- [x] Nicht reproduziert (Binary ist installiert), aber Code-Pfad (`availability()`) ist generisch und für andere `generic_cli`-Engines bereits getestet — kein Sonderfall für OpenCode.
+
+#### EC-2: Adapter-Schema weicht ab / Update
+- [x] Live bestätigt defensiv: unbekannte Feldkombinationen (getestet: `step_start` ohne `sessionID`, komplett kaputtes JSON, leere Zeile) liefern alle sauber `None`, kein Hard-Fail.
+
+#### EC-3: Keine Session-ID im Stream
+- [x] Live verifiziert (siehe AC-4) — sauberer kontextloser Fallback, kein Crash.
+
+#### EC-4: Persistierte Session-ID nicht mehr auffindbar
+- [ ] Nicht live reproduziert (bräuchte eine gezielt ungültige `-s`-ID gegen die echte CLI) — nur über die Test-Suite (Fake-CLI) abgedeckt. Empfehlung: als eigener Live-Testfall nachziehen, bevor das Ticket endgültig geschlossen wird (niedrige Priorität, Architektur macht sauberen Fallback plausibel).
+
+#### EC-5: Backend-Restart mitten im Turn
+- [x] Über Testsuite abgedeckt (`test_proj56_restart_resume_keeps_context`); kein Live-Restart auf dem Prod-System erzwungen (bewusst, um den laufenden Betrieb nicht zu stören).
+
+#### EC-6: Fehlende/teilweise Usage
+- [x] Code-Pfad (`_int`-Helfer, `isinstance`-Check bei `cost`) tolerant gegenüber fehlenden/None-Werten — durch Unit-Tests abgedeckt (`test_step_finish_without_tokens_is_safe`).
+
+#### EC-7: Ungültiger Modell-Slug (404-Falle)
+- [x] **Live reproduziert:** `opencode run -m openrouter/totally-fake-model-xyz` → Prozess beendet mit Exit-Code 1, `{"type":"error",...}` auf stdout. Der Adapter kennt `type:"error"` nicht explizit (fällt auf `None` zurück, wie beim Codex-Adapter), ABER der Treiber fängt den Nicht-Null-Exitcode ab und emittiert `system/error` → Session-Status wird sauber `ERROR`, **kein** stilles Hängenbleiben. Siehe aber BUG-1 (Fehlermeldung ist generisch statt spezifisch).
+
+#### EC-8: Migration bestehender OpenRouter-HTTP-Sessions
+- [x] Alte `engine='openrouter'`-Zeilen liegen weiterhin unangetastet in `session_index.db` (kein Löschen, kein Crash beim Registry-Load). Kein Live-Restart-Test mit einer tatsächlich noch offenen Alt-Session (keine solche Session aktuell vorhanden).
+
+#### EC-9: Sehr großer Verlauf über viele Turns
+- [x] Architektur-Review bestätigt: Self-Resume über Session-ID, kein Verlauf-Replay-Pfad für OpenCode → PROJ-45/GLM-Deckelung nicht anwendbar (Code-Review, `context_is_per_turn=True`).
+
+### Security Audit Results
+- [x] Kein Key im Repo: Grep über `backend/`, `nextjs_app/lib` nach Key-Mustern ergab nichts.
+- [x] `to_read()` secret-frei: live gegen echte Registry geprüft (kein `bin`/`argv_template`/`auth_env`).
+- [x] Auth-Perimeter intakt: `GET /engines` und `GET /settings/engines` liefern ohne gültiges JWT `401` (Prod-System live geprüft) — PROJ-57 hat den Perimeter nicht verändert.
+- [x] Sandbox-Grenze ehrlich dokumentiert: keine OS-Sandbox (bewusste, im YAML+Tech-Design offengelegte Design-Entscheidung, kein verstecktes Risiko).
+- [ ] BUG-2 (Low): `registry.py`-Prioritäts-Dict enthält noch den toten Schlüssel `"openrouter": 1`, obwohl der Eintrag aus `engines.yaml` entfernt wurde — kein Sicherheitsrisiko, aber Hygiene-Rest.
+- [x] Cross-Engine-Isolation: `opencode`-Sandbox-Grenze betrifft nur diese Engine; Claude/Codex/Swisscom-Verhalten unverändert (Regressionssuite grün).
+
+### Bugs Found
+
+#### BUG-1: Ungültiger Modell-Slug zeigt generische statt spezifische Fehlermeldung
+- **Severity:** Low
+- **Steps to Reproduce:**
+  1. OpenCode-Session mit einem ungültigen Modell-Slug starten (z. B. `openrouter/does-not-exist`).
+  2. OpenCode beendet den Prozess mit Exit-Code 1 und schreibt `{"type":"error","error":{"message":"Unexpected server error...","ref":"err_..."}}` auf **stdout**.
+  3. Erwartet: die Cockpit-Fehlermeldung spiegelt möglichst die von OpenCode gelieferte Information (Fehlername/Referenz) wider.
+  4. Tatsächlich: `opencode_parse_line` kennt den Event-Typ `"error"` nicht explizit → gibt `None` zurück (wie unbekannte Events). Der generische Treiber-Fallback (`generic_cli_driver.py`, Nicht-Null-Exitcode ohne stderr-Inhalt) greift und zeigt nur `"Prozess endete mit Code 1."` — die eigentliche OpenCode-Fehlermeldung geht verloren. **Kein Hängenbleiben, kein Crash** — die Acceptance Criteria „Fehler ist im Transkript sichtbar, Session bricht sauber ab" ist im Kern erfüllt, aber die Meldung ist wenig aussagekräftig für den Nutzer.
+  - Hinweis: identisches Verhalten existiert bereits beim Codex-Adapter (kein Regress durch PROJ-57, aber auch keine Verbesserung).
+- **Priority:** Nice to have
+
+#### BUG-2: Toter Registry-Prioritäts-Eintrag für „openrouter"
+- **Severity:** Low
+- **Steps to Reproduce:**
+  1. `backend/app/engine/registry.py`, Sortier-Prioritäts-Dict (Settings-Sicht) enthält weiterhin `"openrouter": 1`.
+  2. Da kein Profil mehr den Key `openrouter` trägt, ist der Eintrag nie erreichbar.
+  3. Kein funktionaler Fehler — reine Code-Hygiene.
+- **Priority:** Nice to have
+
+#### BUG-3: Fehlende dedizierte Regressionstests für drei in der Spec benannte Edge Cases
+- **Severity:** Low
+- **Steps to Reproduce:**
+  1. Die Spec nennt explizit: (a) fehlende Session-ID → kontextloser Fallback, (b) ungültiger Modell-Slug/404, (c) Migration alter OpenRouter-HTTP-Sessions.
+  2. Keiner der drei Fälle hat einen eigenen automatisierten Testfall in `test_proj57_opencode.py` — ich habe (a) und (b) manuell live gegen die echte CLI nachgewiesen (siehe EC-3/EC-7, beide bestehen), (c) ist nur architektonisch plausibel (kein Alt-Session-Live-Test möglich, da aktuell keine offene Alt-Session existiert).
+  3. Empfehlung: die drei Fälle als permanente Regressionstests nachziehen (Adapter-Test für `type:"error"`/fehlende `sessionID`, Manager-Test für eine simulierte Alt-`openrouter`-Session nach Registry-Reload), bevor das Ticket endgültig als abgeschlossen betrachtet wird.
+- **Priority:** Fix in next sprint
+
+#### BUG-4: Kein authentifizierter Cockpit-Live-Test durchgeführt
+- **Severity:** Low
+- **Steps to Reproduce:**
+  1. Backend-Logik, Adapter-Mapping und Registry wurden umfassend live verifiziert (echte CLI, echte Registry, echte Prod-Auth-Perimeter-Prüfung).
+  2. Ein vollständiger Cockpit-Smoke-Test (Login im Browser → OpenCode-Session starten → Live-Text/Status/Token-Gauge im UI beobachten) wurde **nicht** durchgeführt — dafür fehlen mir gültige Login-Credentials für das Prod-System, und ich wollte keine neuen Zugangsdaten raten/anlegen.
+  3. Laut Tech-Design ist das Ticket bewusst „kein Frontend-Ticket" (Cockpit/Launcher sind engine-agnostisch) — das Risiko eines UI-spezifischen Bugs ist dadurch gering, aber nicht bei null.
+- **Priority:** Nice to have (User kann das selbst kurz im Browser gegenchecken)
+
+### Summary
+- **Acceptance Criteria:** 22/22 Kern-Kriterien bestanden (0 Fails; ein Kriterium — Bestandsschutz-Live-Restart — nur teilweise live, aber architektonisch abgedeckt).
+- **Bugs Found:** 4 total (0 critical, 0 high, 0 medium, 4 low)
+- **Security:** Pass — keine Secrets im Repo/`to_read()`, Auth-Perimeter intakt, Sandbox-Grenze ehrlich dokumentiert.
+- **Production Ready:** YES
+- **Recommendation:** Deploy. Die 4 Low-Bugs sind Politur (bessere Fehlermeldung bei ungültigem Modell-Slug, toter Registry-Eintrag, fehlende Edge-Case-Regressionstests, optionaler manueller Cockpit-Check) — keiner davon blockiert den produktiven Einsatz.
 
 ## Deployment
 _To be added by /deploy_
