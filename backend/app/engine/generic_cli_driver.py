@@ -209,9 +209,14 @@ class GenericCliDriver(EngineDriver):
 
     async def stop(self) -> None:
         proc = self._proc
-        if proc is None:
-            return
         self._stopping = True
+        if proc is None:
+            # PROJ-59: Self-Resume-Zustand (oneshot-CLI zwischen Turns nach Reanimierung/
+            # Neustart) — kein Prozess gespawnt, aber die Session gilt als aktiv/wartend.
+            # Ohne dieses Event bleibt sie für immer in „Aktive Sessions" hängen, weil der
+            # Manager nie ein terminales Event bekommt.
+            await self._emit(StreamEvent("system", "closed", {}))
+            return
         try:
             if proc.stdin is not None and not proc.stdin.is_closing():
                 proc.stdin.close()
