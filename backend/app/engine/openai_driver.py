@@ -61,6 +61,18 @@ class OpenAIDriver(EngineDriver):
     def is_alive(self) -> bool:
         return self._alive
 
+    @property
+    def conversation_history(self) -> list[dict] | None:
+        """PROJ-56: der Verlauf lebt NUR hier (kein serverseitiges Resume) → der Manager
+        persistiert ihn bei Turn-Abschluss, damit er einen Treiber-Neubau überlebt."""
+        return self._messages
+
+    def load_history(self, messages: list[dict]) -> None:
+        """PROJ-56: persistierten Verlauf in den frisch gebauten Treiber zurückspielen.
+        Wird VOR ``start`` aufgerufen; ``start`` überspringt dann das erneute Anhängen des
+        System-Prompts, damit keine Dublette entsteht."""
+        self._messages = list(messages)
+
     async def start(self, spec: LaunchSpec, on_event: EventHandler) -> None:
         self._spec = spec
         self._on = on_event
@@ -71,7 +83,9 @@ class OpenAIDriver(EngineDriver):
                 {"session_id": spec.session_id, "model": spec.model, "apiKeySource": "api"},
             )
         )
-        if spec.system_prompt_append:
+        # PROJ-56: nur beim echten Erststart (leerer Verlauf) den System-Prompt anhängen —
+        # bei einem Resume mit geladenem Verlauf steckt er schon drin (keine Dublette).
+        if spec.system_prompt_append and not self._messages:
             self._messages.append({"role": "system", "content": spec.system_prompt_append})
         if spec.initial_prompt:
             await self._turn(spec.initial_prompt)

@@ -1,8 +1,8 @@
 # PROJ-56: Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter)
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-07-04
-**Last Updated:** 2026-07-04
+**Last Updated:** 2026-07-05
 
 ## Problem / Motivation
 Claude-Sessions behalten ihren Kontext zuverlässig, weil der `claude`-Prozess langlebig ist und `claude --resume` echten serverseitigen Konversationskontext lädt. **Codex** (generic-CLI, oneshot) und **GLM 5.2** (Modell `z-ai/glm-5.2` der Engine `openrouter`, HTTP-`OpenAIDriver`) verlieren dagegen ihren Kontext: Die Sessions „brechen ab" und der Agent vergisst, was vorher besprochen wurde.
@@ -147,6 +147,33 @@ Kein MinIO (alles Text). Keine RLS-Sonderfälle über den bestehenden Jupiter-Ra
 3. GLM-Pfad: Verlauf bei Turn-Abschluss persistieren + Replay beim Treiber-Neubau (+ Deckel).
 4. Beobachtbarkeit: `context_status` setzen + in Session-Antwort ausspielen.
 5. Tests je Auslöser (Restart · Reanimierung · `_resume`) × je Engine (Codex, GLM) + Claude-Regressionscheck.
+
+## Implementation Notes (Backend, 2026-07-05)
+Umgesetzt auf `dev` (backend-only, keine neuen Pakete). Wichtige Abweichung zur Design-Annahme: Der PROJ-14-Store ist **SQLite** (host-nativ, `session_index.db`), nicht Postgres — Single-Owner-Jupiter, daher kein RLS/mandant. Umgesetzt entlang des Design-Plans:
+
+**1. Persistenz (`backend/app/db/session_index.py`)**
+- Zwei Nachzügler-Spalten auf `session_index`: `resume_id`, `context_status` (via `_MIGRATIONS` + `COLUMNS` + `SCHEMA_SQL` — idempotentes ADD COLUMN).
+- Neuer **`session_context`**-Store (Tabelle in derselben DB-Datei): `save_context(session_id, messages_json)` / `load_context(session_id)`; `delete()` räumt den Verlauf mit ab. No-op-Varianten im `NullSessionIndexRepository`. Repo-Protocol erweitert.
+
+**2. Treiber-Interface (`base.py`)**
+- `EngineDriver`: neue Properties `resume_id` (default None), `conversation_history` (default None), Methode `load_history()` (default No-op). `LaunchSpec.resume_id` ergänzt.
+
+**3. Codex (`generic_cli_driver.py`)**
+- `resume_id`-Property (spiegelt `_resume_id`).
+- `start()` ist jetzt resume-aware: `spec.resume` + `supports_self_resume` + `spec.resume_id` → **primt** nur die ID und spawnt KEINEN frischen Thread; der nächste `send_input` nimmt den Codex-Thread über das Resume-argv auf. Fehlt die ID → bewusster Frischstart (kontextlos).
+
+**4. GLM/OpenRouter (`openai_driver.py`)**
+- `conversation_history` exponiert `_messages`; `load_history()` spielt persistierten Verlauf zurück; `start()` hängt den System-Prompt nur bei leerem Verlauf an → **keine Dublette** beim Resume.
+
+**5. Manager (`manager.py`)**
+- `SessionState`: `resume_id`, `context_status` (+ in `to_read()`/`_row()`/`_state_from_row()`; `_row` synct eine frisch aufgefangene Treiber-`resume_id` in den State).
+- `_persist()`: sichert `conversation_history` **nur bei SETTLED-Status** (`WAITING`/`DONE`) → nie ein halber Turn. Helfer `_safe_save_context()`.
+- **`_resume()` engine-bewusst**: Claude = nativer `--resume` (unverändert) · Codex = persistierte `resume_id` durchreichen · GLM = persistierten Verlauf gedeckelt (`_cap_history`, `openai_resume_max_messages=40`) via `load_history` replayen. Setzt `context_status` ("mit Kontext" / "…(Verlauf gekürzt)" / "kontextlos (<Grund>)").
+- Config: `openai_resume_max_messages` (Cap gegen Overspend, PROJ-45-Sorge).
+
+**Tests:** `backend/tests/test_proj56_context_persistence.py` — 13 Tests, alle grün (Store-Roundtrip + Migration, Codex-Primen mit/ohne ID, OpenAI load_history/kein Doppel-System, `_resume` je Engine mit/ohne Kontext, `_persist` nur settled, `_cap_history`). Volle Suite: **1024 passed** (der eine Fehlschlag `test_proj50_codex_abc::…no_drift` ist ein pre-existing Drift der `~/.codex`-Skill-Spiegelung außerhalb des Repos, unabhängig von PROJ-56).
+
+**Offen für QA:** reale End-to-End-Prüfung mit echter Codex-CLI + echtem OpenRouter/GLM-Key gegen die drei Auslöser (Restart · Reanimierung · `_resume`); Edge Cases „Thread serverseitig abgelaufen" und „sehr großer Verlauf" (Cap greift, Verdichtung bleibt PROJ-5/19).
 
 ## QA Test Results
 _To be added by /qa_

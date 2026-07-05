@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -57,6 +58,12 @@ COLUMNS: tuple[str, ...] = (
     # PROJ-33: Zeitpunkt eines geordneten Drains (Shutdown). Gesetzt = bewusst beendet
     # → Auto-Resume nach Neustart; NULL = Crash/unerwartet → kein Auto-Resume.
     "drained_at",
+    # PROJ-56: engine-eigene Wiederaufnahme-ID (z. B. Codex' thread_id). Klein, selten
+    # geändert → passt in den Metadaten-Upsert; überlebt so den Backend-Restart.
+    "resume_id",
+    # PROJ-56: Ergebnis der letzten Kontext-Wiederherstellung ("mit Kontext" /
+    # "kontextlos (Grund)") — rein informativ fürs Cockpit.
+    "context_status",
 )
 
 SCHEMA_SQL = """
@@ -84,9 +91,22 @@ CREATE TABLE IF NOT EXISTS session_index (
     abc_phase_reached TEXT,
     abc_feature       TEXT,
     recovery_dismissed INTEGER DEFAULT 0,
-    drained_at         TEXT
+    drained_at         TEXT,
+    resume_id          TEXT,
+    context_status     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
+
+-- PROJ-56: Kanonischer Konversationsverlauf für Engines OHNE serverseitiges Resume
+-- (OpenAI/OpenRouter, z. B. GLM 5.2). Getrennt vom heißen Metadaten-Upsert, weil
+-- der Verlauf groß werden kann und nur bei Turn-Abschluss geschrieben wird. Wird beim
+-- Treiber-Neubau zurückgespielt, damit der Agent den Faden behält. Bewusst getrennt
+-- vom Vault-Log (Historie, ggf. mit Reload-Dopplungen) — dies ist die Replay-Kopie.
+CREATE TABLE IF NOT EXISTS session_context (
+    session_id  TEXT PRIMARY KEY,
+    messages    TEXT NOT NULL,
+    updated_at  TEXT
+);
 """
 
 # Nachzügler-Spalten (für bereits bestehende DBs ohne diese Spalte). ``CREATE TABLE
@@ -98,6 +118,8 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("engine", "TEXT DEFAULT 'claude'"),  # PROJ-19 (#28)
     ("cache_read_tokens", "INTEGER DEFAULT 0"),  # PROJ-19 (#27)
     ("cache_creation_tokens", "INTEGER DEFAULT 0"),  # PROJ-19 (#27)
+    ("resume_id", "TEXT"),  # PROJ-56
+    ("context_status", "TEXT"),  # PROJ-56
 )
 
 
@@ -116,7 +138,14 @@ class SessionIndexRepository(Protocol):
 
     async def delete(self, session_id: str) -> None:
         """Eine Session aus dem Live-Index entfernen (PROJ-21). Idempotent —
-        eine unbekannte ID ist kein Fehler. Das Vault-Log bleibt unberührt."""
+        eine unbekannte ID ist kein Fehler. Das Vault-Log bleibt unberührt.
+        PROJ-56: entfernt auch den zugehörigen Konversationsverlauf."""
+
+    async def save_context(self, session_id: str, messages_json: str) -> None:
+        """PROJ-56: Kanonischen Konversationsverlauf (JSON) speichern/ersetzen."""
+
+    async def load_context(self, session_id: str) -> str | None:
+        """PROJ-56: Gespeicherten Konversationsverlauf (JSON) lesen; None wenn keiner."""
 
     async def close(self) -> None:
         """Ressourcen freigeben."""
@@ -135,6 +164,12 @@ class NullSessionIndexRepository:
         return []
 
     async def delete(self, session_id: str) -> None:  # noqa: D401 - no-op
+        return None
+
+    async def save_context(self, session_id: str, messages_json: str) -> None:
+        return None
+
+    async def load_context(self, session_id: str) -> str | None:
         return None
 
     async def close(self) -> None:
@@ -193,6 +228,26 @@ class SqliteSessionIndexRepository:
             conn.execute(
                 "DELETE FROM session_index WHERE session_id = ?", (session_id,)
             )
+            # PROJ-56: Verlauf mitentfernen (kein verwaister Kontext nach Löschung).
+            conn.execute(
+                "DELETE FROM session_context WHERE session_id = ?", (session_id,)
+            )
+
+    def _save_context_sync(self, session_id: str, messages_json: str, updated_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO session_context (session_id, messages, updated_at) "
+                "VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
+                "messages=excluded.messages, updated_at=excluded.updated_at",
+                (session_id, messages_json, updated_at),
+            )
+
+    def _load_context_sync(self, session_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT messages FROM session_context WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return row["messages"] if row else None
 
     # --- Async-Fassade -----------------------------------------------------
 
@@ -207,6 +262,13 @@ class SqliteSessionIndexRepository:
 
     async def delete(self, session_id: str) -> None:
         await asyncio.to_thread(self._delete_sync, session_id)
+
+    async def save_context(self, session_id: str, messages_json: str) -> None:
+        updated_at = datetime.now(timezone.utc).isoformat()
+        await asyncio.to_thread(self._save_context_sync, session_id, messages_json, updated_at)
+
+    async def load_context(self, session_id: str) -> str | None:
+        return await asyncio.to_thread(self._load_context_sync, session_id)
 
     async def close(self) -> None:
         # Verbindungen sind kurzlebig (per-Operation) → nichts zu schließen.

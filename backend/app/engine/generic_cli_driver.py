@@ -99,9 +99,23 @@ class GenericCliDriver(EngineDriver):
         ``claude --resume``-Pfad (frischer, kontextloser Treiber) auslösen."""
         return bool(self.profile.resume_argv_template)
 
+    @property
+    def resume_id(self) -> str | None:
+        """PROJ-56: aufgefangene Wiederaufnahme-ID (z. B. Codex' thread_id) — der Manager
+        persistiert sie, damit sie einen Backend-Restart überlebt."""
+        return self._resume_id
+
     async def start(self, spec: LaunchSpec, on_event: EventHandler) -> None:
         self._on = on_event
         self._spec = spec
+        # PROJ-56: kontext-erhaltender Resume nach Treiber-Neubau (Restart/Reanimierung).
+        # Für eine self-resume-fähige oneshot-CLI mit bekannter Resume-ID KEINEN frischen
+        # Thread spawnen — nur die ID vormerken; der nächste ``send_input`` nimmt über das
+        # Resume-argv den bestehenden serverseitigen Kontext wieder auf. Fehlt die ID,
+        # fällt es bewusst auf den normalen (kontextlosen) Frischstart zurück.
+        if spec.resume and self.supports_self_resume and spec.resume_id:
+            self._resume_id = spec.resume_id
+            return
         # Engine-agnostischer Init (setzt Status → running), bevor der Strom kommt.
         await self._emit(
             StreamEvent("system", "init", {"session_id": spec.session_id, "model": spec.model})
