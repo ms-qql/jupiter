@@ -211,7 +211,9 @@ class Settings(BaseSettings):
     # bisherige Fallback (geschätzt/manuell/n/v) — keine falsche Präzision.
     provider_budget_claude_cli_enabled: bool = True
     provider_budget_codex_rollout_enabled: bool = True
+    provider_budget_opencode_api_enabled: bool = True
     codex_sessions_dir: str = str(Path.home() / ".codex" / "sessions")
+    opencode_auth_path: str = str(Path.home() / ".local" / "share" / "opencode" / "auth.json")
     # Optionale Fallback-Quoten für lokale Schätzung. 0 = unbekannt → UI zeigt n/v
     # statt erfundener Prozentwerte. Live-Quelle ist provider_budgets.yaml (UI-editierbar);
     # diese env-Felder bleiben als letzter Fallback, wenn kein Store gesetzt ist (Tests).
@@ -219,6 +221,10 @@ class Settings(BaseSettings):
     provider_budget_claude_week_tokens: int = 0
     provider_budget_codex_5h_tokens: int = 0
     provider_budget_codex_week_tokens: int = 0
+    # OpenCode nutzt OpenRouter (pay-as-you-go) — keine Token-Quota, sondern USD-Credits.
+    # Fallback-Quoten bleiben 0; die Live-Probe liest die echte Credit-Bilanz via API.
+    provider_budget_opencode_5h_tokens: int = 0
+    provider_budget_opencode_week_tokens: int = 0
     # Datei mit den UI-editierbaren Schätz-Quoten (live, mtime-geprüft).
     provider_budgets_config_path: str = _DEFAULT_PROVIDER_BUDGETS_PATH
 

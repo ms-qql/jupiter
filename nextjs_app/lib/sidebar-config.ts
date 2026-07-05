@@ -16,6 +16,7 @@ import {
   PenToolIcon,
   RadioIcon,
   ServerIcon,
+  TerminalIcon,
   WavesIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -112,6 +113,14 @@ export const SIDEBAR_ITEMS: SidebarItemDef[] = [
     defaultVisible: true,
     defaultOrder: 1,
   },
+  {
+    key: budgetProviderItemKey("opencode"),
+    label: "OpenCode-Verbrauch",
+    icon: TerminalIcon,
+    section: "budget",
+    defaultVisible: true,
+    defaultOrder: 2,
+  },
 ];
 
 export function sectionLabel(id: SidebarSectionId): string {
@@ -196,7 +205,7 @@ export function microAppItemDef(
 
 // --- PROJ-52: Verbrauchsanzeige je Provider -------------------------------
 
-export function budgetProviderItemKey(provider: "claude" | "codex"): string {
+export function budgetProviderItemKey(provider: "claude" | "codex" | "opencode"): string {
   return `budget:${provider}`;
 }
 

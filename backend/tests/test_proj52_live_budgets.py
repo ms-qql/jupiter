@@ -1,4 +1,4 @@
-"""PROJ-52 Iteration 2 — echte Live-Budgetwerte (Claude `/usage`, Codex-Rollout)."""
+"""PROJ-52 Iteration 2 — echte Live-Budgetwerte (Claude `/usage`, Codex-Rollout, OpenRouter-API)."""
 from __future__ import annotations
 
 import json
@@ -9,9 +9,11 @@ import pytest
 from app.engine.provider_budget_live import (
     CodexRolloutProbe,
     LiveWindow,
+    OpenRouterUsageProbe,
     latest_rollout_file,
     parse_claude_usage,
     parse_codex_rate_limits,
+    parse_openrouter_credits,
     read_codex_rate_limits,
 )
 from app.engine.usage import ProviderBudgetService
@@ -159,6 +161,8 @@ class _Cfg:
     provider_budget_claude_week_tokens = 0
     provider_budget_codex_5h_tokens = 0
     provider_budget_codex_week_tokens = 0
+    provider_budget_opencode_5h_tokens = 0
+    provider_budget_opencode_week_tokens = 0
 
 
 class _FixedClock(ProviderBudgetService):
@@ -306,3 +310,74 @@ def test_live_window_exposes_no_secret_fields() -> None:
         "reset_at", "quality", "source", "updated_at", "error",
     }
     assert win["used_tokens"] is None and win["limit_tokens"] is None
+
+
+# --------------------------------------------------------------------- OpenRouter
+
+OPENROUTER_CREDITS = {"data": {"total_credits": 10, "total_usage": 7.406872859}}
+OPENROUTER_KEY = {
+    "data": {
+        "usage_daily": 2.846503629,
+        "usage_weekly": 2.978055649,
+        "usage_monthly": 2.949939249,
+    }
+}
+
+
+def test_parse_openrouter_credits_basic() -> None:
+    out = parse_openrouter_credits(OPENROUTER_CREDITS, OPENROUTER_KEY, NOW)
+    assert set(out) == {"5h", "week"}
+    assert out["5h"].used_pct == 74.1  # 7.41 / 10 * 100
+    assert out["week"].used_pct == 29.8  # 2.98 / 10 * 100
+    assert out["5h"].reset_at is None  # kein Reset bei pay-as-you-go
+    assert out["week"].reset_at is None
+    assert out["5h"].source == "openrouter_api:credits"
+
+
+def test_parse_openrouter_credits_zero_balance_returns_empty() -> None:
+    credits = {"data": {"total_credits": 0, "total_usage": 0}}
+    assert parse_openrouter_credits(credits, OPENROUTER_KEY, NOW) == {}
+
+
+def test_parse_openrouter_credits_missing_data_field_uses_root() -> None:
+    # Fallback: API liefert die Felder direkt im Root statt unter "data".
+    credits = {"total_credits": 100, "total_usage": 25.0}
+    key_info = {"usage_weekly": 10.0}
+    out = parse_openrouter_credits(credits, key_info, NOW)
+    assert out["5h"].used_pct == 25.0
+    assert out["week"].used_pct == 10.0
+
+
+@pytest.mark.asyncio
+async def test_opencode_live_window_no_reset_shows_kein_reset(tmp_path) -> None:
+    """OpenCode-Live-Werte ohne reset_at → reset_at=None → Frontend zeigt „kein Reset"."""
+    probes = {
+        "opencode": _probe(
+            {
+                "5h": LiveWindow(74.1, None, "openrouter_api:credits"),
+                "week": LiveWindow(29.8, None, "openrouter_api:credits"),
+            }
+        ),
+    }
+    svc = _FixedClock(
+        _FakeRepo(), registry=_FakeRegistry(), cfg=_Cfg(), live_probes=probes
+    )
+    snap = ProviderBudgetSnapshot.model_validate(await svc.snapshot())
+    opencode = next(p for p in snap.providers if p.provider == "opencode")
+    w5h = next(w for w in opencode.windows if w.window == "5h")
+    week = next(w for w in opencode.windows if w.window == "week")
+    assert w5h.quality == "live"
+    assert w5h.used_pct == 74.1
+    assert w5h.reset_at is None  # kein Reset bei pay-as-you-go
+    assert w5h.label == "Guthaben"  # provider-spezifisches Label
+    assert week.label == "Woche"
+
+
+@pytest.mark.asyncio
+async def test_opencode_probe_disabled_returns_empty() -> None:
+    class _CfgDisabled:
+        provider_budget_opencode_api_enabled = False
+        provider_budget_timeout_seconds = 5.0
+        opencode_auth_path = "/nonexistent"
+
+    assert await OpenRouterUsageProbe(cfg=_CfgDisabled())(NOW) == {}

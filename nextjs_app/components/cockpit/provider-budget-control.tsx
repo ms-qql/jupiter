@@ -20,12 +20,20 @@ import {
 } from "@/lib/api";
 import type { ProviderBudgetLimits, ProviderBudgetSetting } from "@/lib/types";
 
-type PctKey = "claude_5h_pct" | "claude_week_pct" | "codex_5h_pct" | "codex_week_pct";
+type PctKey =
+  | "claude_5h_pct"
+  | "claude_week_pct"
+  | "codex_5h_pct"
+  | "codex_week_pct"
+  | "opencode_5h_pct"
+  | "opencode_week_pct";
 type ResetKey =
   | "claude_5h_reset_at"
   | "claude_week_reset_at"
   | "codex_5h_reset_at"
-  | "codex_week_reset_at";
+  | "codex_week_reset_at"
+  | "opencode_5h_reset_at"
+  | "opencode_week_reset_at";
 
 const PROVIDERS: {
   name: string;
@@ -43,6 +51,13 @@ const PROVIDERS: {
     windows: [
       { label: "5h-Fenster", pctKey: "codex_5h_pct", resetKey: "codex_5h_reset_at" },
       { label: "Wochen-Fenster", pctKey: "codex_week_pct", resetKey: "codex_week_reset_at" },
+    ],
+  },
+  {
+    name: "OpenCode",
+    windows: [
+      { label: "Guthaben", pctKey: "opencode_5h_pct", resetKey: "opencode_5h_reset_at" },
+      { label: "Wochen-Fenster", pctKey: "opencode_week_pct", resetKey: "opencode_week_reset_at" },
     ],
   },
 ];
@@ -170,6 +185,10 @@ function extractLimits(s: ProviderBudgetSetting): ProviderBudgetLimits {
     codex_5h_reset_at: s.codex_5h_reset_at,
     codex_week_pct: s.codex_week_pct,
     codex_week_reset_at: s.codex_week_reset_at,
+    opencode_5h_pct: s.opencode_5h_pct,
+    opencode_5h_reset_at: s.opencode_5h_reset_at,
+    opencode_week_pct: s.opencode_week_pct,
+    opencode_week_reset_at: s.opencode_week_reset_at,
   };
 }
 

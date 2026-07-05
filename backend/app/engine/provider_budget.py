@@ -31,12 +31,16 @@ _PCT_FIELDS: tuple[str, ...] = (
     "claude_week_pct",
     "codex_5h_pct",
     "codex_week_pct",
+    "opencode_5h_pct",
+    "opencode_week_pct",
 )
 _RESET_FIELDS: tuple[str, ...] = (
     "claude_5h_reset_at",
     "claude_week_reset_at",
     "codex_5h_reset_at",
     "codex_week_reset_at",
+    "opencode_5h_reset_at",
+    "opencode_week_reset_at",
 )
 
 # Eingebauter Default: alles leer → ehrliches „n/v", bis der Nutzer reale Zahlen einträgt.

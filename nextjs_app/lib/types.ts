@@ -475,6 +475,10 @@ export interface ProviderBudgetLimits {
   codex_5h_reset_at: string | null;
   codex_week_pct: number | null;
   codex_week_reset_at: string | null;
+  opencode_5h_pct: number | null;
+  opencode_5h_reset_at: string | null;
+  opencode_week_pct: number | null;
+  opencode_week_reset_at: string | null;
 }
 
 /** Gesamte Budget-Config (GET /settings/provider-budgets) — Werte + Herkunft/Warnung. */

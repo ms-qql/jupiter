@@ -250,6 +250,7 @@ class ProviderBudgetService:
     PROVIDERS = (
         ("claude", "Claude"),
         ("codex", "Codex"),
+        ("opencode", "OpenCode"),
     )
 
     def __init__(
@@ -357,11 +358,22 @@ class ProviderBudgetService:
             return "unavailable", reason or "Provider ist nicht verfügbar."
         return "available", None
 
+    # Provider-spezifische Fenster-Labels. Die Keys bleiben "5h"/"week" (Frontend-Typ,
+    # Probe-Rückgabewerte), aber das Label steuert die Anzeige. OpenCode/OpenRouter ist
+    # pay-as-you-go → "Guthaben" + "Woche" statt "5h" + "Woche".
+    _WINDOW_LABELS: dict[str, tuple[str, str]] = {
+        "opencode": ("Guthaben", "Woche"),
+    }
+    _DEFAULT_LABELS: tuple[str, str] = ("5h", "Woche")
+
     def _windows(self, provider: str) -> list[_WindowSpec]:
         limit_5h, limit_week = self._limits_for(provider)
+        label_5h, label_week = self._WINDOW_LABELS.get(
+            provider, self._DEFAULT_LABELS
+        )
         return [
-            _WindowSpec("5h", "5h", timedelta(hours=5), limit_5h),
-            _WindowSpec("week", "Woche", timedelta(days=7), limit_week),
+            _WindowSpec("5h", label_5h, timedelta(hours=5), limit_5h),
+            _WindowSpec("week", label_week, timedelta(days=7), limit_week),
         ]
 
     def _limits_for(self, provider: str) -> tuple[int, int]:
@@ -432,21 +444,25 @@ class ProviderBudgetService:
         }
 
     def _live_window(self, spec: _WindowSpec, now: datetime, live_window) -> dict:
-        """Fenster aus echtem providerseitigem Live-Wert (Claude-CLI / Codex-Rollout).
+        """Fenster aus echtem providerseitigem Live-Wert (Claude-CLI / Codex-Rollout / OpenRouter-API).
 
         Ist der gemeldete Reset-Zeitpunkt bereits überschritten, wird der Wert als
         ``veraltet`` (``stale``) markiert statt fälschlich als frisch — ein neuer Abruf
-        liefert dann beim nächsten Intervall aktuelle Zahlen.
+        liefert dann beim nächsten Intervall aktuelle Zahlen. Provider ohne Reset
+        (OpenCode/OpenRouter pay-as-you-go) liefern ``reset_at=None`` → ``kein Reset``.
         """
-        reset_at = getattr(live_window, "reset_at", None) or (now + spec.duration)
-        quality = "stale" if reset_at <= now else "live"
+        reset_at = getattr(live_window, "reset_at", None)
+        if reset_at is None:
+            quality = "live"
+        else:
+            quality = "stale" if reset_at <= now else "live"
         return {
             "window": spec.key,
             "label": spec.label,
             "used_pct": round(float(live_window.used_pct), 1),
             "used_tokens": None,
             "limit_tokens": None,
-            "reset_at": reset_at.isoformat(),
+            "reset_at": reset_at.isoformat() if reset_at else None,
             "quality": quality,
             "source": getattr(live_window, "source", "cli_live"),
             "updated_at": now.isoformat(),
