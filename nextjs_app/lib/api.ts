@@ -79,6 +79,13 @@ import type {
   UiCheckRunsResponse,
   UiCheckStartRequest,
   UiCheckStartResponse,
+  UiCheckImagesRequest,
+  UiCheckRecycleRequest,
+  UiCheckRegistryResponse,
+  UiCheckBrandingProfilesResponse,
+  UiCheckAssembleRequest,
+  UiCheckAssembleResponse,
+  UiCheckAssembleOutcome,
   MetricsSnapshot,
   MetricsStatus,
   TerminalInfo,
@@ -1244,6 +1251,112 @@ export async function openUiCheckArtifact(runId: string, kind: string): Promise<
   const url = URL.createObjectURL(blob);
   window.open(url, "_blank", "noopener,noreferrer");
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+// --- PROJ-21: Pipeline-Einzelschritte, Registry, Assembler -----------------
+
+export function startUiCheckImages(
+  runId: string,
+  req: UiCheckImagesRequest = {},
+): Promise<UiCheckRunDetail> {
+  return request<UiCheckRunDetail>(
+    `/ui-check/runs/${encodeURIComponent(runId)}/images`,
+    { method: "POST", body: JSON.stringify(req) },
+  );
+}
+
+export function startUiCheckMockupExport(
+  runId: string,
+  force = false,
+): Promise<UiCheckRunDetail> {
+  return request<UiCheckRunDetail>(
+    `/ui-check/runs/${encodeURIComponent(runId)}/mockup-export`,
+    { method: "POST", body: JSON.stringify({ force }) },
+  );
+}
+
+export function startUiCheckRecycle(
+  runId: string,
+  req: UiCheckRecycleRequest = {},
+): Promise<UiCheckRunDetail> {
+  return request<UiCheckRunDetail>(
+    `/ui-check/runs/${encodeURIComponent(runId)}/recycle`,
+    { method: "POST", body: JSON.stringify(req) },
+  );
+}
+
+export function getUiCheckRegistry(
+  signal?: AbortSignal,
+): Promise<UiCheckRegistryResponse> {
+  return request<UiCheckRegistryResponse>("/ui-check/registry", { signal });
+}
+
+export function getUiCheckBrandingProfiles(
+  signal?: AbortSignal,
+): Promise<UiCheckBrandingProfilesResponse> {
+  return request<UiCheckBrandingProfilesResponse>("/ui-check/branding-profiles", {
+    signal,
+  });
+}
+
+/** Eigenes Fetch statt `request()`: 409-Konflikte (Registry-Lücke, unvollständiges
+ *  Branding-Profil) tragen ein strukturiertes `detail`-Objekt
+ *  ({message, missing_sections|missing_profile_parts}), das `request()` nur zu
+ *  "[object Object]" stringifizieren würde. Discriminated Result statt Exception,
+ *  damit der Assembler-Tab die Lücken konkret anzeigen kann. */
+export async function startUiCheckAssemble(
+  payload: UiCheckAssembleRequest,
+): Promise<UiCheckAssembleOutcome> {
+  const init: RequestInit = { method: "POST", body: JSON.stringify(payload) };
+  let resp: Response;
+  try {
+    resp = await rawFetch("/ui-check/assemble", init);
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (resp.status === 401 && (await refreshAccessToken())) {
+    resp = await rawFetch("/ui-check/assemble", init);
+  }
+  if (resp.status === 409) {
+    let body: unknown = null;
+    try {
+      body = await resp.json();
+    } catch {
+      /* ignore */
+    }
+    const detail = (body as { detail?: unknown } | null)?.detail;
+    if (typeof detail === "string") {
+      return { ok: false, conflict: { message: detail } };
+    }
+    if (detail && typeof detail === "object") {
+      const d = detail as Record<string, unknown>;
+      return {
+        ok: false,
+        conflict: {
+          message: typeof d.message === "string" ? d.message : "Konflikt beim Assembler-Start.",
+          missing_sections: Array.isArray(d.missing_sections)
+            ? (d.missing_sections as string[])
+            : undefined,
+          missing_profile_parts: Array.isArray(d.missing_profile_parts)
+            ? (d.missing_profile_parts as string[])
+            : undefined,
+        },
+      };
+    }
+    return { ok: false, conflict: { message: "Konflikt beim Assembler-Start." } };
+  }
+  if (!resp.ok) {
+    let detail = `Fehler ${resp.status}`;
+    try {
+      const body = await resp.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+      else if (body?.detail?.message) detail = String(body.detail.message);
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(detail, resp.status);
+  }
+  return { ok: true, response: (await resp.json()) as UiCheckAssembleResponse };
 }
 
 // --- PROJ-42: VPS-Admin Metriken (native Micro-App) ------------------------

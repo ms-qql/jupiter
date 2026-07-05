@@ -4,8 +4,22 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from ..engine.ui_check import UiCheckConflict, UiCheckNotFound, UiCheckService
+from ..engine.ui_check import (
+    UiCheckBrandingIncomplete,
+    UiCheckConflict,
+    UiCheckNotFound,
+    UiCheckRegistryError,
+    UiCheckRegistryGap,
+    UiCheckService,
+)
 from ..schemas.ui_check import (
+    UiCheckAssembleRequest,
+    UiCheckAssembleResponse,
+    UiCheckBrandingProfilesResponse,
+    UiCheckImagesRequest,
+    UiCheckMockupExportRequest,
+    UiCheckRecycleRequest,
+    UiCheckRegistryResponse,
     UiCheckRunDetail,
     UiCheckRunsResponse,
     UiCheckStartRequest,
@@ -63,6 +77,78 @@ async def start_redesign(request: Request, run_id: str) -> dict:
         raise HTTPException(status_code=404, detail="UI-Check-Lauf nicht gefunden.") from exc
     except UiCheckConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/images", response_model=UiCheckRunDetail)
+async def start_images(request: Request, run_id: str, payload: UiCheckImagesRequest | None = None) -> dict:
+    body = payload or UiCheckImagesRequest()
+    try:
+        return _svc(request).start_images(run_id, force=body.force, only=body.only)
+    except UiCheckNotFound as exc:
+        raise HTTPException(status_code=404, detail="UI-Check-Lauf nicht gefunden.") from exc
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/mockup-export", response_model=UiCheckRunDetail)
+async def start_mockup_export(request: Request, run_id: str, payload: UiCheckMockupExportRequest | None = None) -> dict:
+    body = payload or UiCheckMockupExportRequest()
+    try:
+        return _svc(request).start_mockup_export(run_id, force=body.force)
+    except UiCheckNotFound as exc:
+        raise HTTPException(status_code=404, detail="UI-Check-Lauf nicht gefunden.") from exc
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/recycle", response_model=UiCheckRunDetail)
+async def start_recycle(request: Request, run_id: str, payload: UiCheckRecycleRequest | None = None) -> dict:
+    body = payload or UiCheckRecycleRequest()
+    try:
+        return _svc(request).start_recycle(
+            run_id, min_total=body.min_total, min_visual=body.min_visual, force=body.force
+        )
+    except UiCheckNotFound as exc:
+        raise HTTPException(status_code=404, detail="UI-Check-Lauf nicht gefunden.") from exc
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/registry", response_model=UiCheckRegistryResponse)
+async def get_registry(request: Request) -> dict:
+    try:
+        return _svc(request).list_registry()
+    except UiCheckRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/branding-profiles", response_model=UiCheckBrandingProfilesResponse)
+async def get_branding_profiles(request: Request) -> dict:
+    return _svc(request).list_branding_profiles()
+
+
+@router.post("/assemble", response_model=UiCheckAssembleResponse, status_code=201)
+async def start_assemble(request: Request, payload: UiCheckAssembleRequest) -> dict:
+    try:
+        return _svc(request).start_assemble(payload)
+    except UiCheckNotFound as exc:
+        raise HTTPException(status_code=404, detail="Branding-Profil nicht gefunden.") from exc
+    except UiCheckBrandingIncomplete as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "missing_profile_parts": exc.missing},
+        ) from exc
+    except UiCheckRegistryGap as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "missing_sections": exc.missing},
+        ) from exc
+    except UiCheckRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail="Run-Ordner existiert bereits.") from exc
 
 
 @router.delete("/runs/{run_id}", status_code=204)

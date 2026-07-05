@@ -8,17 +8,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BarChart3Icon,
   BlocksIcon,
-  ExternalLinkIcon,
   EyeIcon,
   EyeOffIcon,
   GlobeIcon,
-  ImageIcon,
   LayoutDashboardIcon,
+  LayoutTemplateIcon,
   PaletteIcon,
   PlayIcon,
+  PuzzleIcon,
   RefreshCwIcon,
-  RotateCcwIcon,
-  ShieldAlertIcon,
   SquareIcon,
   Trash2Icon,
   WandSparklesIcon,
@@ -59,20 +57,45 @@ import {
   deleteUiCheckRun,
   getUiCheckRun,
   getUiCheckRuns,
-  openUiCheckArtifact,
   runUiCheckRedesign,
+  startUiCheckAssemble,
+  startUiCheckImages,
+  startUiCheckMockupExport,
+  startUiCheckRecycle,
   startUiCheckRun,
 } from "@/lib/api";
 import type {
   UiCheckAiProvider,
+  UiCheckAssembleOutcome,
+  UiCheckAssembleRequest,
   UiCheckDepth,
   UiCheckDimensionScore,
   UiCheckFinding,
   UiCheckMode,
   UiCheckRunDetail,
-  UiCheckRunStatus,
   UiCheckRunSummary,
 } from "@/lib/types";
+import {
+  ArtifactButton,
+  fmtDate,
+  fmtScore,
+  SeverityBadge,
+  STATUS_LABEL,
+  StatusBadge,
+} from "./shared";
+import {
+  computePrerequisites,
+  PIPELINE_MODES,
+  type PipelineModeId,
+} from "./pipeline-modes";
+import {
+  CommandPlanPreview,
+  PipelineModeSelector,
+  PrerequisiteChecklist,
+} from "./pipeline-panel";
+import { MockupTab } from "./mockup-tab";
+import { PortfolioTab } from "./portfolio-tab";
+import { AssemblerTab } from "./assembler-tab";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -102,14 +125,6 @@ const PROVIDERS: {
   },
 ];
 
-const STATUS_LABEL: Record<UiCheckRunStatus, string> = {
-  queued: "Wartend",
-  running: "Läuft",
-  done: "Fertig",
-  error: "Fehler",
-  cancelled: "Abgebrochen",
-};
-
 const PHASES = [
   "Capture",
   "Lighthouse",
@@ -119,82 +134,8 @@ const PHASES = [
   "Mockup",
 ];
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return "unbekannt";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "unbekannt";
-  return d.toLocaleString("de-DE", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function fmtScore(score: number | null): string {
-  return typeof score === "number" ? `${Math.round(score)}` : "n/v";
-}
-
 function providerLabel(value: string | null): string {
   return PROVIDERS.find((p) => p.value === value)?.label ?? value ?? "n/v";
-}
-
-function statusTone(status: UiCheckRunStatus): string {
-  if (status === "done") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-500";
-  if (status === "error") return "border-red-500/40 bg-red-500/10 text-red-500";
-  if (status === "cancelled") return "border-amber-500/40 bg-amber-500/10 text-amber-500";
-  if (status === "running") return "border-sky-500/40 bg-sky-500/10 text-sky-500";
-  return "";
-}
-
-function StatusBadge({ status }: { status: UiCheckRunStatus }) {
-  const tone = statusTone(status);
-  return tone ? (
-    <Badge className={tone}>{STATUS_LABEL[status]}</Badge>
-  ) : (
-    <Badge variant="secondary">{STATUS_LABEL[status]}</Badge>
-  );
-}
-
-function SeverityBadge({ severity }: { severity: UiCheckFinding["severity"] }) {
-  if (severity === "high") return <Badge variant="destructive">Hoch</Badge>;
-  if (severity === "medium")
-    return <Badge className="border-amber-500/40 bg-amber-500/10 text-amber-500">Mittel</Badge>;
-  return <Badge variant="outline">Niedrig</Badge>;
-}
-
-function ArtifactButton({
-  runId,
-  kind,
-  label,
-}: {
-  runId: string;
-  kind: string;
-  label: string;
-}) {
-  const [loading, setLoading] = useState(false);
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      disabled={loading}
-      onClick={async () => {
-        setLoading(true);
-        try {
-          await openUiCheckArtifact(runId, kind);
-        } catch (err) {
-          toast.error(err instanceof ApiError ? err.message : "Artefakt konnte nicht geöffnet werden.");
-        } finally {
-          setLoading(false);
-        }
-      }}
-    >
-      <ExternalLinkIcon className="size-3.5" />
-      {label}
-    </Button>
-  );
 }
 
 export default function UiCheckApp() {
@@ -213,6 +154,8 @@ export default function UiCheckApp() {
   const [industry, setIndustry] = useState("");
   const [desktop, setDesktop] = useState(true);
   const [prompt, setPrompt] = useState("");
+  const [pipelineMode, setPipelineMode] = useState<PipelineModeId>("complete");
+  const [mockupConflict, setMockupConflict] = useState(false);
 
   const selectedProvider = PROVIDERS.find((p) => p.value === provider) ?? PROVIDERS[0];
   const activeSummary = runs.find((r) => r.run_id === activeRunId) ?? null;
@@ -293,6 +236,7 @@ export default function UiCheckApp() {
         prompt: prompt.trim() || undefined,
         industry: industry.trim() || null,
         desktop,
+        full_pipeline: pipelineMode === "complete",
       });
       setActiveRunId(res.run_id);
       toast.success("UI-Check-Lauf gestartet");
@@ -330,6 +274,71 @@ export default function UiCheckApp() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleImages() {
+    if (!activeRunId || busy) return;
+    setBusy(true);
+    try {
+      setDetail(await startUiCheckImages(activeRunId));
+      toast.success("Bildbefüllung gestartet");
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Bildbefüllung fehlgeschlagen");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleMockupExport(force = false) {
+    if (!activeRunId || busy) return;
+    setBusy(true);
+    try {
+      setDetail(await startUiCheckMockupExport(activeRunId, force));
+      setMockupConflict(false);
+      toast.success(force ? "Mockup-Export erzwungen" : "Mockup-Export gestartet");
+      await refresh();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.message.includes("mockup.html")) {
+        setMockupConflict(true);
+        setActiveTab("mockup");
+        toast.error("mockup.html existiert bereits — Details im Mockup-Tab.");
+      } else {
+        toast.error(err instanceof ApiError ? err.message : "Mockup-Export fehlgeschlagen");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRecycle() {
+    if (!activeRunId || busy) return;
+    setBusy(true);
+    try {
+      setDetail(await startUiCheckRecycle(activeRunId));
+      toast.success("Registry-Recycling gestartet");
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Registry-Recycling fehlgeschlagen");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAssemble(payload: UiCheckAssembleRequest): Promise<UiCheckAssembleOutcome> {
+    const outcome = await startUiCheckAssemble(payload);
+    if (outcome.ok) {
+      setActiveRunId(outcome.response.run_id);
+      try {
+        setDetail(await getUiCheckRun(outcome.response.run_id));
+      } catch {
+        /* Detailabruf schlägt in seltenen Fällen fehl; Historie zeigt den Lauf trotzdem. */
+      }
+      setActiveTab("mockup");
+      toast.success("Portfolio-Assembler gestartet");
+      await refresh();
+    }
+    return outcome;
   }
 
   async function handleDeleteRun(runId: string) {
@@ -400,11 +409,14 @@ export default function UiCheckApp() {
             <TabsTrigger value="branding">
               <PaletteIcon className="size-3.5" /> Branding
             </TabsTrigger>
-            <TabsTrigger value="compare">
-              <ImageIcon className="size-3.5" /> Vorher/Nachher
+            <TabsTrigger value="mockup">
+              <LayoutTemplateIcon className="size-3.5" /> Mockup
             </TabsTrigger>
             <TabsTrigger value="portfolio">
               <BlocksIcon className="size-3.5" /> Portfolio
+            </TabsTrigger>
+            <TabsTrigger value="assembler">
+              <PuzzleIcon className="size-3.5" /> Assembler
             </TabsTrigger>
           </TabsList>
 
@@ -421,6 +433,9 @@ export default function UiCheckApp() {
                   >
                     {current.display_url ?? "Unbekannte URL"}
                   </span>
+                  {current.run_type === "assemble" && (
+                    <Badge variant="outline">Assembler-Lauf</Badge>
+                  )}
                   <StatusBadge status={current.status} />
                   {typeof current.score_total === "number" && (
                     <span className="text-muted-foreground">
@@ -470,6 +485,13 @@ export default function UiCheckApp() {
               onSelectRun={selectRun}
               onDeleteRun={handleDeleteRun}
               detail={detail}
+              pipelineMode={pipelineMode}
+              setPipelineMode={setPipelineMode}
+              onRedesign={handleRedesign}
+              onImages={handleImages}
+              onMockupExport={() => handleMockupExport(false)}
+              onRecycle={handleRecycle}
+              onJumpToAssembler={() => setActiveTab("assembler")}
             />
           </TabsContent>
 
@@ -481,12 +503,25 @@ export default function UiCheckApp() {
             <BrandingTab detail={detail} />
           </TabsContent>
 
-          <TabsContent value="compare">
-            <CompareTab detail={detail} busy={busy} onRedesign={handleRedesign} />
+          <TabsContent value="mockup">
+            <MockupTab
+              detail={detail}
+              busy={busy}
+              onRedesign={handleRedesign}
+              onImages={handleImages}
+              onExport={() => handleMockupExport(false)}
+              onForceExport={() => handleMockupExport(true)}
+              conflictOpen={mockupConflict}
+              onDismissConflict={() => setMockupConflict(false)}
+            />
           </TabsContent>
 
           <TabsContent value="portfolio">
-            <PortfolioTab detail={detail} runs={runs} />
+            <PortfolioTab />
+          </TabsContent>
+
+          <TabsContent value="assembler">
+            <AssemblerTab onAssemble={handleAssemble} />
           </TabsContent>
         </Tabs>
       </main>
@@ -522,6 +557,13 @@ function DashboardTab({
   onSelectRun,
   onDeleteRun,
   detail,
+  pipelineMode,
+  setPipelineMode,
+  onRedesign,
+  onImages,
+  onMockupExport,
+  onRecycle,
+  onJumpToAssembler,
 }: {
   url: string;
   setUrl: (value: string) => void;
@@ -550,132 +592,223 @@ function DashboardTab({
   onSelectRun: (runId: string) => void;
   onDeleteRun: (runId: string) => void;
   detail: UiCheckRunDetail | null;
+  pipelineMode: PipelineModeId;
+  setPipelineMode: (value: PipelineModeId) => void;
+  onRedesign: () => void;
+  onImages: () => void;
+  onMockupExport: () => void;
+  onRecycle: () => void;
+  onJumpToAssembler: () => void;
 }) {
+  const activeMode = PIPELINE_MODES.find((m) => m.id === pipelineMode) ?? PIPELINE_MODES[0];
+  const prerequisites = computePrerequisites(pipelineMode, detail, url);
+  const prerequisitesOk = prerequisites.every((p) => p.satisfied);
+
+  useEffect(() => {
+    if (pipelineMode === "audit_only" && depth !== "audit") setDepth("audit");
+    if (pipelineMode === "complete" && depth !== "redesign") setDepth("redesign");
+  }, [pipelineMode, depth, setDepth]);
+
+  const stepAction: Record<string, { label: string; run: () => void }> = {
+    redesign: { label: "Redesign starten", run: onRedesign },
+    images: { label: "Bilder füllen", run: onImages },
+    mockup_export: { label: "Mockup exportieren", run: onMockupExport },
+    recycle: { label: "Recycling starten", run: onRecycle },
+  };
+
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
       <div className="space-y-4">
         <Card>
           <CardHeader>
-            <CardTitle>Neuen Lauf starten</CardTitle>
-            <CardDescription>Audit-only oder kompletter Redesign-Lauf mit Modellwahl.</CardDescription>
+            <CardTitle>Pipeline-Modus</CardTitle>
+            <CardDescription>
+              Übersetzt die Skill-Pipeline aus docs/pipeline.md in auswählbare Modi —
+              kein Slash-Command-Wissen nötig.
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 lg:grid-cols-[minmax(260px,1fr)_180px_190px]">
-              <div className="space-y-1.5">
-                <Label htmlFor="ui-url">URL</Label>
-                <Input id="ui-url" value={url} onChange={(e) => setUrl(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Seitentyp</Label>
-                <Select value={mode} onValueChange={(v) => v && setMode(v as UiCheckMode)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">Auto</SelectItem>
-                    <SelectItem value="landing">Landing Page</SelectItem>
-                    <SelectItem value="app">App/Tool</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Tiefe</Label>
-                <Select value={depth} onValueChange={(v) => v && setDepth(v as UiCheckDepth)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="redesign">Audit + Redesign</SelectItem>
-                    <SelectItem value="audit">Nur Audit</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-3">
-              {PROVIDERS.map((p) => (
-                <button
-                  key={p.value}
-                  type="button"
-                  onClick={() => handleProvider(p.value)}
-                  className={`rounded-lg border p-3 text-left transition-colors ${
-                    provider === p.value
-                      ? "border-primary bg-primary/10"
-                      : "border-border bg-background hover:bg-muted"
-                  }`}
-                >
-                  <div className="text-sm font-semibold">{p.label}</div>
-                  <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{p.detail}</div>
-                </button>
-              ))}
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-[220px_minmax(220px,1fr)_180px]">
-              <div className="space-y-1.5">
-                <Label>Anbieter</Label>
-                <Input value={selectedProvider.label} readOnly />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Modell</Label>
-                <Select value={model} onValueChange={(v) => v && setModel(v)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {selectedProvider.models.map((m) => (
-                      <SelectItem key={m} value={m}>
-                        {m}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="ui-industry">Branche</Label>
-                <Input
-                  id="ui-industry"
-                  placeholder="optional"
-                  value={industry}
-                  onChange={(e) => setIndustry(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="ui-prompt">Spezielle Anweisungen</Label>
-              <Textarea
-                id="ui-prompt"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="z. B. Fokus auf Terminbuchung, Marke beibehalten, Zielgruppe Hausbesitzer 45+."
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={desktop}
-                  onChange={(e) => setDesktop(e.target.checked)}
-                  className="size-4"
-                />
-                Desktop-Screenshot priorisieren
-              </label>
-              <div className="flex gap-2">
-                {activeIsRunning && (
-                  <Button type="button" variant="destructive" onClick={onCancel} disabled={busy}>
-                    <SquareIcon className="size-3.5" />
-                    Abbrechen
-                  </Button>
-                )}
-                <Button type="button" onClick={onStart} disabled={busy || !url.trim()}>
-                  <PlayIcon className="size-3.5" />
-                  Lauf starten
-                </Button>
-              </div>
-            </div>
+          <CardContent>
+            <PipelineModeSelector
+              modes={PIPELINE_MODES}
+              value={pipelineMode}
+              onChange={setPipelineMode}
+            />
           </CardContent>
         </Card>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <CommandPlanPreview mode={activeMode} />
+          <PrerequisiteChecklist items={prerequisites} />
+        </div>
+
+        {activeMode.jumpsToTab === "assembler" ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Portfolio-Assembler</CardTitle>
+              <CardDescription>
+                Der Assembler ist ein eigener Arbeitsbereich mit Branding-, Sektions- und
+                Registry-Auswahl.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button type="button" onClick={onJumpToAssembler}>
+                <PuzzleIcon className="size-3.5" />
+                Zum Assembler-Tab wechseln
+              </Button>
+            </CardContent>
+          </Card>
+        ) : activeMode.requiresRun ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Ziel-Lauf</CardTitle>
+              <CardDescription>
+                Wirkt auf den aktuell in der Historie ausgewählten Lauf.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="rounded-lg border border-border p-3 text-sm">
+                {detail?.run_id ? (
+                  <>
+                    <div className="truncate font-medium">
+                      {detail.display_url ?? detail.url_hash}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Score {fmtScore(detail.score_total)} · Nachher {fmtScore(detail.redesign_score)}
+                    </div>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">
+                    Kein Lauf ausgewählt — rechts einen Lauf aus der Historie wählen.
+                  </span>
+                )}
+              </div>
+              <Button
+                type="button"
+                className="w-full"
+                onClick={stepAction[pipelineMode]?.run}
+                disabled={busy || !prerequisitesOk}
+              >
+                <PlayIcon className="size-3.5" />
+                {stepAction[pipelineMode]?.label ?? "Starten"}
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Neuen Lauf starten</CardTitle>
+              <CardDescription>
+                {pipelineMode === "audit_only"
+                  ? "Nur Stufe-1-Audit ohne Redesign."
+                  : "Kompletter Lauf: Audit, Redesign, Bilder, Mockup-Export."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 lg:grid-cols-[minmax(260px,1fr)_180px]">
+                <div className="space-y-1.5">
+                  <Label htmlFor="ui-url">URL</Label>
+                  <Input id="ui-url" value={url} onChange={(e) => setUrl(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Seitentyp</Label>
+                  <Select value={mode} onValueChange={(v) => v && setMode(v as UiCheckMode)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto</SelectItem>
+                      <SelectItem value="landing">Landing Page</SelectItem>
+                      <SelectItem value="app">App/Tool</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-3">
+                {PROVIDERS.map((p) => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => handleProvider(p.value)}
+                    className={`rounded-lg border p-3 text-left transition-colors ${
+                      provider === p.value
+                        ? "border-primary bg-primary/10"
+                        : "border-border bg-background hover:bg-muted"
+                    }`}
+                  >
+                    <div className="text-sm font-semibold">{p.label}</div>
+                    <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{p.detail}</div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-[220px_minmax(220px,1fr)_180px]">
+                <div className="space-y-1.5">
+                  <Label>Anbieter</Label>
+                  <Input value={selectedProvider.label} readOnly />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Modell</Label>
+                  <Select value={model} onValueChange={(v) => v && setModel(v)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedProvider.models.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="ui-industry">Branche</Label>
+                  <Input
+                    id="ui-industry"
+                    placeholder="optional"
+                    value={industry}
+                    onChange={(e) => setIndustry(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="ui-prompt">Spezielle Anweisungen</Label>
+                <Textarea
+                  id="ui-prompt"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="z. B. Fokus auf Terminbuchung, Marke beibehalten, Zielgruppe Hausbesitzer 45+."
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={desktop}
+                    onChange={(e) => setDesktop(e.target.checked)}
+                    className="size-4"
+                  />
+                  Desktop-Screenshot priorisieren
+                </label>
+                <div className="flex gap-2">
+                  {activeIsRunning && (
+                    <Button type="button" variant="destructive" onClick={onCancel} disabled={busy}>
+                      <SquareIcon className="size-3.5" />
+                      Abbrechen
+                    </Button>
+                  )}
+                  <Button type="button" onClick={onStart} disabled={busy || !prerequisitesOk}>
+                    <PlayIcon className="size-3.5" />
+                    Lauf starten
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <ProgressPanel detail={detail} />
       </div>
@@ -735,6 +868,12 @@ function ProgressPanel({ detail }: { detail: UiCheckRunDetail | null }) {
             );
           })}
         </div>
+        {detail?.chain_error && (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+            Pipeline-Kette abgebrochen bei Schritt „{detail.chain_error.step}&quot; (Exit-Code{" "}
+            {detail.chain_error.returncode}).
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -860,8 +999,15 @@ function RunHistory({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">
-                          {run.display_url ?? run.url_hash}
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-medium">
+                            {run.display_url ?? run.url_hash}
+                          </div>
+                          {run.run_type === "assemble" && (
+                            <Badge variant="outline" className="shrink-0">
+                              Assembler
+                            </Badge>
+                          )}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {fmtDate(run.created_at)} · {providerLabel(run.ai_provider)} · {run.ai_model ?? "n/v"}
@@ -870,8 +1016,14 @@ function RunHistory({
                       <StatusBadge status={run.status} />
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <span>Score {fmtScore(run.score_total)}</span>
-                      <span>Nachher {fmtScore(run.redesign_score)}</span>
+                      {run.run_type === "assemble" ? (
+                        <span>Mockup-Score {fmtScore(run.redesign_score)}</span>
+                      ) : (
+                        <>
+                          <span>Score {fmtScore(run.score_total)}</span>
+                          <span>Nachher {fmtScore(run.redesign_score)}</span>
+                        </>
+                      )}
                       <span>Rubrik {run.rubric_version ?? "n/v"}</span>
                     </div>
                   </button>
@@ -1097,140 +1249,3 @@ function BrandingTab({ detail }: { detail: UiCheckRunDetail | null }) {
   );
 }
 
-function CompareTab({
-  detail,
-  busy,
-  onRedesign,
-}: {
-  detail: UiCheckRunDetail | null;
-  busy: boolean;
-  onRedesign: () => void;
-}) {
-  const hasMockup = Boolean(detail?.artifacts?.mockup);
-  const hasScreens = Boolean(detail?.artifacts?.screenshots?.length);
-  return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-      <Card>
-        <CardHeader>
-          <CardTitle>Vorher/Nachher</CardTitle>
-          <CardDescription>Original, Safe und Bold werden aktiv, sobald die Artefakte im Run liegen.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid min-h-72 place-items-center rounded-lg border border-dashed border-border bg-muted/40 p-6 text-center">
-            <div>
-              <ImageIcon className="mx-auto size-10 text-muted-foreground" />
-              <div className="mt-3 text-sm font-medium">
-                {hasMockup || hasScreens ? "Artefakte sind verfügbar" : "Noch keine Vergleichsartefakte"}
-              </div>
-              <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                Fehlende Redesign-, Screenshot- oder Mockup-Dateien werden bewusst nicht leer gerendert.
-              </p>
-              {detail?.run_id && (
-                <div className="mt-4 flex justify-center gap-2">
-                  {hasMockup && <ArtifactButton runId={detail.run_id} kind="mockup" label="Mockup" />}
-                  {hasScreens && <ArtifactButton runId={detail.run_id} kind="screenshots" label="Screenshots" />}
-                </div>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Redesign-Aktion</CardTitle>
-          <CardDescription>Safe/Bold und Mockup für vorhandenen Audit-Lauf nachziehen.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="rounded-lg border border-border p-3 text-sm">
-            <div className="flex items-center justify-between gap-2">
-              <span>Originalscore</span>
-              <strong>{fmtScore(detail?.score_total ?? null)}</strong>
-            </div>
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <span>Nachher-Score</span>
-              <strong>{fmtScore(detail?.redesign_score ?? null)}</strong>
-            </div>
-          </div>
-          <Button type="button" className="w-full" onClick={onRedesign} disabled={busy || !detail?.run_id}>
-            <RotateCcwIcon className="size-3.5" />
-            Redesign starten
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function PortfolioTab({
-  detail,
-  runs,
-}: {
-  detail: UiCheckRunDetail | null;
-  runs: UiCheckRunSummary[];
-}) {
-  const reusable = runs.filter((r) => typeof r.redesign_score === "number").length;
-  return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <PortfolioCard
-        icon={<BlocksIcon className="size-4" />}
-        title="Komponenten-Kandidaten"
-        value={String(reusable)}
-        text="Kandidaten werden aus Redesign-Läufen sichtbar, sobald PROJ-11-Daten vorliegen."
-      />
-      <PortfolioCard
-        icon={<PaletteIcon className="size-4" />}
-        title="Branding-Profile"
-        value={detail?.branding ? "1" : "0"}
-        text="Das Profil bleibt lokal am Run-Ordner und wird später durch PROJ-12 erweitert."
-      />
-      <PortfolioCard
-        icon={<ShieldAlertIcon className="size-4" />}
-        title="Versionen"
-        value={detail?.rubric_version ?? "n/v"}
-        text="Rubrik-Versionen bleiben sichtbar; alte Scores werden nicht still vergleichbar gemacht."
-      />
-      {detail?.run_id && (
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle>Artefakte</CardTitle>
-            <CardDescription>Direkte Links zu bekannten lokalen Run-Dateien.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <ArtifactButton runId={detail.run_id} kind="report" label="Report" />
-            <ArtifactButton runId={detail.run_id} kind="scores" label="Scores" />
-            <ArtifactButton runId={detail.run_id} kind="tokens" label="Tokens" />
-            <ArtifactButton runId={detail.run_id} kind="mockup" label="Mockup" />
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-function PortfolioCard({
-  icon,
-  title,
-  value,
-  text,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  value: string;
-  text: string;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          {icon}
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="text-3xl font-semibold">{value}</div>
-        <p className="mt-2 text-sm text-muted-foreground">{text}</p>
-      </CardContent>
-    </Card>
-  );
-}
