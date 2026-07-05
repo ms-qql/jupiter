@@ -1,6 +1,6 @@
 # PROJ-57: Engine — OpenCode als Harness (OpenRouter-Modelle über OpenCode statt Direkt-HTTP)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-05
 **Last Updated:** 2026-07-05
 
@@ -392,4 +392,9 @@ Reine Funktion analog `codex_parse_line`, robust gegen unbekannte Felder (OpenCo
 - **Recommendation:** Deploy. Die 4 Low-Bugs sind Politur (bessere Fehlermeldung bei ungültigem Modell-Slug, toter Registry-Eintrag, fehlende Edge-Case-Regressionstests, optionaler manueller Cockpit-Check) — keiner davon blockiert den produktiven Einsatz.
 
 ## Deployment
-_To be added by /deploy_
+
+**Production URL:** https://jupiter.auxevo.tech
+**Deployed:** 2026-07-05 · **Version:** 0.27.6
+**Host:** Dev-VPS (host-native, systemd `jupiter-backend`/`jupiter-frontend`), Auto-Deploy via GitHub-Webhook auf Push nach `main`
+**Was ausgeliefert wurde:** OpenCode-Adapter (`backend/app/engine/adapters.py`), `engine_shows_cost`-Erweiterung (`usage.py` + `nextjs_app/lib/status.ts`), `opencode`-Eintrag in `backend/config/engines.yaml`/`engines.example.yaml` (roher `openrouter`-HTTP-Eintrag entfernt), 17 neue Tests (`test_proj57_opencode.py`). Kein Frontend-Ticket (Cockpit/Launcher engine-agnostisch).
+**Offene Punkte aus der QA (nicht blockierend):** BUG-1 (generische statt spezifische Fehlermeldung bei ungültigem Modell-Slug), BUG-2 (toter `openrouter`-Prioritäts-Key in `registry.py`), BUG-3 (3 fehlende dedizierte Edge-Case-Regressionstests), BUG-4 (kein authentifizierter Cockpit-Smoke-Test — bitte manuell im Browser gegenchecken).
