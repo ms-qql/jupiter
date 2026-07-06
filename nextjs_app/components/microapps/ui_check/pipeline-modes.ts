@@ -102,7 +102,7 @@ export interface PrerequisiteItem {
 export function hasRedesignArtifacts(detail: UiCheckRunDetail | null): boolean {
   if (!detail) return false;
   if (detail.mockup_status) {
-    return Boolean(detail.mockup_status.safe_ready || detail.mockup_status.bold_ready);
+    return Boolean(detail.mockup_status.safe_ready && detail.mockup_status.bold_ready);
   }
   return typeof detail.redesign_score === "number";
 }
@@ -141,7 +141,7 @@ export function computePrerequisites(
       return [
         { label: "Ein Lauf ist ausgewählt", satisfied: Boolean(detail?.run_id) },
         {
-          label: "Redesign-Ordner mit Safe/Bold-Varianten ist vorhanden",
+          label: "Safe- und Bold-Design sind vorhanden",
           satisfied: hasRedesignArtifacts(detail),
         },
       ];
@@ -149,7 +149,7 @@ export function computePrerequisites(
       return [
         { label: "Ein Lauf ist ausgewählt", satisfied: Boolean(detail?.run_id) },
         {
-          label: "Redesign-Ordner mit Safe/Bold-Varianten ist vorhanden",
+          label: "Safe- und Bold-Design sind vorhanden",
           satisfied: hasRedesignArtifacts(detail),
         },
       ];
@@ -157,7 +157,7 @@ export function computePrerequisites(
       return [
         { label: "Ein Lauf ist ausgewählt", satisfied: Boolean(detail?.run_id) },
         {
-          label: "Redesign-Ordner mit Safe/Bold-Varianten ist vorhanden",
+          label: "Safe- und Bold-Design sind vorhanden",
           satisfied: hasRedesignArtifacts(detail),
         },
       ];

@@ -85,6 +85,9 @@ import {
 } from "./shared";
 import {
   computePrerequisites,
+  hasImagesFilled,
+  hasMockupExisting,
+  hasRedesignArtifacts,
   PIPELINE_MODES,
   type PipelineModeId,
 } from "./pipeline-modes";
@@ -126,12 +129,13 @@ const PROVIDERS: {
 ];
 
 const PHASES = [
-  "Capture",
-  "Lighthouse",
-  "Branding",
-  "Scoring",
-  "Redesign",
-  "Mockup",
+  { label: "Capture", phase: "capture" },
+  { label: "Lighthouse", phase: "lighthouse" },
+  { label: "Branding", phase: "branding" },
+  { label: "Scoring", phase: "scoring" },
+  { label: "WeDesign", phase: "redesign" },
+  { label: "Bildergenerierung", phase: "images" },
+  { label: "Mockup", phase: "mockup" },
 ];
 
 function providerLabel(value: string | null): string {
@@ -619,28 +623,6 @@ function DashboardTab({
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
       <div className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Pipeline-Modus</CardTitle>
-            <CardDescription>
-              Übersetzt die Skill-Pipeline aus docs/pipeline.md in auswählbare Modi —
-              kein Slash-Command-Wissen nötig.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <PipelineModeSelector
-              modes={PIPELINE_MODES}
-              value={pipelineMode}
-              onChange={setPipelineMode}
-            />
-          </CardContent>
-        </Card>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <CommandPlanPreview mode={activeMode} />
-          <PrerequisiteChecklist items={prerequisites} />
-        </div>
-
         {activeMode.jumpsToTab === "assembler" ? (
           <Card>
             <CardHeader>
@@ -724,28 +706,24 @@ function DashboardTab({
                 </div>
               </div>
 
-              <div className="grid gap-3 lg:grid-cols-3">
-                {PROVIDERS.map((p) => (
-                  <button
-                    key={p.value}
-                    type="button"
-                    onClick={() => handleProvider(p.value)}
-                    className={`rounded-lg border p-3 text-left transition-colors ${
-                      provider === p.value
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-background hover:bg-muted"
-                    }`}
-                  >
-                    <div className="text-sm font-semibold">{p.label}</div>
-                    <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{p.detail}</div>
-                  </button>
-                ))}
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-[220px_minmax(220px,1fr)_180px]">
+              <div className="grid gap-3 md:grid-cols-[180px_minmax(220px,1fr)_180px]">
                 <div className="space-y-1.5">
                   <Label>Anbieter</Label>
-                  <Input value={selectedProvider.label} readOnly />
+                  <Select
+                    value={provider}
+                    onValueChange={(v) => v && handleProvider(v as UiCheckAiProvider)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROVIDERS.map((p) => (
+                        <SelectItem key={p.value} value={p.value}>
+                          {p.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1.5">
                   <Label>Modell</Label>
@@ -811,6 +789,28 @@ function DashboardTab({
         )}
 
         <ProgressPanel detail={detail} />
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Pipeline-Modus</CardTitle>
+            <CardDescription>
+              Übersetzt die Skill-Pipeline aus docs/pipeline.md in auswählbare Modi —
+              kein Slash-Command-Wissen nötig.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <PipelineModeSelector
+              modes={PIPELINE_MODES}
+              value={pipelineMode}
+              onChange={setPipelineMode}
+            />
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <CommandPlanPreview mode={activeMode} />
+          <PrerequisiteChecklist items={prerequisites} />
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -843,6 +843,25 @@ function StatCard({ label, value }: { label: string; value: string }) {
 
 function ProgressPanel({ detail }: { detail: UiCheckRunDetail | null }) {
   const progress = Math.max(0, Math.min(100, detail?.progress ?? 0));
+  const completedPhases = useMemo(() => {
+    const completed = new Set<string>();
+    const progressIndex = Math.floor((progress / 100) * (PHASES.length - 1));
+
+    PHASES.forEach((phase, index) => {
+      if (progress > 0 && index <= progressIndex) completed.add(phase.phase);
+      if (detail?.phase === phase.phase) completed.add(phase.phase);
+    });
+
+    if (typeof detail?.score_total === "number") {
+      ["capture", "lighthouse", "branding", "scoring"].forEach((phase) => completed.add(phase));
+    }
+    if (hasRedesignArtifacts(detail)) completed.add("redesign");
+    if (hasImagesFilled(detail)) completed.add("images");
+    if (hasMockupExisting(detail)) completed.add("mockup");
+
+    return completed;
+  }, [detail, progress]);
+
   return (
     <Card>
       <CardHeader>
@@ -853,17 +872,17 @@ function ProgressPanel({ detail }: { detail: UiCheckRunDetail | null }) {
         <div className="h-2 rounded-full bg-muted">
           <div className="h-full rounded-full bg-primary" style={{ width: `${progress}%` }} />
         </div>
-        <div className="grid gap-2 md:grid-cols-6">
-          {PHASES.map((phase, index) => {
-            const isReached = progress >= (index / (PHASES.length - 1)) * 100 || detail?.phase === phase.toLowerCase();
+        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7">
+          {PHASES.map((phase) => {
+            const isReached = completedPhases.has(phase.phase);
             return (
               <div
-                key={phase}
+                key={phase.phase}
                 className={`rounded-lg border px-2 py-2 text-xs ${
                   isReached ? "border-primary/40 bg-primary/10" : "border-border bg-background"
                 }`}
               >
-                {phase}
+                {phase.label}
               </div>
             );
           })}
@@ -1248,4 +1267,3 @@ function BrandingTab({ detail }: { detail: UiCheckRunDetail | null }) {
     </div>
   );
 }
-
