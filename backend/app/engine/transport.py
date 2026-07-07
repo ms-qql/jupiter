@@ -413,51 +413,51 @@ class TmuxTransport(Transport):
 
     async def _spawn_new_session(self, new_session_args: tuple[str, ...]) -> None:
         """PROJ-64: BUG-4-Nachfolger — der `new-session`-Aufruf wird NIE blind
-        wiederholt (Gefahr einer Doppel-Session, falls er trotz Timeout tatsächlich
-        durchgelaufen war). Stattdessen bei einem Timeout zuerst prüfen, ob die
-        Session bereits existiert (genau der im Produktionsvorfall 2026-07-07
-        beobachtete Fall: Session lief im Hintergrund korrekt, nur die Antwort auf
-        diesen Aufruf kam nie an) — nur wenn sie das NICHT tut, einmalig erneut
-        versuchen. Scheitert auch das, bleibt der bestehende 503-Pfad (PROJ-63/
-        BUG-2, ausgelöst über die weiterhin geerbte `TmuxTimeoutError`) als letzte
-        Absicherung unverändert erhalten."""
-        try:
-            await self._tmux(*new_session_args)
-            return
-        except TmuxTimeoutError:
-            log.warning(
-                "tmux new-session (Session %s) antwortet nicht — prüfe, ob sie "
-                "trotzdem entstanden ist, bevor ein Fehler gemeldet wird (PROJ-64).",
-                self.tmux_session,
-            )
-        if await self._session_exists_after_timeout():
-            log.warning(
-                "tmux-Session %s existiert trotz Timeout bereits — wird als "
-                "erfolgreich gestartet behandelt (kein 503, PROJ-64).",
-                self.tmux_session,
-            )
-            return
-        # has-session sagt "existiert nicht" -> ein zweiter new-session-Versuch
-        # kann keine Doppel-Session erzeugen.
-        try:
-            await self._tmux(*new_session_args)
-            return
-        except TmuxTimeoutError:
-            pass
-        if await self._session_exists_after_timeout():
-            log.warning(
-                "tmux-Session %s existiert nach dem Wiederholungsversuch — wird "
-                "als erfolgreich gestartet behandelt (PROJ-64).",
-                self.tmux_session,
-            )
-            return
-        # Beide Versuche liefen in die Reaping-Störung UND die Session existiert
-        # nachweislich nicht -> weiterhin ein sauberer, für den Nutzer sichtbarer
-        # Fehler statt eines für immer hängenden Requests (PROJ-63/BUG-2/BUG-4).
-        raise TmuxTimeoutError(
-            f"tmux new-session (Session {self.tmux_session}) antwortet auch nach "
-            "einer Wiederholung nicht — Transport 'tmux' nicht verfügbar."
-        )
+        wiederholt (Gefahr einer Doppel-Session, falls er trotz eines Fehlers
+        tatsächlich durchgelaufen war). Stattdessen wird nach JEDEM fehlgeschlagenen
+        Versuch zuerst geprüft, ob die Session bereits existiert (genau der im
+        Produktionsvorfall 2026-07-07 beobachtete Fall: Session lief im Hintergrund
+        korrekt, nur die Antwort auf diesen Aufruf kam nie an) — nur wenn sie das
+        NICHT tut, gibt es einen zweiten Versuch. Scheitert auch der, bleibt der
+        bestehende 503-Pfad (PROJ-63/BUG-2) als letzte Absicherung erhalten.
+
+        QA-BUG-1 (PROJ-64, 2026-07-07): die ursprüngliche Fassung fing beim ZWEITEN
+        Versuch nur `TmuxTimeoutError` ab — kollidierte dieser Versuch stattdessen
+        SOFORT (kein erneuter Timeout) mit einer inzwischen doch entstandenen
+        Session (`rc≠0`, "duplicate session"), propagierte ein roher `TransportError`
+        ungeprüft nach außen (503), obwohl die Session zu dem Zeitpunkt bereits
+        existierte. Fix: BEIDE Versuche identisch behandeln — jeder `TransportError`
+        (nicht nur ein Timeout) löst den Existenz-Check aus, bevor überhaupt über
+        einen weiteren Versuch oder einen finalen Fehler entschieden wird."""
+        last_exc: TransportError | None = None
+        for attempt in range(2):
+            try:
+                await self._tmux(*new_session_args)
+                return
+            except TransportError as exc:
+                last_exc = exc
+                log.warning(
+                    "tmux new-session (Session %s, Versuch %d/2) fehlgeschlagen (%s) — "
+                    "prüfe, ob sie trotzdem entstanden ist, bevor ein Fehler gemeldet "
+                    "wird (PROJ-64).",
+                    self.tmux_session, attempt + 1, exc,
+                )
+            if await self._session_exists_after_timeout():
+                log.warning(
+                    "tmux-Session %s existiert trotz Fehler bereits — wird als "
+                    "erfolgreich gestartet behandelt (kein 503, PROJ-64).",
+                    self.tmux_session,
+                )
+                return
+            # has-session sagt "existiert nicht" -> ein weiterer new-session-Versuch
+            # (falls noch einer übrig ist) kann keine Doppel-Session erzeugen.
+        # Beide Versuche sind fehlgeschlagen UND die Session existiert nachweislich
+        # nicht -> weiterhin ein sauberer, für den Nutzer sichtbarer Fehler statt
+        # eines für immer hängenden Requests (PROJ-63/BUG-2/BUG-4). Der ursprüngliche
+        # Fehler (Timeout ODER eine echte tmux-Fehlermeldung) wird unverändert
+        # weitergereicht — kein Informationsverlust für die Diagnose.
+        assert last_exc is not None  # die Schleife läuft mindestens 1x mit Fehler, sonst waere sie via `return` verlassen worden
+        raise last_exc
 
     async def _session_exists_after_timeout(self) -> bool:
         """``session_exists()`` für den Attach-statt-Fehler-Pfad in

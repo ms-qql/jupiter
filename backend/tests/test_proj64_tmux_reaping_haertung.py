@@ -20,6 +20,10 @@ Nutzer musste manuell reaktivieren + einen Turn fortsetzen). Diese Tests prüfen
 5. `metrics.py::_systemctl_is_active()` (dieselbe Fehlerklasse, im Produktions-
    vorfall als liegen gebliebener `<defunct>`-Zombie beobachtet) degradiert nicht
    mehr bei einem einzelnen Timeout sofort zu `unknown`.
+6. QA-BUG-1 (gefunden 2026-07-07, PROJ-64-QA): kollidiert der ZWEITE
+   `new-session`-Versuch selbst mit einer inzwischen doch entstandenen Session
+   (`rc≠0`, "duplicate session" — KEIN erneuter Timeout), muss auch das als
+   Attach-Erfolg erkannt werden, nicht als roher, ungeprüfter Fehler.
 
 Die tmux-spezifischen Tests nutzen ein Fake-`tmux`-Ersatzbinary (POSIX-Shell-
 Skript), das gezielt EINEN bestimmten tmux-Subbefehl (per Token-Match in `"$@"`)
@@ -39,7 +43,7 @@ import pytest
 
 from app.config import settings
 from app.engine.metrics import MetricsService
-from app.engine.transport import TmuxTimeoutError, TmuxTransport
+from app.engine.transport import TmuxTimeoutError, TmuxTransport, TransportError
 
 REAL_TMUX = shutil.which("tmux")
 
@@ -203,6 +207,41 @@ async def test_spawn_raises_tmux_timeout_error_after_retry_and_attach_check_fail
             transport.spawn(["sleep", "5"], cwd=str(tmp_path), long_lived=False), timeout=10
         )
     assert int(counter.read_text().strip()) == 2  # genau 1 Erstversuch + 1 Retry, keine Endlosschleife
+
+
+@pytest.mark.asyncio
+async def test_spawn_attaches_when_retry_collides_with_now_existing_session(tmp_path):
+    """QA-BUG-1-Regression (PROJ-64, gefunden 2026-07-07): kollidiert der ZWEITE
+    `new-session`-Versuch nicht mit einem erneuten Timeout, sondern SOFORT mit
+    einer inzwischen doch entstandenen Session (`rc≠0`, "duplicate session" — wie
+    es echtes `tmux` in genau diesem Fall meldet), darf das NICHT als roher Fehler
+    (503) durchschlagen — die Session existiert ja bereits. Deterministisch über
+    ein `_tmux`-Monkeypatch nachgebildet (kein Timing-Zufall): Versuch 1 timet aus,
+    der `has-session`-Check direkt danach sagt "existiert nicht", Versuch 2
+    scheitert sofort mit einem echten `TransportError` ("duplicate session")."""
+    transport = TmuxTransport("proj64-retry-collision", data_dir=str(tmp_path / "data"))
+    new_session_calls = {"n": 0}
+    has_session_calls = {"n": 0}
+
+    async def fake_tmux(*args, check=True, retries=0):
+        if args and args[0] == "has-session":
+            has_session_calls["n"] += 1
+            # 1. Check (nach Versuch 1s Timeout): die Aktion ist noch nicht fertig.
+            # 2. Check (nach Versuch 2s Kollision): jetzt existiert sie (per
+            # Definition der Kollision — genau das, was echtes tmux mit "duplicate
+            # session" signalisiert).
+            return (1, "", "") if has_session_calls["n"] == 1 else (0, "", "")
+        new_session_calls["n"] += 1
+        if new_session_calls["n"] == 1:
+            raise TmuxTimeoutError("simulierter Timeout beim ersten new-session-Versuch")
+        raise TransportError(
+            "tmux new-session ... fehlgeschlagen (Code 1): duplicate session: proj64-retry-collision"
+        )
+
+    transport._tmux = fake_tmux  # gezielt nur den Aufruf-Layer isolieren (kein echter Subprozess/Timing)
+    await transport._spawn_new_session(("start-server", ";", "new-session", "-d", "-s", "proj64-retry-collision"))
+    assert new_session_calls["n"] == 2  # Erstversuch (Timeout) + Retry (Kollision) — kein dritter Versuch
+    assert has_session_calls["n"] == 2  # Check nach jedem der beiden fehlgeschlagenen Versuche
 
 
 # ===========================================================================

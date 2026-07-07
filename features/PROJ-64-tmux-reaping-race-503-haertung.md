@@ -1,6 +1,6 @@
 # PROJ-64: Bugfix: tmux-Transport-503 (BUG-4-Nachfolger) — Reaping-Race entschärfen statt nur sichtbar machen
 
-## Status: In Review
+## Status: In Progress
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -122,6 +122,20 @@ metrics.py::_systemctl_is_active()  → gleiche zugrunde liegende Fehlerklasse, 
 
 ### Offen für QA
 - Live-Nachweis der Reaping-Race-Reduktion unter echter Last (mehrere parallele Session-Starts) konnte im Test nur simuliert (Fake-Binary), nicht mit der echten, nicht-deterministischen Störung selbst reproduziert werden — wie bereits in PROJ-63/BUG-4 dokumentiert, ist diese nicht deterministisch auslösbar. QA sollte den gemeldeten Vorfall (mehrere gleichzeitige Sessions) nach Deploy im Live-Betrieb weiter beobachten.
+
+## Bugfix-Runde (Backend Developer, 2026-07-07)
+
+### QA-BUG-1 (High) behoben — Retry-Kollision wird jetzt als Attach-Erfolg erkannt
+- **Ursache:** `_spawn_new_session()` fing beim ZWEITEN `new-session`-Versuch nur `TmuxTimeoutError` ab. Scheiterte dieser Versuch stattdessen sofort mit einem normalen `TransportError` (z. B. echtes `tmux` meldet `rc=1` "duplicate session", weil der ERSTE Versuch inzwischen doch durchgelaufen ist), propagierte der Fehler ungeprüft nach außen (503), obwohl die Session zu dem Zeitpunkt bereits existierte.
+- **Fix (`backend/app/engine/transport.py`, `_spawn_new_session()`):** komplett symmetrisch umgebaut — eine `for attempt in range(2)`-Schleife behandelt BEIDE Versuche identisch: JEDER `TransportError` (nicht nur ein Timeout) löst einen `_session_exists_after_timeout()`-Check aus, bevor über einen weiteren Versuch oder einen finalen Fehler entschieden wird. Existiert die Session nach einem Fehlversuch, wird das immer als Erfolg gewertet — unabhängig davon, OB oder WIE der zugrunde liegende Aufruf gescheitert ist. Scheitern beide Versuche UND existiert die Session danach nachweislich nicht, wird der ursprüngliche Fehler (Timeout- oder echte tmux-Fehlermeldung) unverändert weitergereicht — kein Informationsverlust für die Diagnose.
+- **Neuer Regressionstest:** `test_spawn_attaches_when_retry_collides_with_now_existing_session` (`backend/tests/test_proj64_tmux_reaping_haertung.py`) — deterministisch über ein `_tmux`-Monkeypatch nachgebildet (Versuch 1 timet aus, `has-session` sagt danach "existiert nicht", Versuch 2 kollidiert sofort mit "duplicate session", `has-session` sagt danach "existiert doch") — bildet exakt den von QA gefundenen Repro nach.
+
+### Tests
+- `test_proj64_tmux_reaping_haertung.py`: 9/9 grün (8 bestehende + 1 neuer Regressionstest für QA-BUG-1).
+- Volle Backend-Suite: **1132 passed** (vorher 1131 + 1 neuer Test), weiterhin derselbe 1 vorbestehende/unabhängige Fail (`test_generator_check_passes_no_drift`).
+
+### Offen für erneute QA
+- QA-BUG-1 ist behoben und per deterministischem Test abgedeckt. Bitte erneut gegen alle Acceptance Criteria prüfen, insbesondere AC „Existiert die tmux-Session nach einem Timeout tatsächlich bereits … Erfolg (attached) statt 503" — sollte jetzt auch für den Kollisions-Fall gelten, nicht nur den direkten Fall.
 
 ## QA Test Results
 
