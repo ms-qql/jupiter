@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from ..config import THRESHOLD_MAX_PCT, THRESHOLD_MIN_PCT, clamp_threshold, settings
-from ..engine import liveness, policy, watchdog
+from ..engine import liveness, policy, transport_settings, watchdog
 from ..engine.abc_phases import ABC_PHASES
 from ..engine.files import FileService
 from ..engine.provider_budget import provider_budget_store
@@ -27,6 +27,8 @@ from ..schemas.settings import (
     ProviderBudgetSettingRead,
     ThresholdSettingPatch,
     ThresholdSettingRead,
+    TransportSettingPut,
+    TransportSettingRead,
     TrustPolicyPut,
     TrustPolicyRead,
     WatchdogLimitsPut,
@@ -199,6 +201,23 @@ async def put_liveness(payload: LivenessLimitsPut) -> dict:
     """Schwellen ersetzen — Pydantic erzwingt die Wertebereiche; in YAML geschrieben, **live** aktiv."""
     try:
         return liveness.liveness_store.save(payload.model_dump())
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Tmux-Session-Transport (PROJ-63) --------------------------------------
+
+@router.get("/transports", response_model=TransportSettingRead)
+async def get_transports() -> dict:
+    """Aktueller Transport-Default + Engine-Overrides + tmux-Verfügbarkeit (live aus der Datei)."""
+    return transport_settings.transport_store.snapshot()
+
+
+@router.put("/transports", response_model=TransportSettingRead)
+async def put_transports(payload: TransportSettingPut) -> dict:
+    """Default/Overrides ersetzen — nur 'direct'/'tmux' zulässig; in YAML geschrieben, **live** aktiv."""
+    try:
+        return transport_settings.transport_store.save(payload.model_dump())
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

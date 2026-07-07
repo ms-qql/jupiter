@@ -116,6 +116,38 @@ async def test_sqlite_repo_roundtrip(tmp_path):
     by_id = {r["session_id"]: r for r in rows}
     assert by_id["s1"]["status"] == "done"  # upsert hat aktualisiert
     assert by_id["s2"]["status"] == "waiting"
+    # PROJ-63: Transport-Metadaten sind additiv — ein Zeilen-Upsert ohne diese
+    # Felder liefert einfach NULL zurück (kein Migrations-/Default-Fehler).
+    assert by_id["s1"]["transport"] is None
+    assert by_id["s2"]["tmux_session"] is None
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_repo_roundtrip_transport_metadata(tmp_path):
+    """PROJ-63: neue Spalten (transport/tmux_session/tmux_pane/tmux_capture_cursor/
+    transport_status) werden persistiert und beim Reload unverändert zurückgegeben."""
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    await repo.upsert(
+        {
+            "session_id": "s1",
+            "status": "running",
+            "owner": "dev",
+            "transport": "tmux",
+            "tmux_session": "jupiter-s1",
+            "tmux_pane": "%3",
+            "tmux_capture_cursor": 4096,
+            "transport_status": "verbunden",
+        }
+    )
+    rows = await repo.list_all()
+    row = rows[0]
+    assert row["transport"] == "tmux"
+    assert row["tmux_session"] == "jupiter-s1"
+    assert row["tmux_pane"] == "%3"
+    assert row["tmux_capture_cursor"] == 4096
+    assert row["transport_status"] == "verbunden"
     await repo.close()
 
 

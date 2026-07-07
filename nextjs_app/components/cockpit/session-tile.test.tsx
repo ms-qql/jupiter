@@ -45,6 +45,7 @@ function session(overrides: Partial<Session> = {}): Session {
     liveness: "aktiv",
     liveness_auto_attempts: 0,
     liveness_last_result: null,
+    transport: "direct",
     ...overrides,
   };
 }
@@ -72,5 +73,24 @@ describe("SessionTile — engine-agnostische Degradation (PROJ-18 · AC-5)", () 
       <SessionTile session={session({ engine: "ollama", context_known: false })} now={Date.parse("2026-06-24T10:05:00Z")} />,
     );
     expect(html).toContain("unbekannt");
+  });
+});
+
+describe("SessionTile — Transport-Badge (PROJ-63)", () => {
+  it("direct (Default): kein Transport-Badge", () => {
+    const html = renderToStaticMarkup(
+      <SessionTile session={session({ transport: "direct" })} now={Date.parse("2026-06-24T10:05:00Z")} />,
+    );
+    expect(html).not.toContain(">tmux<");
+  });
+
+  it("tmux: Transport-Badge sichtbar", () => {
+    const html = renderToStaticMarkup(
+      <SessionTile
+        session={session({ engine: "codex", transport: "tmux" })}
+        now={Date.parse("2026-06-24T10:05:00Z")}
+      />,
+    );
+    expect(html).toContain(">tmux<");
   });
 });

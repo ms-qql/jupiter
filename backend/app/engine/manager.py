@@ -25,12 +25,12 @@ from ..config import (
     settings,
 )
 from ..db import NullSessionIndexRepository, SessionIndexRepository
-from . import abc_phases, curation, liveness, policy, watchdog
+from . import abc_phases, curation, liveness, policy, transport_settings, watchdog
 from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .generic_cli_driver import GenericCliDriver
 from .openai_driver import OpenAIDriver
-from .registry import DRIVER_OPENAI, EngineProfile, engine_registry
+from .registry import DRIVER_GENERIC_CLI, DRIVER_OPENAI, EngineProfile, engine_registry
 from .cache_manager import CacheManager
 from .constitution import resolve_constitution
 from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
@@ -331,6 +331,11 @@ class SessionState:
     # PROJ-22 (M3): bei vollem Engine-Slot eingereihte Tickets (Plan-Posten als dict);
     # ein Hintergrund-Tick rückt sie automatisch nach, sobald ein Slot frei wird.
     queued_tickets: list[dict] = field(default_factory=list)
+    # PROJ-63: "direct" (Default) oder "tmux" — nur für generic_cli-Engines (Codex/
+    # OpenCode/Hermes) auflösbar; bei Claude bleibt es immer "direct". Wird beim
+    # Erststart aufgelöst und am State gehalten, damit ein Resume/Rehydrate denselben
+    # Transport verwendet (kein Wechsel mitten in einer Session durch Settings-Änderung).
+    transport: str = "direct"
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -385,6 +390,8 @@ class SessionState:
             "contract_pointer": self.contract_pointer,
             # M3: eingereihte (noch nicht gestartete) Tickets — nur IDs fürs Cockpit.
             "queued_ticket_ids": [t.get("ticket_id") for t in self.queued_tickets],
+            # PROJ-63: Transport-Badge fürs Cockpit ("direct" | "tmux").
+            "transport": self.transport,
         }
 
 
@@ -1228,6 +1235,7 @@ class SessionManager:
             "drained_at": s.drained_at,  # PROJ-33
             "resume_id": s.resume_id,  # PROJ-56
             "context_status": s.context_status,  # PROJ-56
+            "transport": s.transport,  # PROJ-63
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -1419,6 +1427,7 @@ class SessionManager:
             drained_at=row.get("drained_at"),  # PROJ-33
             resume_id=row.get("resume_id"),  # PROJ-56
             context_status=row.get("context_status"),  # PROJ-56
+            transport=row.get("transport") or "direct",  # PROJ-63
         )
 
     async def create(
@@ -1517,6 +1526,13 @@ class SessionManager:
         if profile.key == "codex":
             initial_prompt = f"{_CODEX_QUESTION_CARD_INSTRUCTION}\n\n{initial_prompt}"
 
+        # PROJ-63: Transport nur für generic_cli-Engines auflösen (Codex/OpenCode/Hermes
+        # zuerst) — Claude bleibt unberührt bei "direct". Am State gehalten (nicht bei
+        # jedem Resume neu aufgelöst), damit eine Settings-Änderung eine laufende Session
+        # nicht mitten im Betrieb auf einen anderen Transport umschaltet.
+        if profile.driver == DRIVER_GENERIC_CLI:
+            state.transport = transport_settings.transport_store.resolve(profile.key)
+
         driver = self._make_driver(profile)
         runtime = SessionRuntime(
             state, driver, on_done=self._write_session_log, on_persist=self._persist
@@ -1543,6 +1559,7 @@ class SessionManager:
             # PROJ-18: der Freigabe-Hook (PROJ-4) ist Claude-Code-spezifisch; andere
             # Engines kennen keinen PreToolUse-Hook → keine Settings-JSON.
             settings_json=self._hook_settings() if profile.is_claude else None,
+            transport=state.transport,  # PROJ-63
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -1688,6 +1705,7 @@ class SessionManager:
             resume=is_claude or resume_id is not None,
             resume_id=resume_id,
             settings_json=self._hook_settings() if is_claude else None,
+            transport=state.transport,  # PROJ-63: derselbe Transport wie beim Erststart.
         )
         try:
             await driver.start(spec, runtime.handle_event)

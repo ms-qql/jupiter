@@ -59,6 +59,18 @@ export function SessionTile({
             {session.engine}
           </Badge>
         )}
+        {/* PROJ-63: Transport-Badge — nur bei "tmux" sichtbar (Default "direct" bleibt
+            stumm, analog zur Claude-Engine oben), damit erkennbar ist, ob Backend-
+            Neustarts/Gerätewechsel diese Session nicht abbrechen können. */}
+        {session.transport === "tmux" && (
+          <Badge
+            variant="outline"
+            className="shrink-0 text-[10px] uppercase"
+            title="Läuft über tmux — übersteht Backend-Neustarts"
+          >
+            tmux
+          </Badge>
+        )}
         {canReanimate(session.liveness) && (
           <ReanimateButton sessionId={session.session_id} />
         )}

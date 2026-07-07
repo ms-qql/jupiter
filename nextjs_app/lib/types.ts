@@ -197,7 +197,13 @@ export interface Session {
   liveness_auto_attempts: number;
   /** PROJ-27: Ergebnis des letzten Reanimations-Versuchs (für die UI-Rückmeldung). */
   liveness_last_result: LivenessResult;
+  /** PROJ-63: "direct" (Default) oder "tmux" — nur bei generic_cli-Engines (Codex/
+   *  OpenCode/Hermes) je "tmux" möglich; bei Claude immer "direct". */
+  transport: SessionTransport;
 }
+
+/** PROJ-63: Transport-Badge — spiegelt ``engine/manager.py: SessionState.transport``. */
+export type SessionTransport = "direct" | "tmux";
 
 /** PROJ-8: kanonische ABC-Workflow-Phasen (spiegelt backend/app/engine/abc_phases.py). */
 export type AbcPhase =

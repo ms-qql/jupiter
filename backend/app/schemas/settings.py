@@ -231,3 +231,28 @@ class LivenessSettingRead(LivenessLimitsPut):
 
     source: str
     warning: str | None = None
+
+
+# --- PROJ-63: Tmux-Session-Transport (globaler Default + Engine-Overrides) --
+
+
+class TransportSettingPut(BaseModel):
+    """Transport-Wahl (PUT /settings/transports).
+
+    ``default_transport`` gilt für alle Engines ohne eigenen Eintrag in
+    ``engine_overrides``. Beide nur ``"direct"`` oder ``"tmux"`` — Default bleibt
+    konservativ ``"direct"``, bis der Spike ausgerollt ist.
+    """
+
+    default_transport: str = Field(default="direct", description="'direct' oder 'tmux'.")
+    engine_overrides: dict[str, str] = Field(
+        default_factory=dict, description="Engine-Key -> 'direct'/'tmux', z. B. {'codex': 'tmux'}."
+    )
+
+
+class TransportSettingRead(TransportSettingPut):
+    """Aktuelle Transport-Config + Herkunft/Warnung + tmux-Verfügbarkeit (GET /settings/transports)."""
+
+    source: str
+    warning: str | None = None
+    tmux_available: bool

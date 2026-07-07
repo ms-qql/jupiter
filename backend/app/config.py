@@ -40,6 +40,11 @@ _DEFAULT_PROVIDER_BUDGETS_PATH = str(
 # Auto-Reanimierung mit hartem Limit). Live mtime-geprüft wie Policy/Watchdog.
 _DEFAULT_LIVENESS_PATH = str(Path(__file__).resolve().parent.parent / "config" / "liveness.yaml")
 
+# Standard-Ort der Transport-Konfiguration (PROJ-63): backend/config/transport.yaml.
+# Muss NICHT existieren — fehlt/defekt → konservativer Default (global "direct", keine
+# Engine-Overrides). Live mtime-geprüft wie Policy/Watchdog/Liveness.
+_DEFAULT_TRANSPORT_PATH = str(Path(__file__).resolve().parent.parent / "config" / "transport.yaml")
+
 # Standard-Wurzel der Marktplatz/Registry (PROJ-26): backend/registry/. Dort liegen die
 # installierten Rollen/Skills/Agenten (manifest.yaml + definition.md + versions/) und das
 # Import/Export-Staging. Datei-first, kein DB-Zwang — git-versionierbar, von Hand prüfbar.
@@ -261,6 +266,19 @@ class Settings(BaseSettings):
     # Reanimierungs-Versuche/Backoff + globaler An/Aus-Schalter. Live mtime-geprüft;
     # fehlt/kaputt → konservative Defaults (nie „kein Liveness").
     liveness_config_path: str = _DEFAULT_LIVENESS_PATH
+
+    # --- PROJ-63: Tmux-Session-Transport (Spike + Transport-Abstraktion) ------
+    # Pfad/Name des tmux-Binaries. Fehlt es, meldet der tmux-Transport klar
+    # "nicht verfügbar" statt zu crashen; `direct` bleibt davon unberührt.
+    tmux_bin: str = "tmux"
+    # Arbeitsverzeichnis für FIFOs + stdout/stderr-Logs pro tmux-transportierter
+    # Session (ein Unterordner je tmux-Session-Name). Kein Vault-/DB-Ersatz — rein
+    # laufzeitbezogene Artefakte, analog zu den anderen jupiter-data-Pfaden.
+    tmux_data_dir: str = str(Path.home() / "jupiter-data" / "tmux")
+    # Transport-Konfigurationsdatei (globaler Default + optionale Engine-Overrides).
+    # Live mtime-geprüft; fehlt/kaputt → Default "direct" für alle Engines (Spec-
+    # Vorgabe: konservativ, bis der Spike abgeschlossen und ausgerollt ist).
+    transport_config_path: str = _DEFAULT_TRANSPORT_PATH
 
     # Marktplatz/Registry-Wurzel (PROJ-26): installierte Rollen/Skills/Agenten +
     # Import/Export-Staging. Wird bei Bedarf angelegt; leerer Ordner = leerer Katalog.

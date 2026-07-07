@@ -20,6 +20,7 @@ import json
 from .adapters import get_adapter
 from .base import EngineDriver, EventHandler, LaunchSpec, pid_alive
 from .events import StreamEvent
+from .transport import EXIT_MARKER, TmuxTransport, TransportError
 
 
 def build_generic_argv(
@@ -51,6 +52,12 @@ def build_generic_argv(
     if profile.bin and (not argv or argv[0] != profile.bin):
         argv = [profile.bin, *argv]
     return argv
+
+
+def _strip_exit_marker(text: str) -> str:
+    """Entfernt die interne tmux-Exit-Code-Marker-Zeile aus stderr, bevor sie dem
+    Nutzer als Fehlermeldung gezeigt wird (siehe ``transport.py: EXIT_MARKER``)."""
+    return "\n".join(ln for ln in text.splitlines() if not ln.startswith(EXIT_MARKER))
 
 
 def encode_input(text: str, input_format: str) -> bytes:
@@ -91,9 +98,19 @@ class GenericCliDriver(EngineDriver):
         # Merker prüfte `send_input` nur `is_alive` und schrieb erneut auf die längst
         # geschlossene Pipe → uvloop-Transport-Fehler ("handler is closed").
         self._stdin_closed = False
+        # PROJ-63: "direct" (heutiges Verhalten, unverändert) oder "tmux". Nur bei "tmux"
+        # wird `self._transport_obj` genutzt — für "direct" bleibt `self._proc` (s. o.)
+        # der alleinige Prozess-Zugriffspfad, exakt wie vor PROJ-63.
+        self._transport_mode = "direct"
+        self._transport_obj: TmuxTransport | None = None
 
     @property
     def is_alive(self) -> bool:
+        if self._transport_mode == "tmux":
+            # PROJ-63: dieselbe OS-Signal-0-Prüfung wie im direct-Pfad — der tmux-Pane-
+            # Prozess hat eine echte OS-PID, `pid_alive` ist transport-agnostisch.
+            transport = self._transport_obj
+            return transport is not None and pid_alive(transport.pid)
         proc = self._proc
         if proc is None or proc.returncode is not None:
             return False
@@ -102,6 +119,8 @@ class GenericCliDriver(EngineDriver):
 
     @property
     def pid(self) -> int | None:
+        if self._transport_mode == "tmux":
+            return self._transport_obj.pid if self._transport_obj is not None else None
         return self._proc.pid if self._proc is not None else None
 
     @property
@@ -120,6 +139,9 @@ class GenericCliDriver(EngineDriver):
     async def start(self, spec: LaunchSpec, on_event: EventHandler) -> None:
         self._on = on_event
         self._spec = spec
+        # PROJ-63: nur bei "tmux" wird der neue Pfad genutzt; jeder andere Wert
+        # (insb. der Default "direct") verhält sich exakt wie vor PROJ-63.
+        self._transport_mode = "tmux" if spec.transport == "tmux" else "direct"
         # PROJ-56: kontext-erhaltender Resume nach Treiber-Neubau (Restart/Reanimierung).
         # Für eine self-resume-fähige oneshot-CLI mit bekannter Resume-ID KEINEN frischen
         # Thread spawnen — nur die ID vormerken; der nächste ``send_input`` nimmt über das
@@ -132,17 +154,20 @@ class GenericCliDriver(EngineDriver):
         await self._emit(
             StreamEvent("system", "init", {"session_id": spec.session_id, "model": spec.model})
         )
-        await self._spawn(build_generic_argv(self.profile, spec), spec.project_path)
         # Initial-Prompt: per stdin (Default) — außer das Template trägt ihn schon als Arg.
-        if spec.initial_prompt and self.profile.prompt_via == "stdin":
-            await self._write_stdin(spec.initial_prompt)
+        prompt = spec.initial_prompt if (spec.initial_prompt and self.profile.prompt_via == "stdin") else None
+        await self._spawn(build_generic_argv(self.profile, spec), spec.project_path, prompt=prompt)
 
-    async def _spawn(self, argv: list[str], cwd: str) -> None:
-        """Startet einen Subprozess für GENAU einen Turn und hängt die Reader an."""
+    async def _spawn(self, argv: list[str], cwd: str, *, prompt: str | None = None) -> None:
+        """Startet einen Subprozess (direct) bzw. respawnt die tmux-Session (tmux) für
+        GENAU einen Turn und hängt die Reader an."""
         self._stopping = False
         self._saw_final_result = False
         self._stderr_buf = []
         self._stdin_closed = False
+        if self._transport_mode == "tmux":
+            await self._spawn_tmux(argv, cwd, prompt=prompt)
+            return
         self._proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
@@ -152,6 +177,35 @@ class GenericCliDriver(EngineDriver):
         )
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._read_stderr())
+        # Verhalten unverändert: Schreiben ERST nachdem der Prozess/die Reader stehen
+        # (identische Reihenfolge zu vor PROJ-63, nur in `_spawn` verlagert).
+        if prompt is not None and self.profile.prompt_via == "stdin":
+            await self._write_stdin(prompt)
+
+    async def _spawn_tmux(self, argv: list[str], cwd: str, *, prompt: str | None) -> None:
+        """PROJ-63: Oneshot-Turn unter tmux — Prompt (falls vorhanden) vorab in eine
+        Datei schreiben und per echtem Datei-Redirect übergeben (kein PTY, kein
+        TTY-Fehler, siehe Spike-Ergebnisse in features/PROJ-63-*.md). Jeder Turn ruft
+        `TmuxTransport.spawn()` erneut auf — eine gleichnamige Vorgänger-Session wird
+        dabei zuerst sauber beendet (respawn), der tmux-Session-Name bleibt stabil."""
+        if self._transport_obj is None:
+            session_key = self._spec.session_id if self._spec is not None else "session"
+            self._transport_obj = TmuxTransport(session_key)
+        stdin_file: str | None = None
+        if prompt is not None and self.profile.prompt_via == "stdin":
+            data = encode_input(prompt, self.profile.input_format)
+            stdin_file = self._transport_obj.prepare_prompt_file(data)
+        try:
+            await self._transport_obj.spawn(
+                argv, cwd=cwd, long_lived=False, stdin_file=stdin_file
+            )
+        except TransportError as exc:
+            await self._emit(StreamEvent("system", "error", {"message": str(exc)}))
+            raise
+        # Oneshot-Semantik: der Prompt ist bereits vollständig übergeben (Datei-Redirect),
+        # kein separates `send_input` auf eine offene Pipe möglich/nötig.
+        self._stdin_closed = True
+        self._reader_task = asyncio.create_task(self._read_stdout())
 
     async def _write_stdin(self, text: str) -> None:
         """Schreibt eine Eingabe in den laufenden Prozess (oneshot: schließt stdin danach)."""
@@ -205,9 +259,8 @@ class GenericCliDriver(EngineDriver):
             argv = build_generic_argv(
                 self.profile, spec, resume=True, resume_id=self._resume_id
             )
-            await self._spawn(argv, spec.project_path)
-            if self.profile.prompt_via == "stdin":
-                await self._write_stdin(text)
+            prompt = text if self.profile.prompt_via == "stdin" else None
+            await self._spawn(argv, spec.project_path, prompt=prompt)
             return
         raise RuntimeError("Session läuft nicht.")
 
@@ -215,8 +268,19 @@ class GenericCliDriver(EngineDriver):
         self._paused = True
 
     async def stop(self) -> None:
-        proc = self._proc
         self._stopping = True
+        if self._transport_mode == "tmux":
+            # PROJ-63: `self._proc` bleibt im tmux-Modus immer None — ohne diesen
+            # eigenen Zweig würde der `proc is None`-Fall unten greifen und NUR das
+            # `closed`-Event emittieren, ohne die tmux-Session tatsächlich zu beenden
+            # (Prozess-/Ressourcen-Leck).
+            if self._transport_obj is not None:
+                await self._transport_obj.kill()
+            if self._stderr_task is not None:
+                self._stderr_task.cancel()
+            await self._emit(StreamEvent("system", "closed", {}))
+            return
+        proc = self._proc
         if proc is None:
             # PROJ-59: Self-Resume-Zustand (oneshot-CLI zwischen Turns nach Reanimierung/
             # Neustart) — kein Prozess gespawnt, aber die Session gilt als aktiv/wartend.
@@ -252,8 +316,13 @@ class GenericCliDriver(EngineDriver):
             await self._on(event)
 
     async def _read_stdout(self) -> None:
-        assert self._proc is not None and self._proc.stdout is not None
-        stream = self._proc.stdout
+        is_tmux = self._transport_mode == "tmux"
+        if is_tmux:
+            assert self._transport_obj is not None
+            stream = self._transport_obj
+        else:
+            assert self._proc is not None and self._proc.stdout is not None
+            stream = self._proc.stdout
         while True:
             line = await stream.readline()
             if not line:  # EOF → Prozess fertig
@@ -270,7 +339,7 @@ class GenericCliDriver(EngineDriver):
             if event.type == "result" and event.raw.get("final", True):
                 self._saw_final_result = True
             await self._emit(event)
-        rc = await self._proc.wait()
+        rc = await self._transport_obj.wait() if is_tmux else await self._proc.wait()
         # Selbst gestoppt → closed (→ done). PROJ-48: ein resumefähiger oneshot-Turn, der
         # sauber mit Turn-Ende endete, ist NICHT „done" — die Session bleibt fortsetzbar
         # (Status bleibt „wartet", gesetzt vom result-Event); kein `closed` emittieren.
@@ -289,7 +358,11 @@ class GenericCliDriver(EngineDriver):
                 StreamEvent("system", "closed", {"reason": "no_final_result"})
             )
         else:
-            msg = "".join(self._stderr_buf).strip() or f"Prozess endete mit Code {rc}."
+            if is_tmux:
+                stderr_text = _strip_exit_marker(await self._transport_obj.read_stderr_text())
+            else:
+                stderr_text = "".join(self._stderr_buf)
+            msg = stderr_text.strip() or f"Prozess endete mit Code {rc}."
             await self._emit(StreamEvent("system", "error", {"message": msg}))
 
     async def _read_stderr(self) -> None:

@@ -52,6 +52,7 @@ function makeSession(over: Partial<Session>): Session {
     liveness: "aktiv",
     liveness_auto_attempts: 0,
     liveness_last_result: null,
+    transport: "direct",
     ...over,
   };
 }
