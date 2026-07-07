@@ -19,11 +19,13 @@ from fastapi import Depends
 from .config import settings
 from .db import (
     BookNuggetsRepository,
+    PeppermintRepository,
     SessionCondenseRepository,
     SessionIndexRepository,
     VideoSummaryRepository,
     build_auth_repo,
     build_book_nuggets_repo,
+    build_peppermint_repo,
     build_session_condense_repo,
     build_session_index_repo,
     build_video_summary_repo,
@@ -51,6 +53,7 @@ from .engine.usage import ProviderBudgetService, UsageService
 from .engine.vault import VaultService
 from .engine.video_summary import VideoSummaryWorker
 from .engine.book_nuggets import BookNuggetsWorker
+from .engine.peppermint import PeppermintTriageWorker
 from .engine.session_condense import SessionCondenseWorker
 from .routes import (
     agents,
@@ -65,6 +68,7 @@ from .routes import (
     md,
     metrics,
     permission,
+    peppermint,
     projects,
     recovery,
     registry,
@@ -148,6 +152,28 @@ async def _session_condense_loop(app: FastAPI) -> None:
             logger.warning("Session-Kondensierungs-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
 
 
+async def _peppermint_loop(app: FastAPI) -> None:
+    """PROJ-67: Polling/Analyse/Notizsync fuer das Peppermint Dashboard."""
+    while True:
+        try:
+            await asyncio.sleep(await _peppermint_loop_interval(app))
+            await app.state.peppermint.tick()
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001 — Worker-Tick nie fatal.
+            logger.warning("Peppermint-Tick fehlgeschlagen — Loop läuft weiter.", exc_info=True)
+
+
+async def _peppermint_loop_interval(app: FastAPI) -> float:
+    """Liest das konfigurierbare Polling-Intervall aus den Peppermint-Settings."""
+    fallback = float(settings.peppermint_poll_interval_seconds)
+    try:
+        cfg = await app.state.peppermint.get_settings()
+        return float(cfg.get("polling_interval_seconds") or fallback)
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
 async def _coordinator_loop(app: FastAPI) -> None:
     """PROJ-22 (M3): niederfrequenter Tick, der eingereihte Flotten-Tickets nachrückt,
     sobald ein Engine-Slot frei wird. Defensiv — ein Fehler je Tick wird geloggt, der
@@ -186,6 +212,7 @@ def create_app(
     video_summary_repo: VideoSummaryRepository | None = None,
     book_nuggets_repo: BookNuggetsRepository | None = None,
     session_condense_repo: SessionCondenseRepository | None = None,
+    peppermint_repo: PeppermintRepository | None = None,
 ) -> FastAPI:
     # PROJ-14: Live-Index-Repository (SQLite, host-nativ). Tests können eine
     # eigene/In-Memory-Variante einschleusen; ohne Angabe greift die Settings-Factory.
@@ -196,6 +223,8 @@ def create_app(
     bn_repo = book_nuggets_repo or build_book_nuggets_repo(settings)
     # PROJ-55: Repo der Session-Kondensierung (Queue + Einstellungen + Lauf-Protokoll).
     sc_repo = session_condense_repo or build_session_condense_repo(settings)
+    # PROJ-67: Repo des Peppermint-Dashboards (Ticket-Spiegel + Settings).
+    pm_repo = peppermint_repo or build_peppermint_repo(settings)
     # PROJ-25: Auth-Persistenz (Konten + Refresh-Register) auf derselben SQLite-Datei.
     auth_repo = build_auth_repo(settings)
 
@@ -233,6 +262,11 @@ def create_app(
             await app.state.session_condense.startup()
         except Exception:  # noqa: BLE001 — best-effort, App startet trotzdem.
             pass
+        # PROJ-67: Peppermint-Ticketspiegel initialisieren.
+        try:
+            await app.state.peppermint.startup()
+        except Exception:  # noqa: BLE001 — best-effort, App startet trotzdem.
+            pass
         # PROJ-42: ersten Metrik-Snapshot ziehen, damit /current sofort Daten liefert.
         try:
             await app.state.metrics.startup()
@@ -246,6 +280,8 @@ def create_app(
         book_nuggets_task = asyncio.create_task(_book_nuggets_loop(app))
         # PROJ-55: Session-Kondensierungs-Sweep-Loop (Wochenplan + Verarbeitung).
         session_condense_task = asyncio.create_task(_session_condense_loop(app))
+        # PROJ-67: Peppermint-Polling/Analyse/Notizsync.
+        peppermint_task = asyncio.create_task(_peppermint_loop(app))
         # PROJ-42: periodischer Host-Metrik-Tick (VPS-Admin).
         metrics_task = asyncio.create_task(_metrics_loop(app))
         # PROJ-22 (M3): Flotten-Warteschlange nachrücken, sobald Slots frei werden.
@@ -253,7 +289,7 @@ def create_app(
         try:
             yield
         finally:
-            for task in (liveness_task, video_summary_task, book_nuggets_task, session_condense_task, metrics_task, coordinator_task):
+            for task in (liveness_task, video_summary_task, book_nuggets_task, session_condense_task, peppermint_task, metrics_task, coordinator_task):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
@@ -267,6 +303,7 @@ def create_app(
             await vs_repo.close()  # PROJ-41
             await bn_repo.close()  # PROJ-53
             await sc_repo.close()  # PROJ-55
+            await pm_repo.close()  # PROJ-67
             await auth_repo.close()  # PROJ-25
 
     app = FastAPI(title="Jupiter", version="0.1.0", lifespan=lifespan)
@@ -328,6 +365,9 @@ def create_app(
     # PROJ-55: Session-Kondensierungs-Worker (Wochen-Sweep alter Sessions → Knowledge).
     app.state.session_condense_repo = sc_repo
     app.state.session_condense = SessionCondenseWorker(app.state.manager, sc_repo, vault_service)
+    # PROJ-67: Peppermint Dashboard Worker (Ticket-Spiegel + Frontdesk-Triage).
+    app.state.peppermint_repo = pm_repo
+    app.state.peppermint = PeppermintTriageWorker(app.state.manager, pm_repo)
     # PROJ-14: UI-Check-Micro-App liest/schreibt lokale Run-Artefakte im
     # UI-Check-Projekt; keine eigene Datenbank.
     app.state.ui_check = UiCheckService()
@@ -360,6 +400,8 @@ def create_app(
     app.include_router(video_summary.router, dependencies=auth_gate)
     app.include_router(book_nuggets.router, dependencies=auth_gate)  # PROJ-53
     app.include_router(session_condense.router, dependencies=auth_gate)  # PROJ-55
+    app.include_router(peppermint.webhook_router)  # PROJ-67: eigener Secret-Check
+    app.include_router(peppermint.router, dependencies=auth_gate)  # PROJ-67
     app.include_router(ui_check.router, dependencies=auth_gate)  # PROJ-14
     app.include_router(coordinator.router, dependencies=auth_gate)
     app.include_router(challenge.router, dependencies=auth_gate)

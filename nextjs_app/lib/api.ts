@@ -75,6 +75,11 @@ import type {
   SessionCondenseQueue,
   SessionCondenseRun,
   SessionCondenseSettings,
+  PeppermintSettings,
+  PeppermintStatus,
+  PeppermintSummary,
+  PeppermintTicket,
+  PeppermintTicketList,
   UiCheckRunDetail,
   UiCheckRunsResponse,
   UiCheckStartRequest,
@@ -1658,5 +1663,71 @@ export function patchSessionCondenseSettings(
   return request<SessionCondenseSettings>("/session-condense/settings", {
     method: "PATCH",
     body: JSON.stringify(patch),
+  });
+}
+
+// --- PROJ-67: Peppermint Dashboard (native Micro-App) ----------------------
+
+export function getPeppermintStatus(signal?: AbortSignal): Promise<PeppermintStatus> {
+  return request<PeppermintStatus>("/peppermint/status", { signal });
+}
+
+export function getPeppermintTickets(
+  filters: {
+    analysis_status?: string;
+    urgency?: string;
+    status?: string;
+    q?: string;
+  } = {},
+  signal?: AbortSignal,
+): Promise<PeppermintTicketList> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  const qs = params.toString();
+  return request<PeppermintTicketList>(`/peppermint/tickets${qs ? `?${qs}` : ""}`, {
+    signal,
+  });
+}
+
+export function getPeppermintSummary(signal?: AbortSignal): Promise<PeppermintSummary> {
+  return request<PeppermintSummary>("/peppermint/summary", { signal });
+}
+
+export function getPeppermintSettings(
+  signal?: AbortSignal,
+): Promise<PeppermintSettings> {
+  return request<PeppermintSettings>("/peppermint/settings", { signal });
+}
+
+export function patchPeppermintSettings(
+  patch: Partial<{
+    base_url: string;
+    active: boolean;
+    polling_interval_seconds: number;
+    webhook_secret: string;
+    api_token: string;
+  }>,
+): Promise<PeppermintSettings> {
+  return request<PeppermintSettings>("/peppermint/settings", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function pollPeppermintNow(): Promise<PeppermintTicketList> {
+  return request<PeppermintTicketList>("/peppermint/poll-now", { method: "POST" });
+}
+
+export function retryPeppermintAnalysis(id: number): Promise<PeppermintTicket> {
+  return request<PeppermintTicket>(`/peppermint/tickets/${id}/analyze`, {
+    method: "POST",
+  });
+}
+
+export function retryPeppermintNoteSync(id: number): Promise<PeppermintTicket> {
+  return request<PeppermintTicket>(`/peppermint/tickets/${id}/sync-note`, {
+    method: "POST",
   });
 }

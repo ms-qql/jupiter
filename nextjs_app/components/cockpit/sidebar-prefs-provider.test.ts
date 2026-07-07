@@ -20,6 +20,7 @@ describe("buildDefaults", () => {
     expect(d.sessions).toEqual({ visible: true, order: 0 });
     expect(d["budget:claude"]).toEqual({ visible: true, order: 0 });
     expect(d["budget:codex"]).toEqual({ visible: true, order: 1 });
+    expect(d["budget:opencode"]).toEqual({ visible: true, order: 2 });
   });
 });
 
@@ -125,6 +126,7 @@ describe("RESET", () => {
       sessions: { visible: true, order: 0 },
       "budget:claude": { visible: true, order: 0 },
       "budget:codex": { visible: true, order: 1 },
+      "budget:opencode": { visible: true, order: 2 },
     });
   });
 });

@@ -246,15 +246,27 @@ def validate_project_path(path: str) -> str:
     Wirft ``ValueError`` (→ 400) bei Verletzung des Projekt-Scopes.
     """
     real = os.path.realpath(path)
-    roots = [os.path.realpath(r) for r in settings.allowed_roots]
+    roots = _session_project_roots()
     if not any(real == r or real.startswith(r + os.sep) for r in roots):
         raise ValueError(
             "Projektpfad liegt außerhalb des erlaubten Bereichs "
-            f"({', '.join(settings.allowed_roots)})."
+            f"({', '.join(roots)})."
         )
     if not os.path.isdir(real):
         raise ValueError("Projektpfad existiert nicht oder ist kein Verzeichnis.")
     return real
+
+
+def _session_project_roots() -> list[str]:
+    """Session-cwd ist enger als Explorer-Browse-Roots."""
+    roots: list[str] = []
+    for root in settings.allowed_roots:
+        real = os.path.realpath(root)
+        if real == "/home/dev":
+            roots.extend([os.path.realpath("/home/dev/projects"), os.path.realpath("/home/dev/tools")])
+        else:
+            roots.append(real)
+    return list(dict.fromkeys(roots))
 
 
 @dataclass

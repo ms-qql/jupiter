@@ -28,6 +28,11 @@ from .session_condense_queue import (
     SqliteSessionCondenseRepository,
     build_session_condense_repo,
 )
+from .peppermint_queue import (
+    PeppermintRepository,
+    SqlitePeppermintRepository,
+    build_peppermint_repo,
+)
 from .auth_store import SqliteAuthRepository, build_auth_repo
 
 __all__ = [
@@ -44,6 +49,9 @@ __all__ = [
     "SessionCondenseRepository",
     "SqliteSessionCondenseRepository",
     "build_session_condense_repo",
+    "PeppermintRepository",
+    "SqlitePeppermintRepository",
+    "build_peppermint_repo",
     "SqliteAuthRepository",
     "build_auth_repo",
 ]

@@ -172,6 +172,14 @@ engines:
     group: micro
     icon: wand-sparkles
 
+  # PROJ-67: Peppermint Dashboard — native Micro-App fuer Ticketspiegel,
+  # automatische Frontdesk-Triage, KPIs und interne Notiz-Sync-Retries.
+  - key: peppermint_dashboard
+    label: "Peppermint Dashboard"
+    kind: native
+    group: micro
+    icon: ticket
+
   # --- Tiefe 3: Launch-Button ---------------------------------------------
   # Für nicht integrierbare Tools: öffnet/startet extern.
   - key: gpt-web

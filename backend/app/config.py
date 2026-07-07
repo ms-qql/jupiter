@@ -420,6 +420,24 @@ class Settings(BaseSettings):
     # der Nutzer sie immer am selben Ort findet. Speist auch die Bibliotheks-Kachel.
     video_summary_output_subdir: str = "04 Resources/Video Summaries"
 
+    # --- Peppermint Dashboard (PROJ-67) ----------------------------------
+    # Native Micro-App: lokaler SQLite-Spiegel von Peppermint-Tickets + Worker,
+    # der neue Tickets per `abc-frontdesk-check` triagiert und den Report als
+    # interne Notiz nach Peppermint zurückschreibt.
+    peppermint_db_path: str = str(Path.home() / "jupiter-data" / "peppermint_dashboard.db")
+    peppermint_base_url: str = "http://100.125.96.77:3009/"
+    # Server-seitige Auth. Bevorzugt wird Login -> Session-Token; `peppermint_token`
+    # ist nur ein Fallback für manuell bereitgestellte Session/Bearer-Tokens.
+    peppermint_login_email: str = ""
+    peppermint_login_password: str = ""
+    peppermint_token: str = ""
+    peppermint_webhook_secret: str = ""
+    peppermint_poll_interval_seconds: float = 60.0
+    peppermint_request_timeout_seconds: float = 15.0
+    peppermint_analysis_model: str = "sonnet"
+    peppermint_analysis_permission_mode: str = "default"
+    peppermint_frontdesk_report_dir: str = "/home/dev/projects/immo-crm/docs/frontdesk-check"
+
     # --- Buch-Nuggets (PROJ-53) ------------------------------------------
     # Native Micro-App: reiht Bücher (Upload/URL: pdf/epub/txt/docx) ein und lässt
     # sie von einer headless Claude-Session über den `hal-book-nuggets`-Skill in ein
