@@ -1,6 +1,6 @@
 # PROJ-66: Bugfix: Session-Transkript von Oneshot-Engines geht bei Backend-Neustart dauerhaft verloren
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -58,17 +58,59 @@ Dies ist eine andere, schwerwiegendere Baustelle als `features/PROJ-65-tmux-ones
 - Zwei Neustarts kurz hintereinander, bevor der erste `rehydrate()`-Lauf fertig war — keine doppelte Rehydrierung/doppelte Einträge.
 
 ## Technical Requirements
-- Neue DB-Tabelle (Arbeitstitel `session_transcript_entries`): `id`, `session_id` (FK), `entry_index` (fortlaufend pro Session), `payload` (JSON, entspricht `TranscriptEntry`), `created_at`.
-- `backend/app/engine/manager.py`: Stelle, an der ein `TranscriptEntry` aktuell nur an `self.transcript` angehängt wird — dort zusätzlich synchron/transaktional in die neue Tabelle schreiben.
-- `backend/app/engine/manager.py::rehydrate()` (Zeile ~1283-1323): `SessionRuntime.transcript` aus der neuen Tabelle befüllen statt leer zu initialisieren.
-- Löschpfad (PROJ-21, Session-Löschen): persistierte Einträge der Tabelle mit löschen (`ON DELETE CASCADE` oder expliziter Cleanup).
+_(verfeinert in „Tech Design" unten — Blob-pro-Session statt Append-Zeilen-Tabelle, siehe Begründung dort)_
+- Neue DB-Tabelle `session_transcript`: `session_id` (Schlüssel, kein FK-Constraint, analog `session_context`), `entries` (JSON, vollständiger `TranscriptEntry`-Verlauf), `updated_at`.
+- `backend/app/engine/manager.py`: an den vier bestehenden Append-Stellen (`:582-584`, `:589-591`, `:624-626`, `:1615`) zusätzlich best-effort/fire-and-forget den aktuellen `self.transcript`-Stand in `session_transcript` upserten (gleiches Muster wie `save_context`).
+- `backend/app/engine/manager.py::rehydrate()` (Zeile ~1283-1323): `SessionRuntime.transcript` aus `session_transcript` befüllen (für Oneshot-/Self-Resume-Engines, dieselbe Fallunterscheidung wie in `_resume()`), statt leer zu initialisieren.
+- Löschpfad (PROJ-21, `_delete_sync` in `session_index.py:243-251`): zusätzliche `DELETE FROM session_transcript WHERE session_id = ?`-Zeile.
 - Neue Tests unter `backend/tests/test_proj66_transkript_persistenz_rehydrate.py`.
 
 ---
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-07-07 · **Stack:** FastAPI (`backend/app/engine/manager.py`) + SQLite Live-Index (`backend/app/db/session_index.py`) · **Branch:** dev
+
+### Grundlage (CodeGraph-Exploration, verifiziert)
+- `TranscriptEntry` (`manager.py:260-265`) hat die Felder `role`, `kind`, `text`, `ts`. Es gibt genau **vier** Stellen, an denen ein Eintrag ans In-Memory-`self.transcript` gehängt wird: Assistant-„Thinking" (`:582-584`), Assistant-Text (`:589-591`), synthetischer Tool-Eintrag (`:624-626`, aus PROJ-62), User-Text (`:1615`). Das sind die einzigen Hook-Punkte, die eine Persistenz-Anbindung brauchen.
+- `rehydrate()` (`manager.py:1283-1323`) baut bei jedem Neustart pro DB-Zeile eine **neue** `SessionRuntime` mit leerem `transcript` — im Gegensatz zu `_resume()`/`_reanimate_once()`, die ein bestehendes Runtime-Objekt weiterverwenden und dessen `transcript` dadurch implizit erhalten. Es gibt aktuell **keinen** Codepfad, der `transcript` je aus einer Quelle außer dem laufenden Prozess befüllt.
+- Es existiert bereits eine strukturell ähnliche, aber **andersartige** Tabelle: `session_context` (`session_index.py:117-121`, PROJ-56). Sie speichert einen einzigen JSON-Blob (`messages`) im **Provider-Rohformat** (z. B. OpenAI-Message-Dicts) — nicht im `TranscriptEntry`-UI-Format — und **nur für Engines ohne Self-Resume** (OpenAI/OpenRouter direkt). Codex/OpenCode (`supports_self_resume`) haben kein `conversation_history`-Attribut auf ihrem Treiber, daher überspringt `_persist()` (`manager.py:1241-1262`) den Save für sie stillschweigend (kein expliziter Check, sondern `getattr(..., None)` liefert `None`).
+- `GET /sessions/{id}` und der WS-Snapshot (`routes/sessions.py:111-118`, `:383-389`) lesen `runtime.transcript` direkt aus dem Speicher — keine Änderung an diesen Endpunkten nötig, sobald `transcript` beim Rehydrieren korrekt befüllt ist.
+- Löschen (PROJ-21) entfernt `session_index`- und `session_context`-Zeilen in `_delete_sync` (`session_index.py:243-251`) — jede neue Tabelle muss dort eine identische `DELETE`-Zeile bekommen.
+- `_write_session_log` (Obsidian-MD beim ersten DONE) liest ebenfalls nur `runtime.transcript`, schreibt aber unabhängig in den Vault — bleibt unangetastet.
+
+### A) Betroffene Komponenten (kein UI-Baum nötig)
+Reine Backend-Persistenz — an der Sidebar/Session-Ansicht ändert sich nichts, sie liest weiterhin dieselbe `transcript`-Struktur wie heute, nur dass diese nach einem Neustart nicht mehr leer ist:
+```
+manager.py (4 bestehende Append-Stellen)
+└── neuer Persistenz-Hook (best-effort, fire-and-forget)
+        └── neue Tabelle: session_transcript
+rehydrate()
+└── liest session_transcript → befüllt SessionRuntime.transcript vor Auslieferung an Routen
+```
+
+### B) Datenmodell (einfache Sprache)
+Eine **neue** Tabelle `session_transcript` (bewusst getrennt von `session_context`, weil andere Datenform und anderer Zweck — UI-Transkript statt Provider-Rohverlauf):
+- `session_id` — Schlüssel, ein Eintrag pro Session (kein Fremdschlüssel-Constraint, analog zu `session_context`/`session_index`)
+- `entries` — der komplette aktuelle Transkript-Inhalt als JSON (Liste von `TranscriptEntry`-artigen Objekten)
+- `updated_at` — Zeitstempel der letzten Aktualisierung
+
+**Bewusste Vereinfachung gegenüber dem ursprünglichen Spec-Entwurf** (dort als "Arbeitstitel" mit `entry_index`-Append-Zeilen skizziert): Statt einer echten Zeile-pro-Eintrag-Tabelle mit fortlaufendem Index wird — wie bei `session_context` — **ein Blob pro Session** geschrieben, der bei jedem der vier Hook-Punkte mit dem aktuellen, vollständigen In-Memory-Transkript überschrieben wird (Upsert, gleiches Muster wie `save_context`). Das vermeidet die in den Edge Cases der Spec beschriebene Komplexität (Lücken/Kollisionen im `entry_index` bei parallelem Neustart + neuem Turn) komplett, weil es keinen Index gibt, der aus der Reihe kommen könnte — es gibt immer nur „den aktuellen Stand". Da die Schreibungen best-effort und pro Eintrag (nicht pro Zeichen) passieren, verliert ein Crash mitten im Turn höchstens den seit dem letzten Hook-Punkt ungeschriebenen Rest — das erfüllt die Acceptance Criteria sogar granularer als gefordert (nicht nur „ganze Turns bleiben erhalten", sondern auch bereits sichtbare Teil-Antworten).
+
+Gilt für **alle Oneshot-Engines** (Codex, OpenCode), nicht nur Codex. Die Schreib-Hooks selbst müssen dabei nicht nach Engine unterscheiden (einheitlich, einfacher Code) — sie sind ohnehin billig und best-effort. Die **Lesbarkeit beim Rehydrieren** wird an derselben Fallunterscheidung gespiegelt, die `_resume()` heute schon trifft (`is_claude` vs. `driver.supports_self_resume` vs. sonstige) — Long-lived Claude-Sessions bleiben dadurch unverändert (Scope-Abgrenzung der Spec), ohne dass der Schreibpfad selbst verzweigen muss.
+
+### C) API-Form
+Keine neuen oder geänderten Endpunkte. `GET /sessions/{id}` und die WS-Snapshot-Antwort liefern unverändert `runtime.transcript` — der Unterschied ist rein, dass dieses Feld nach einem Neustart bereits gefüllt ankommt statt leer zu sein.
+
+### D) Tech-Entscheidungen (Begründung)
+- **Warum eine neue Tabelle statt `session_context` zu erweitern:** `session_context` ist an das Provider-Rohformat für Nicht-Self-Resume-Engines gebunden (eigene Cap-Logik `_cap_history`, eigene Lade-Semantik in `_resume()`). Das UI-Transkript hat eine andere Form (`TranscriptEntry`) und einen anderen Zweck (Anzeige, nicht Modell-Kontext). Eine eigene Tabelle hält beide Belange sauber getrennt und lässt `session_context` unangetastet.
+- **Warum ein Blob pro Session statt echter Append-Zeilen:** Einfacher, kein Index-Bookkeeping über einen Neustart hinweg, passt zum bereits etablierten Muster (`session_context`) und zur „Single-Writer, WAL, günstige Schreibungen"-Prämisse des Live-Index. Transkripte sind pro Session natürlich begrenzt (Turns eines Chats), das Wiederschreiben des ganzen Blobs bei jedem Append bleibt günstig.
+- **Warum kein Cap/keine Kürzung** (anders als `session_context`): Das UI-Transkript ist das, was der Nutzer tatsächlich sehen will — im Gegensatz zum Provider-Kontext (der nur die Modell-Fortsetzung füttert) gibt es hier keinen fachlichen Grund, ältere Teile wegzuwerfen. Sollte das in der Praxis zu groß werden, ist das ein separates, später zu beobachtendes Problem (nicht Teil dieses Tickets).
+- **Warum Best-effort/fire-and-forget statt synchron blockierend:** Konsistent mit jedem anderen Schreibpfad in diesem Persistenz-Seam (`session_index.upsert`, `save_context`) — ein DB-Fehler darf den Live-Betrieb nie blockieren, nur zu einer Warnung degradieren.
+- **Warum Rehydrierung nur für Oneshot-/Self-Resume-Engines:** Bewahrt exakt das heutige Verhalten für Claude (Scope-Abgrenzung der Spec), ohne eine neue Sonderfall-Verzweigung im Schreibpfad einzuführen — die Unterscheidung existiert an der Lesestelle (`rehydrate()`) bereits implizit durch die vorhandene `_resume()`-Fallunterscheidung.
+
+### E) Abhängigkeiten (Pakete)
+Keine neuen Pakete — nutzt dieselbe `sqlite3`/sync-über-`asyncio.to_thread`-Infrastruktur, die `session_index.py` bereits für `session_context` verwendet.
 
 ## Implementation Notes
 _To be added by /abc-backend_
