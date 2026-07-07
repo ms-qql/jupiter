@@ -1,8 +1,8 @@
 # PROJ-55: Session-Kondensierung — Wochen-Sweep alter Sessions in Hal-Knowledge
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-07-04
-**Last Updated:** 2026-07-04
+**Last Updated:** 2026-07-07
 
 ## Kurzbeschreibung
 Ein Skill (plus planbarer Wochen-Lauf), der periodisch über die in Hal abgelegten
@@ -384,4 +384,16 @@ bzw. by design, nicht backend-unit-testbar.
 Vor Deploy: engines.yaml-Kachel auf prod nachziehen; Trivial-Schwelle an echten Alt-Sessions kalibrieren (P2).
 
 ## Deployment
-_To be added by /abc-deploy_
+
+**Bookkeeping-Nachtrag (2026-07-07):** Der Status-Header dieser Spec blieb nach der Implementierung fälschlich auf „Planned" stehen, obwohl Tech Design, Implementierung und QA (siehe oben, alle 2026-07-04) vollständig durchlaufen und das Feature bereits am selben Tag nach `main` gemergt und deployt wurde — hier nur die Doku nachgezogen, kein neuer Code.
+
+**Datum:** 2026-07-04 · **Version:** 0.27.4 · **Branch:** main · **Production URL:** https://jupiter.auxevo.tech
+
+### Ausgeliefert
+- Skill-gestützter Wochen-Sweep über Roh-Session-Logs in Hal (`Agentic OS/Jupiter/Sessions/`), kondensiert Erkenntnisse älter als 7 Tage in kuratierte Knowledge-Notizen.
+- Micro-App-Kachel „Session-Kondensierung" (`session_condense`, `kind=native`) in `backend/config/engines.yaml` — verifiziert bereits vorhanden (manueller Deploy-Schritt aus dem QA-Hinweis war bereits erledigt).
+- Archiv-Verhalten: kopieren → dann löschen; Fehler lassen das Roh-Log unangetastet (kein Datenverlust).
+
+### Smoke-Test
+- [x] `session_condense`-Kachel in `engines.yaml` vorhanden (verifiziert 2026-07-07).
+- [ ] Trivial-Schwelle an echten Alt-Sessions kalibrieren (P2, aus QA-Notizen — kein Blocker).

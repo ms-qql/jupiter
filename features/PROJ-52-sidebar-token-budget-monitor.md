@@ -2,7 +2,7 @@
 
 ## Status: Deployed
 **Created:** 2026-06-27
-**Last Updated:** 2026-06-28
+**Last Updated:** 2026-07-07
 
 ## Dependencies
 - Requires: PROJ-3 (Cockpit + Sidebar) — Anzeige sitzt unten in der persistenten Sidebar.
@@ -487,3 +487,16 @@ ProviderBudgetService  (backend/app/engine/usage.py)
 
 ### Ergebnis
 Keine Critical- oder High-Findings. PROJ-52 Iteration 2 ist aus QA-Sicht **production-ready**.
+
+## Deployment — Iteration 2 (Live-Werte) + OpenCode-Erweiterung
+
+**Bookkeeping-Nachtrag (2026-07-07):** Iteration 2 wurde bereits am 2026-06-28 (Version 0.25.0, Commit `7780d92`, „Merge dev → main: PROJ-7 Doku-Projektwähler + PROJ-52 Live-Budget") nach `main` gemergt und ist seitdem live — der Status hier war seit dem nicht auf „Deployed" nachgezogen worden.
+
+**Datum:** 2026-06-28 · **Version:** 0.25.0 · **Branch:** main · **Production URL:** https://jupiter.auxevo.tech
+
+### Ausgeliefert (Iteration 2)
+- Echte Live-Verbrauchswerte statt nur manueller Schätzwerte: Claude über `claude -p "/usage"` (headless geparst), Codex über das `rate_limits`-Event der jüngsten Rollout-Datei.
+- Saubere Degradation auf Schätzung/manuell/`n/v` bei Probe-Fehlern, fehlenden Dateien oder deaktivierten Providern.
+
+### Zusätzlich (undokumentiert nachgetragen, Version 0.27.10, 2026-07-05, Commit `e25ea05`)
+- „OpenCode-Verbrauchsbudgetanzeige in der Sidebar" — Erweiterung der Budget-Anzeige um OpenCode/OpenRouter-Verbrauch, im selben Deploy-Batch wie PROJ-62 (Bump 0.27.10) ausgeliefert, aber nie in dieser Spec dokumentiert. Kein eigenes Ticket — hier nur zur Nachvollziehbarkeit vermerkt.

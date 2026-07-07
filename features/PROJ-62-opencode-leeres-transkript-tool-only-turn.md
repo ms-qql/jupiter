@@ -1,8 +1,8 @@
 # PROJ-62: Bugfix: OpenCode-Session endet lautlos ohne Transkript und ohne Fehler, wenn der Turn nur aus Tool-Calls besteht
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-05
-**Last Updated:** 2026-07-05
+**Last Updated:** 2026-07-07
 
 ## Problem / Motivation
 Nutzer meldete: eine OpenCode-Session (`openrouter/z-ai/glm-5.2`, Skill `/abc-qa`, Titel „UI 21 QA GLM") zeigte 1 Turn, $0.0332 Kosten und 15% Kontext-Füllstand, aber **kein einziger Transkript-Eintrag** war sichtbar — im Log war nur ein `bash`-Tool-Call (`git log --all --oneline | head -30`) erkennbar. Die Session endete danach als „Session beendet/nicht steuerbar" (Reaktivieren-Button), ohne dass ein Fehler angezeigt wurde.
@@ -175,4 +175,11 @@ Keine. Der ursprünglich gemeldete Fehlerfall (leeres Transkript + unerklärtes 
 - **Empfehlung:** Approved. Bei nächster Gelegenheit deployen (`/abc-deploy`) — der offene Frontend-Punkt aus den Implementation Notes (Banner-Bedingung) ist bereits umgesetzt und Teil dieses QA-Durchlaufs.
 
 ## Deployment
-_To be added by /deploy_
+
+**Bookkeeping-Nachtrag (2026-07-07):** Bereits am 2026-07-05 als Teil von Commit `9d8d565` („chore(deploy): Bump 0.27.10 (PROJ-62 OpenCode-Tool-Only-Turn-Fix)") nach `main` deployt — der Status hier war seither nicht auf „Deployed" nachgezogen worden.
+
+**Datum:** 2026-07-05 · **Version:** 0.27.10 · **Branch:** main · **Production URL:** https://jupiter.auxevo.tech
+
+### Ausgeliefert
+- `tool_use`-Events hinterlassen einen persistenten Transkript-Eintrag (nicht nur den flüchtigen Activity-Ticker).
+- Stiller PROJ-60-Fallback (Prozessende ohne finalen `step_finish`) setzt `state.error` mit einem verständlichen Hinweistext, sichtbar auch bei `status=done` im Cockpit-Banner.

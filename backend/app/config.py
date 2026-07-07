@@ -290,6 +290,13 @@ class Settings(BaseSettings):
     # obwohl tmux/der Agent im Hintergrund normal weiterläuft. Analog zu
     # `metrics_systemctl_timeout_seconds`, das dieselbe Absicherung schon hat.
     tmux_cmd_timeout_seconds: float = 10.0
+    # PROJ-64: Anzahl automatischer Wiederholungen für Prüf-/Lese-Aufrufe
+    # (has-session/list-panes/kill-session), wenn einer davon in die obige
+    # Reaping-Störung läuft. NIE für `new-session` selbst verwendet (siehe
+    # `TmuxTransport.spawn()` — dort entscheidet stattdessen ein has-session-Check,
+    # ob die Session trotz Timeout bereits entstanden ist, bevor überhaupt ein
+    # weiterer Versuch gemacht wird — verhindert Doppel-Sessions).
+    tmux_cmd_retries: int = 1
 
     # Marktplatz/Registry-Wurzel (PROJ-26): installierte Rollen/Skills/Agenten +
     # Import/Export-Staging. Wird bei Bedarf angelegt; leerer Ordner = leerer Katalog.
@@ -488,6 +495,11 @@ class Settings(BaseSettings):
     # Hartes Zeitlimit je `systemctl is-active`-Aufruf (Sek.) — Status muss schnell
     # bleiben (pollbar), nie unbegrenzt hängen.
     metrics_systemctl_timeout_seconds: float = 5.0
+    # PROJ-64: dieselbe Reaping-Störung wie beim tmux-Transport (`transport.py`,
+    # `tmux_cmd_retries`) wurde hier live beobachtet (liegen gebliebener
+    # `<defunct>`-Zombie) — automatische Wiederholungen vor dem Fallback auf
+    # "unknown", statt bei jeder seltenen Störung sofort zu degradieren.
+    metrics_systemctl_retries: int = 1
 
     # --- VPS-Admin Terminal (PROJ-43) ------------------------------------
     # ttyd-Shell als iFrame im Terminal-Tab der VPS-Admin-Micro-App. Die URL wird
