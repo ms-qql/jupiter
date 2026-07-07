@@ -1,6 +1,6 @@
 # PROJ-66: Bugfix: Session-Transkript von Oneshot-Engines geht bei Backend-Neustart dauerhaft verloren
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -185,4 +185,15 @@ Volle Backend-Suite (`conda run -n Dashboard --no-capture-output python -m pytes
 **READY.** Keine Critical/High-Bugs. Zwei Low-Beobachtungen dokumentiert, kein Blocker.
 
 ## Deployment
-_To be added by /abc-deploy_
+Production URL: https://jupiter.auxevo.tech
+Deployed: 2026-07-07 · Version: 0.27.15
+Host project: Jupiter (host-native systemd + GitHub-Webhook Auto-Deploy)
+
+`dev` (nur diese Feature-Commits, sauber ab `main`) per `--no-ff` nach `main` gemergt, Version 0.27.14 → 0.27.15 gebumpt. Kein Infrastruktur-Bootstrap nötig (Follow-up-Deploy, host-native systemd/Caddy-Setup bereits etabliert, kein Dokploy/Docker in diesem Repo). Push nach `origin/main` löst den GitHub-Webhook aus, der `jupiter-backend`/`jupiter-frontend` neu baut/startet.
+
+**Smoke-Test-Checkliste (nach Push, manuell zu verifizieren):**
+- [ ] `https://jupiter.auxevo.tech/api/health` → ok
+- [ ] Frontend lädt, Login funktioniert
+- [ ] Bestehende Codex/OpenCode-Session nach Neustart: Transkript vollständig sichtbar (AC1/AC2 im Live-Betrieb)
+- [ ] Bestehende Claude-Session nach Neustart: Verhalten unverändert (keine Regression)
+- [ ] Host-Logs (`journalctl -u jupiter-backend`): keine neuen Fehler nach dem Neustart
