@@ -19,6 +19,7 @@ Aufruf, kein API-Kosten) — Muster analog zu ``test_proj48_codex.py`` (Fake-CLI
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 import sys
 
@@ -226,6 +227,34 @@ async def test_survives_an_instantly_completing_command(tmp_path):
     finally:
         await transport.kill()
         transport.cleanup_files()
+
+
+@pytest.mark.asyncio
+async def test_hanging_tmux_call_times_out_instead_of_hanging_forever(tmp_path):
+    """Produktionsvorfall (2026-07-07): ein echter Codex-Turn unter `tmux` blieb in
+    `TmuxTransport._tmux()`s `communicate()` fuer IMMER haengen (tmux-Server + Codex-
+    Prozess liefen im Hintergrund normal weiter, sogar mit korrektem Turn-Abschluss —
+    aber `POST /sessions` bekam NIE eine Antwort, kein Log, kein Fehler). Kein
+    reproduzierbarer Regressionstest fuer die zugrunde liegende, seltene Reaping-
+    Stoerung selbst moeglich (nicht deterministisch) — dieser Test deckt stattdessen
+    die Absicherung ab: ein `tmux`-Ersatzbinary, das nie antwortet, darf `spawn()`
+    NICHT unbegrenzt haengen lassen, sondern muss nach dem konfigurierten Timeout
+    einen klaren `TransportError` werfen (der `routes/sessions.py` zu einer 503 statt
+    eines rohen, nie endenden Requests macht)."""
+    fake_tmux = tmp_path / "fake_tmux_hangs.sh"
+    fake_tmux.write_text("#!/bin/sh\nsleep 3600\n", encoding="utf-8")
+    fake_tmux.chmod(0o755)
+
+    transport = TmuxTransport(
+        "spike-hang",
+        data_dir=str(tmp_path / "data"),
+        tmux_bin=str(fake_tmux),
+        cmd_timeout_seconds=0.3,
+    )
+    with pytest.raises(TransportError, match="antwortet nicht"):
+        await asyncio.wait_for(
+            transport.spawn(["true"], cwd=str(tmp_path), long_lived=False), timeout=5
+        )
 
 
 # ===========================================================================

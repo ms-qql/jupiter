@@ -279,6 +279,17 @@ class Settings(BaseSettings):
     # Live mtime-geprüft; fehlt/kaputt → Default "direct" für alle Engines (Spec-
     # Vorgabe: konservativ, bis der Spike abgeschlossen und ausgerollt ist).
     transport_config_path: str = _DEFAULT_TRANSPORT_PATH
+    # Hartes Zeitlimit je einzelnem `tmux`-CLI-Aufruf (has-session/new-session/
+    # list-panes/kill-session — NICHT der Agenten-Turn selbst, der läuft unabhängig
+    # in der Pane weiter). Bug (2026-07-07, echter Produktionsvorfall): ohne dieses
+    # Limit hängt `asyncio.create_subprocess_exec(...).communicate()` bei einer
+    # seltenen, nicht deterministischen Reaping-Störung (im selben Prozess auch bei
+    # der unabhängigen `systemctl is-active`-Prüfung in metrics.py als liegen-
+    # gebliebener Zombie beobachtet, siehe PROJ-63-Spec) auf unbestimmte Zeit —
+    # `TmuxTransport.spawn()` und damit `POST /sessions` kehren dann NIE zurück,
+    # obwohl tmux/der Agent im Hintergrund normal weiterläuft. Analog zu
+    # `metrics_systemctl_timeout_seconds`, das dieselbe Absicherung schon hat.
+    tmux_cmd_timeout_seconds: float = 10.0
 
     # Marktplatz/Registry-Wurzel (PROJ-26): installierte Rollen/Skills/Agenten +
     # Import/Export-Staging. Wird bei Bedarf angelegt; leerer Ordner = leerer Katalog.

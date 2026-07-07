@@ -234,6 +234,7 @@ class TmuxTransport(Transport):
         tmux_bin: str | None = None,
         poll_interval: float = 0.2,
         liveness_cache_seconds: float = 0.5,
+        cmd_timeout_seconds: float | None = None,
     ) -> None:
         self.tmux_session = sanitize_tmux_session_name(session_key)
         self._tmux_bin = tmux_bin or settings.tmux_bin
@@ -243,6 +244,14 @@ class TmuxTransport(Transport):
         self.err_path = self._dir / "err.log"
         self._poll_interval = poll_interval
         self._liveness_cache_seconds = liveness_cache_seconds
+        # Bug (2026-07-07, Produktionsvorfall): ohne Timeout kann ein einzelner
+        # `_tmux()`-Aufruf (has-session/new-session/list-panes) bei einer seltenen
+        # Reaping-Störung für IMMER hängen — `spawn()` und damit `POST /sessions`
+        # kehren dann nie zurück, obwohl tmux/der Agent im Hintergrund normal
+        # weiterläuft (siehe `_tmux()` unten für Details).
+        self._cmd_timeout_seconds = (
+            cmd_timeout_seconds if cmd_timeout_seconds is not None else settings.tmux_cmd_timeout_seconds
+        )
         self._out_fh: object | None = None  # binäres Lese-Handle, über Turns hinweg offen
         self._long_lived = True
         self._spawned = False
@@ -259,7 +268,29 @@ class TmuxTransport(Transport):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await proc.communicate()
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=self._cmd_timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            # Live reproduziert (2026-07-07): ein echter Codex-Turn unter `tmux`
+            # blieb in genau diesem `communicate()` für immer hängen — der
+            # tmux-Server/die Pane liefen im Hintergrund normal weiter (der
+            # Codex-Turn schloss sogar korrekt ab), aber `POST /sessions` bekam
+            # NIE eine Antwort (kein Log, kein Timeout, keine Fehlermeldung), weil
+            # nichts dieses `communicate()` je beendete. Ohne dieses Timeout ist
+            # ein hängender `_tmux()`-Aufruf ein permanenter, nicht wiederherstell-
+            # barer Hang der gesamten Session-Erstellung. Best-effort kill()
+            # statt eines stillen Leaks; das Ergebnis ist ein klarer, sofort
+            # sichtbarer Fehler statt eines für immer hängenden Requests.
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                # Best-effort reap nach dem Kill (vermeidet einen Zombie/ungeschlossenen
+                # Transport) — darf den Fehlerpfad selbst aber nicht erneut blockieren.
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            raise TransportError(
+                f"tmux {' '.join(args)} antwortet nicht (Timeout nach "
+                f"{self._cmd_timeout_seconds:.0f}s) — Transport 'tmux' nicht verfügbar."
+            ) from exc
         rc = proc.returncode or 0
         if check and rc != 0:
             raise TransportError(
