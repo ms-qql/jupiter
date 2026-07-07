@@ -1509,3 +1509,85 @@ export interface SessionCondenseSettings {
   /** Kondensier-Modell (haiku | sonnet | opus). */
   model: string;
 }
+
+// --- PROJ-67: Peppermint Dashboard (native Micro-App) ----------------------
+
+export type PeppermintAnalysisStatus =
+  | "neu"
+  | "wartet"
+  | "laeuft"
+  | "analysiert"
+  | "fehler";
+
+export type PeppermintNoteSyncStatus =
+  | "nicht_noetig"
+  | "ausstehend"
+  | "synchronisiert"
+  | "fehler";
+
+export interface PeppermintSettings {
+  base_url: string;
+  active: boolean;
+  polling_interval_seconds: number;
+  webhook_secret_set: boolean;
+  login_configured: boolean;
+  token_configured: boolean;
+  last_poll_at: string | null;
+  last_successful_poll_at: string | null;
+  last_error: string | null;
+}
+
+export interface PeppermintStatus {
+  active: boolean;
+  worker_status: string;
+  current_ticket_id: number | null;
+  last_poll_at: string | null;
+  last_successful_poll_at: string | null;
+  last_error: string | null;
+  login_configured: boolean;
+  token_configured: boolean;
+}
+
+export interface PeppermintTicket {
+  id: number;
+  peppermint_ticket_id: string;
+  title: string;
+  description: string;
+  requester_name: string | null;
+  requester_email: string | null;
+  status: string | null;
+  priority: string | null;
+  ticket_url: string | null;
+  analysis_status: PeppermintAnalysisStatus;
+  note_sync_status: PeppermintNoteSyncStatus;
+  urgency: string | null;
+  short_finding: string | null;
+  scope_hint: string | null;
+  customer_reply_draft: string | null;
+  missing_info_guidance: string | null;
+  report_text: string | null;
+  session_id: string | null;
+  error_message: string | null;
+  sync_error_message: string | null;
+  retry_count: number;
+  sync_retry_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+  peppermint_created_at: string | null;
+  peppermint_updated_at: string | null;
+  analyzed_at: string | null;
+  note_synced_at: string | null;
+}
+
+export interface PeppermintTicketList {
+  items: PeppermintTicket[];
+}
+
+export interface PeppermintSummary {
+  new_today: number;
+  open_tickets: number;
+  analyzed_tickets: number;
+  failed_analyses: number;
+  urgency_distribution: Record<string, number>;
+  finding_distribution: Record<string, number>;
+}

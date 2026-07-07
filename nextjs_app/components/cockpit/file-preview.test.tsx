@@ -1,7 +1,7 @@
 // PROJ-28 QA: Render-Tests für FilePreview ohne jsdom (renderToStaticMarkup).
-// Geprüft werden die synchronen Zweige (Empty / Bild / Binär / zu groß / Header)
-// sowie der initiale Lade-Zustand für Text/MD (der fetch-Effect läuft im SSR-
-// Render nicht — die Initial-State-Logik wird damit deterministisch testbar).
+// Geprüft werden die synchronen Zweige (Empty / Binär / zu groß / Header)
+// sowie der initiale Lade-Zustand für Bild/Text/MD (der fetch-Effect läuft im
+// SSR-Render nicht — die Initial-State-Logik wird damit deterministisch testbar).
 
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -23,9 +23,9 @@ describe("FilePreview", () => {
     expect(html).not.toContain("Herunterladen");
   });
 
-  it("rendert Bilder als <img> mit Download-Link auf /files/download", () => {
+  it("startet Bilder im Lade-Zustand und zeigt den Download-Button", () => {
     const html = render(entry("foto.png"));
-    expect(html).toMatch(/<img[^>]+src="[^"]*\/files\/download/);
+    expect(html).toContain("Lädt…");
     expect(html).toContain("Herunterladen");
   });
 

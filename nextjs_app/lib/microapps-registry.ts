@@ -52,6 +52,10 @@ export const MICROAPP_REGISTRY: Record<string, MicroAppComponent> = {
   session_condense: lazy(
     () => import("@/components/microapps/session_condense/session-condense-app"),
   ),
+  // PROJ-67: Peppermint Dashboard — Ticketspiegel + automatische Frontdesk-Triage.
+  peppermint_dashboard: lazy(
+    () => import("@/components/microapps/peppermint_dashboard/peppermint-dashboard-app"),
+  ),
 };
 
 /** Liefert die native Komponente zu einem key — oder null, wenn nicht registriert

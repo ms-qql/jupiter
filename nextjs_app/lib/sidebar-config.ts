@@ -17,6 +17,7 @@ import {
   RadioIcon,
   ServerIcon,
   TerminalIcon,
+  TicketIcon,
   WavesIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -139,6 +140,7 @@ const ORCHESTRATION_ICONS: Record<string, LucideIcon> = {
   pentool: PenToolIcon,
   server: ServerIcon, // PROJ-42: VPS-Admin
   "brain-circuit": BrainCircuitIcon, // PROJ-55: Session-Kondensierung
+  ticket: TicketIcon, // PROJ-67: Peppermint Dashboard
 };
 
 /** Icon-Name (aus der Registry) → Komponente; Fallback ist ein neutrales App-Icon. */
