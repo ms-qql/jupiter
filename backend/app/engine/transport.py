@@ -83,6 +83,16 @@ class TransportError(RuntimeError):
     """Ein Transport konnte nicht gestartet oder bedient werden (z. B. tmux fehlt)."""
 
 
+class TmuxTimeoutError(TransportError):
+    """PROJ-64: ``_tmux()`` hat auch nach den konfigurierten Wiederholungen nicht
+    geantwortet — mit derselben Semantik wie ein normaler ``TransportError``
+    behandelbar (Unterklasse, jeder bestehende ``except TransportError`` fängt sie
+    weiterhin), aber eigens benannt, damit ``TmuxTransport.spawn()`` gezielt
+    darauf reagieren kann: die zugrunde liegende Reaping-Störung (siehe PROJ-63,
+    BUG-4) bedeutet oft, dass der tmux-Befehl tatsächlich durchgelaufen ist —
+    nur die Antwort kam nie an."""
+
+
 class Transport(ABC):
     """I/O-Schicht unterhalb eines ``EngineDriver``."""
 
@@ -261,43 +271,62 @@ class TmuxTransport(Transport):
 
     # -- tmux-CLI-Hilfsfunktion ----------------------------------------------
 
-    async def _tmux(self, *args: str, check: bool = True) -> tuple[int, str, str]:
-        proc = await asyncio.create_subprocess_exec(
-            self._tmux_bin,
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout=self._cmd_timeout_seconds)
-        except asyncio.TimeoutError as exc:
-            # Live reproduziert (2026-07-07): ein echter Codex-Turn unter `tmux`
-            # blieb in genau diesem `communicate()` für immer hängen — der
-            # tmux-Server/die Pane liefen im Hintergrund normal weiter (der
-            # Codex-Turn schloss sogar korrekt ab), aber `POST /sessions` bekam
-            # NIE eine Antwort (kein Log, kein Timeout, keine Fehlermeldung), weil
-            # nichts dieses `communicate()` je beendete. Ohne dieses Timeout ist
-            # ein hängender `_tmux()`-Aufruf ein permanenter, nicht wiederherstell-
-            # barer Hang der gesamten Session-Erstellung. Best-effort kill()
-            # statt eines stillen Leaks; das Ergebnis ist ein klarer, sofort
-            # sichtbarer Fehler statt eines für immer hängenden Requests.
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            with contextlib.suppress(Exception):
-                # Best-effort reap nach dem Kill (vermeidet einen Zombie/ungeschlossenen
-                # Transport) — darf den Fehlerpfad selbst aber nicht erneut blockieren.
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            raise TransportError(
-                f"tmux {' '.join(args)} antwortet nicht (Timeout nach "
-                f"{self._cmd_timeout_seconds:.0f}s) — Transport 'tmux' nicht verfügbar."
-            ) from exc
-        rc = proc.returncode or 0
-        if check and rc != 0:
-            raise TransportError(
-                f"tmux {' '.join(args)} fehlgeschlagen (Code {rc}): "
-                f"{err.decode('utf-8', errors='replace').strip()}"
+    async def _tmux(self, *args: str, check: bool = True, retries: int = 0) -> tuple[int, str, str]:
+        """Führt einen ``tmux``-CLI-Aufruf aus, mit hartem Zeitlimit (BUG-4/PROJ-63).
+
+        ``retries`` (PROJ-64): Anzahl automatischer Wiederholungen, wenn genau
+        dieser Aufruf in die seltene Reaping-Störung läuft (siehe Klassen-Docstring
+        von ``TmuxTimeoutError``). NUR für Prüf-/Lese-/idempotente Befehle
+        (has-session/list-panes/kill-session) von den jeweiligen Aufrufern gesetzt
+        — niemals blind für ``new-session`` (siehe ``spawn()``, das dafür einen
+        eigenen, sichereren Attach-statt-Duplikat-Pfad nutzt).
+        """
+        attempt = 0
+        while True:
+            proc = await asyncio.create_subprocess_exec(
+                self._tmux_bin,
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        return rc, out.decode("utf-8", errors="replace"), err.decode("utf-8", errors="replace")
+            try:
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=self._cmd_timeout_seconds)
+            except asyncio.TimeoutError as exc:
+                # Live reproduziert (2026-07-07): ein echter Codex-Turn unter `tmux`
+                # blieb in genau diesem `communicate()` für immer hängen — der
+                # tmux-Server/die Pane liefen im Hintergrund normal weiter (der
+                # Codex-Turn schloss sogar korrekt ab), aber `POST /sessions` bekam
+                # NIE eine Antwort (kein Log, kein Timeout, keine Fehlermeldung), weil
+                # nichts dieses `communicate()` je beendete. Ohne dieses Timeout ist
+                # ein hängender `_tmux()`-Aufruf ein permanenter, nicht wiederherstell-
+                # barer Hang der gesamten Session-Erstellung. Best-effort kill()
+                # statt eines stillen Leaks; das Ergebnis ist ein klarer, sofort
+                # sichtbarer Fehler statt eines für immer hängenden Requests.
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                with contextlib.suppress(Exception):
+                    # Best-effort reap nach dem Kill (vermeidet einen Zombie/ungeschlossenen
+                    # Transport) — darf den Fehlerpfad selbst aber nicht erneut blockieren.
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                if attempt < retries:
+                    attempt += 1
+                    log.warning(
+                        "tmux %s antwortet nicht (Versuch %d/%d) — Wiederholung "
+                        "(PROJ-64, seltene Reaping-Störung).",
+                        " ".join(args), attempt, retries + 1,
+                    )
+                    continue
+                raise TmuxTimeoutError(
+                    f"tmux {' '.join(args)} antwortet nicht (Timeout nach "
+                    f"{self._cmd_timeout_seconds:.0f}s) — Transport 'tmux' nicht verfügbar."
+                ) from exc
+            rc = proc.returncode or 0
+            if check and rc != 0:
+                raise TransportError(
+                    f"tmux {' '.join(args)} fehlgeschlagen (Code {rc}): "
+                    f"{err.decode('utf-8', errors='replace').strip()}"
+                )
+            return rc, out.decode("utf-8", errors="replace"), err.decode("utf-8", errors="replace")
 
     # -- Spawn / Respawn ------------------------------------------------------
 
@@ -353,12 +382,13 @@ class TmuxTransport(Transport):
         # alles in EINEM chained tmux-Aufruf (`;`-getrennt), sodass die Option bereits gilt,
         # während `new-session` läuft, ohne jedes Zeitfenster. Verifiziert: übersteht sogar
         # einen sofort beendeten `true`-Befehl (extremer als jeder reale CLI-Turnaround).
-        await self._tmux(
+        new_session_args = (
             "start-server", ";",
             "set-option", "-g", "exit-empty", "off", ";",
             "set-option", "-g", "remain-on-exit", "on", ";",
             "new-session", "-d", "-s", self.tmux_session, "-x", "220", "-y", "50", cmd,
         )
+        await self._spawn_new_session(new_session_args)
         self._spawned = True
         # Optimistisch geprimt: wir haben die Session gerade selbst angelegt — ohne
         # das wäre `is_alive` bis zum ersten Async-Probe (readline/wait/refresh_liveness)
@@ -368,7 +398,77 @@ class TmuxTransport(Transport):
             self._out_fh = open(self.out_path, "rb")  # noqa: SIM115 - über Turns hinweg offen
         # Echte OS-PID des Pane-Prozesses cachen -> synchron ueber `.pid` abrufbar (fuer
         # EngineDriver.pid / pid_alive()-Liveness, dieselbe Signal-0-Pruefung wie direct).
-        self._cached_pid = await self.pane_pid()
+        # PROJ-64: rein diagnostisch (nur fuer `.pid`/Liveness) — ein Timeout hier darf
+        # einen bereits erfolgreichen Spawn (siehe `_spawn_new_session`) NICHT im
+        # Nachhinein zum Fehler machen; best-effort `None` statt eines Crashs.
+        try:
+            self._cached_pid = await self.pane_pid()
+        except TmuxTimeoutError:
+            log.warning(
+                "tmux list-panes (PID-Ermittlung) für Session %s antwortet nicht — "
+                "Spawn bleibt erfolgreich, PID bleibt vorerst unbekannt (PROJ-64).",
+                self.tmux_session,
+            )
+            self._cached_pid = None
+
+    async def _spawn_new_session(self, new_session_args: tuple[str, ...]) -> None:
+        """PROJ-64: BUG-4-Nachfolger — der `new-session`-Aufruf wird NIE blind
+        wiederholt (Gefahr einer Doppel-Session, falls er trotz Timeout tatsächlich
+        durchgelaufen war). Stattdessen bei einem Timeout zuerst prüfen, ob die
+        Session bereits existiert (genau der im Produktionsvorfall 2026-07-07
+        beobachtete Fall: Session lief im Hintergrund korrekt, nur die Antwort auf
+        diesen Aufruf kam nie an) — nur wenn sie das NICHT tut, einmalig erneut
+        versuchen. Scheitert auch das, bleibt der bestehende 503-Pfad (PROJ-63/
+        BUG-2, ausgelöst über die weiterhin geerbte `TmuxTimeoutError`) als letzte
+        Absicherung unverändert erhalten."""
+        try:
+            await self._tmux(*new_session_args)
+            return
+        except TmuxTimeoutError:
+            log.warning(
+                "tmux new-session (Session %s) antwortet nicht — prüfe, ob sie "
+                "trotzdem entstanden ist, bevor ein Fehler gemeldet wird (PROJ-64).",
+                self.tmux_session,
+            )
+        if await self._session_exists_after_timeout():
+            log.warning(
+                "tmux-Session %s existiert trotz Timeout bereits — wird als "
+                "erfolgreich gestartet behandelt (kein 503, PROJ-64).",
+                self.tmux_session,
+            )
+            return
+        # has-session sagt "existiert nicht" -> ein zweiter new-session-Versuch
+        # kann keine Doppel-Session erzeugen.
+        try:
+            await self._tmux(*new_session_args)
+            return
+        except TmuxTimeoutError:
+            pass
+        if await self._session_exists_after_timeout():
+            log.warning(
+                "tmux-Session %s existiert nach dem Wiederholungsversuch — wird "
+                "als erfolgreich gestartet behandelt (PROJ-64).",
+                self.tmux_session,
+            )
+            return
+        # Beide Versuche liefen in die Reaping-Störung UND die Session existiert
+        # nachweislich nicht -> weiterhin ein sauberer, für den Nutzer sichtbarer
+        # Fehler statt eines für immer hängenden Requests (PROJ-63/BUG-2/BUG-4).
+        raise TmuxTimeoutError(
+            f"tmux new-session (Session {self.tmux_session}) antwortet auch nach "
+            "einer Wiederholung nicht — Transport 'tmux' nicht verfügbar."
+        )
+
+    async def _session_exists_after_timeout(self) -> bool:
+        """``session_exists()`` für den Attach-statt-Fehler-Pfad in
+        ``_spawn_new_session`` — bereits über ``tmux_cmd_retries`` gehärtet; ein
+        endgültiges Scheitern (auch dieser Check läuft in die Störung) zählt
+        konservativ als "existiert nicht" (führt zum bestehenden Retry-/
+        Fehlerpfad, nie zu einem stillen Fehlschlag)."""
+        try:
+            return await self.session_exists()
+        except TmuxTimeoutError:
+            return False
 
     def prepare_prompt_file(self, data: bytes) -> str:
         """Schreibt den naechsten Turn-Prompt in eine Datei fuer den Datei-Redirect
@@ -384,9 +484,13 @@ class TmuxTransport(Transport):
     async def _ensure_no_stale_session(self) -> None:
         """Respawn-Fall (Oneshot-Folgeturn): eine gleichnamige alte Session zuerst
         sauber beenden, bevor die neue angelegt wird (keine Kollision)."""
-        rc, _out, _err = await self._tmux("has-session", "-t", self.tmux_session, check=False)
+        rc, _out, _err = await self._tmux(
+            "has-session", "-t", self.tmux_session, check=False, retries=settings.tmux_cmd_retries
+        )
         if rc == 0:
-            await self._tmux("kill-session", "-t", self.tmux_session, check=False)
+            await self._tmux(
+                "kill-session", "-t", self.tmux_session, check=False, retries=settings.tmux_cmd_retries
+            )
 
     def _pane_command_long_lived(self, argv: list[str], *, cwd: str) -> str:
         quoted_argv = " ".join(shlex.quote(a) for a in argv)
@@ -470,14 +574,18 @@ class TmuxTransport(Transport):
     # -- Lifecycle ----------------------------------------------------------
 
     async def terminate(self) -> None:
-        await self._tmux("kill-session", "-t", self.tmux_session, check=False)
+        await self._tmux(
+            "kill-session", "-t", self.tmux_session, check=False, retries=settings.tmux_cmd_retries
+        )
         # Cache sofort invalidieren -> der naechste is_alive-Check (i. d. R. im
         # readline()-Poll-Loop) sieht ohne Cache-Verzoegerung "tot" statt bis zu
         # `liveness_cache_seconds` auf einen veralteten "lebt"-Wert zu vertrauen.
         self._alive_cache = None
 
     async def kill(self) -> None:
-        await self._tmux("kill-session", "-t", self.tmux_session, check=False)
+        await self._tmux(
+            "kill-session", "-t", self.tmux_session, check=False, retries=settings.tmux_cmd_retries
+        )
         self._alive_cache = None
 
     async def wait(self) -> int | None:
@@ -533,7 +641,8 @@ class TmuxTransport(Transport):
         if not self._spawned:
             return False
         rc, out, _err = await self._tmux(
-            "list-panes", "-t", self.tmux_session, "-F", "#{pane_dead}", check=False
+            "list-panes", "-t", self.tmux_session, "-F", "#{pane_dead}",
+            check=False, retries=settings.tmux_cmd_retries,
         )
         if rc != 0:
             return False  # Session existiert nicht (mehr).
@@ -548,7 +657,8 @@ class TmuxTransport(Transport):
     async def pane_pid(self) -> int | None:
         """OS-PID des Pane-Prozesses (best-effort, für Diagnose/Orphan-Check)."""
         rc, out, _err = await self._tmux(
-            "list-panes", "-t", self.tmux_session, "-F", "#{pane_pid}", check=False
+            "list-panes", "-t", self.tmux_session, "-F", "#{pane_pid}",
+            check=False, retries=settings.tmux_cmd_retries,
         )
         if rc != 0:
             return None
@@ -556,7 +666,9 @@ class TmuxTransport(Transport):
         return int(line) if line.isdigit() else None
 
     async def session_exists(self) -> bool:
-        rc, _out, _err = await self._tmux("has-session", "-t", self.tmux_session, check=False)
+        rc, _out, _err = await self._tmux(
+            "has-session", "-t", self.tmux_session, check=False, retries=settings.tmux_cmd_retries
+        )
         return rc == 0
 
     def cleanup_files(self) -> None:

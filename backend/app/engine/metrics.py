@@ -213,25 +213,38 @@ class MetricsService:
 
         Feste Argumentliste (keine Shell-Interpolation), hartes Timeout. Jeder
         Fehler (kein systemctl, Timeout, …) degradiert zu ``unknown`` — nie ein Crash.
+
+        PROJ-64: dieselbe seltene asyncio-Subprozess-Reaping-Störung wie beim
+        tmux-Transport (siehe ``transport.py``s ``TmuxTimeoutError``) wurde hier
+        live als liegen gebliebener ``<defunct>``-Zombie beobachtet (PROJ-63-
+        Produktionsvorfall). Ein einzelner Timeout degradiert deshalb nicht mehr
+        sofort zu ``unknown`` — erst nach ``metrics_systemctl_retries``
+        Wiederholungen.
         """
-        proc = None
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "systemctl",
-                "is-active",
-                unit,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            out, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=settings.metrics_systemctl_timeout_seconds
-            )
-            value = (out or b"").decode(errors="replace").strip()
-        except Exception:  # noqa: BLE001 — Status-Abfrage nie fatal.
-            if proc is not None and proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-            return "unknown"
+        value = ""
+        attempt = 0
+        while True:
+            proc = None
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "systemctl",
+                    "is-active",
+                    unit,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                out, _ = await asyncio.wait_for(
+                    proc.communicate(), timeout=settings.metrics_systemctl_timeout_seconds
+                )
+                value = (out or b"").decode(errors="replace").strip()
+                break
+            except Exception:  # noqa: BLE001 — Status-Abfrage nie fatal.
+                if proc is not None and proc.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                if attempt >= settings.metrics_systemctl_retries:
+                    return "unknown"
+                attempt += 1
         if value in ("active", "inactive", "failed"):
             return value
         # Übergangszustände auf den nächstliegenden stabilen Zustand abbilden.
