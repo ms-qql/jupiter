@@ -1,6 +1,6 @@
 # PROJ-64: Bugfix: tmux-Transport-503 (BUG-4-Nachfolger) — Reaping-Race entschärfen statt nur sichtbar machen
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -237,3 +237,22 @@ metrics.py::_systemctl_is_active()  → gleiche zugrunde liegende Fehlerklasse, 
 - **Offene Abweichung (kein Bug):** Event-Loop-Reaping-Härtung wurde bewusst nicht als globaler Child-Watcher-Wechsel umgesetzt, sondern als Retry-/Attach-Mechanismus — architektonisch begründet im Tech Design (Abschnitt D.3), akzeptiert.
 - **Production Ready:** YES
 - **Empfehlung:** Approved. Bereit für `/abc-deploy`.
+
+## Deployment
+**Datum:** 2026-07-07 · **Version:** 0.27.14 · **Branch:** main · **Production URL:** https://jupiter.auxevo.tech
+
+### Ausgeliefert
+- `TmuxTransport._spawn_new_session()`: Retry + Attach-statt-Fehler-Pfad für den `new-session`-Aufruf, inkl. Fix für die QA-gefundene Retry-Kollision (symmetrische Fehlerbehandlung).
+- Retry-Härtung (`tmux_cmd_retries`, Default 1) für alle Prüf-/Lese-`_tmux()`-Aufrufe.
+- `metrics.py::_systemctl_is_active()` mit derselben Retry-Härtung (`metrics_systemctl_retries`).
+- Bestehender PROJ-63/BUG-2-503-Fallback für echte, dauerhafte Hänger unverändert erhalten.
+- Bookkeeping-Nachtrag PROJ-52 (Iter. 2 + OpenCode-Erweiterung)/PROJ-55/PROJ-62 auf „Deployed" — reine Doku, im selben Deploy mitgegangen.
+
+### Deploy-Mechanismus
+- Host-nativer GitHub-Webhook-Auto-Deploy (kein Dokploy/Docker) — Push nach `origin/main` löst `jupiter-deploy/deploy.sh` aus: `git reset --hard origin/main`, `npm run build` (Frontend), `pip install -r requirements.txt` (Backend), `systemctl restart jupiter-backend jupiter-frontend`.
+
+### Smoke-Test nach Host-Build
+- [ ] `https://jupiter.auxevo.tech/api/health` liefert OK.
+- [ ] Deploy-Log (`/home/dev/jupiter-deploy/deploy.log`) zeigt sauberen Abschluss.
+- [ ] `jupiter-backend`/`jupiter-frontend` aktiv nach Neustart.
+- [ ] Manuell im Cockpit: neue tmux-Session starten, kein 503 mehr bei transienten Hängern (Langzeitbeobachtung, da die zugrunde liegende Race nicht deterministisch auslösbar ist).
