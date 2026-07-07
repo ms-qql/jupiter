@@ -1260,6 +1260,15 @@ class SessionManager:
             )
             self._persist_tasks.add(ctx_task)
             ctx_task.add_done_callback(self._persist_tasks.discard)
+        # PROJ-66: UI-Transkript sichern — unconditional (jede Engine, kein Sonderfall),
+        # weil `_persist()` ohnehin nur an groben Zustandswechseln feuert (Hot-Path-
+        # schonend) und der Schreibpfad dadurch nicht verzweigen muss. Gelesen wird das
+        # Ergebnis beim Rehydrieren nur für Nicht-Claude-Engines (siehe `rehydrate()`).
+        transcript_task = asyncio.create_task(
+            self._safe_save_transcript(runtime.state.session_id, list(runtime.transcript))
+        )
+        self._persist_tasks.add(transcript_task)
+        transcript_task.add_done_callback(self._persist_tasks.discard)
 
     async def _safe_upsert(self, row: dict) -> None:
         try:
@@ -1279,6 +1288,14 @@ class SessionManager:
             await self._repo.save_context(session_id, json.dumps(messages))
         except Exception as exc:  # noqa: BLE001 — Persistenz ist best-effort.
             logger.warning("Konversationsverlauf konnte nicht gespeichert werden: %s", exc)
+
+    async def _safe_save_transcript(self, session_id: str, entries: list[TranscriptEntry]) -> None:
+        """PROJ-66: UI-Transkript best-effort speichern (blockiert nie den Hot-Path)."""
+        try:
+            payload = json.dumps([vars(e) for e in entries])
+            await self._repo.save_transcript(session_id, payload)
+        except Exception as exc:  # noqa: BLE001 — Persistenz ist best-effort.
+            logger.warning("Transkript konnte nicht gespeichert werden: %s", exc)
 
     async def rehydrate(self) -> None:
         """PROJ-14: beim Startup den Live-Index laden und verwaiste Sessions markieren.
@@ -1306,6 +1323,18 @@ class SessionManager:
                 on_persist=self._persist,
             )
             runtime._last_persisted_status = state.status
+            # PROJ-66: UI-Transkript zurückspielen — nur für Nicht-Claude-Engines (Oneshot-
+            # CLIs/direkte Provider). Claude bewahrt seinen Verlauf selbst über den echten
+            # `--resume`-Ersatzlauf, der beim späteren Fortsetzen die Events erneut streamt;
+            # ein zusätzliches Vorbefüllen hier würde zu doppelten Transkript-Einträgen führen.
+            profile = engine_registry.get(state.engine)
+            if profile is not None and not profile.is_claude:
+                try:
+                    raw = await self._repo.load_transcript(sid)
+                    if raw:
+                        runtime.transcript = [TranscriptEntry(**d) for d in json.loads(raw)]
+                except Exception as exc:  # noqa: BLE001 — best-effort, In-Memory bleibt führend.
+                    logger.warning("Transkript konnte nicht rehydriert werden (%s): %s", sid, exc)
             if row.get("status") in ACTIVE_STATES:
                 state.status = ERROR
                 if state.drained_at:
