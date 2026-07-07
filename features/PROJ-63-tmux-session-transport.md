@@ -476,3 +476,5 @@ Ohne diesen Schritt bleibt ALLES beim heutigen `direct`-Verhalten (Default konse
 - **Nicht behoben (bewusst, separater Befund während der Diagnose, kein Teil von BUG-4):** zwei der vier parallelen Reproduktions-Sessions endeten mit `status=done` statt `status=waiting`, obwohl Codex ressumable ist — Ursache ist eine Race in `manager.py:652` (`WAITING if self.driver.is_alive else DONE`), die bei `tmux` durch die dateibasierte Backfill-Erkennung des Turn-Endes wahrscheinlicher wird als bei `direct`. Nicht Teil dieses Fixes; sollte als eigener Punkt nachverfolgt werden, falls Resume für tmux-Sessions in der Praxis öfter fehlschlägt.
 
 **Deploy-Hinweis:** Codeänderung (kein reines Config-Reload) — braucht einen `jupiter-backend`-Neustart (`/abc-deploy` oder manuell), um wirksam zu werden. `backend/config/transport.yaml` (Betreiber-Schritt, `engine_overrides: {codex: tmux, opencode: tmux}`) ist bereits gesetzt und live wirksam, unabhängig vom Codefix.
+
+**BUG-4-Fix deployed:** 2026-07-07 · Version 0.27.13 · via GitHub-Webhook-Auto-Deploy (Push nach `main` → `jupiter-backend`/`jupiter-frontend`-Neustart, siehe [[jupiter-deployment]]).
