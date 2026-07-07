@@ -1,7 +1,7 @@
 """MdReaderService — read-only Markdown-Leser über die erlaubten Roots (PROJ-7).
 
 Der MD-Reader liest Markdown aus den bereits konfigurierten ``allowed_roots``
-(``/home/dev/projects``, ``/home/dev/tools``) und deckt damit ZWEI Quellen in einem
+(``/home/dev/projects``, ``/home/dev``) und deckt damit ZWEI Quellen in einem
 Modell ab:
 
 - **vault**   → der ganze Hal-Vault (``vault_root``), read-only.
@@ -142,7 +142,7 @@ class MdReaderService:
         """Alle wählbaren Projekte für den Doku-Projektwähler.
 
         Direkte Unterordner der ``allowed_roots`` (``/home/dev/projects`` +
-        ``/home/dev/tools``), ohne versteckte/uninteressante Verzeichnisse
+        ``/home/dev``), ohne versteckte/uninteressante Verzeichnisse
         (``_EXCLUDE_DIRS``). Jeder Eintrag ist als ``source=project`` lesbar.
         """
         out: list[dict] = []

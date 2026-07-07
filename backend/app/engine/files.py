@@ -1,7 +1,7 @@
 """FileService — Dateisystem-Ebene des Fileexplorers + Clipboard (PROJ-11).
 
 Operiert ausschließlich innerhalb der ``allowed_roots`` (``/home/dev/projects``,
-``/home/dev/tools``) — kein MinIO, keine DB, kein JWT (Jupiter-Override). Pfad-
+``/home/dev``) — kein MinIO, keine DB, kein JWT (Jupiter-Override). Pfad-
 Härtung über dasselbe ``realpath`` + erlaubte-Wurzel-Muster wie ``md_reader`` /
 ``validate_project_path``. Schreiben atomar (temp + ``os.replace``) und Uploads
 gestreamt mit hartem Größen-Abbruch (kein Voll-RAM).

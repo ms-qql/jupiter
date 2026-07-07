@@ -112,7 +112,9 @@ class Settings(BaseSettings):
     git_timeout_seconds: float = 15.0
 
     # Verzeichnisse, in denen Sessions arbeiten dürfen (Projekt-Scope, PROJ-1-Entscheidung).
-    allowed_roots: list[str] = ["/home/dev/projects", "/home/dev/tools"]
+    # Reihenfolge = Reihenfolge der Root-Buttons im FileExplorer. ``dev`` (Eltern-Ordner)
+    # statt ``tools`` gewählt, damit der Explorer eine Ebene höher startet.
+    allowed_roots: list[str] = ["/home/dev/projects", "/home/dev"]
 
     # Defaults für neue Sessions.
     default_model: str = "sonnet"
