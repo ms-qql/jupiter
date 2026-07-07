@@ -40,6 +40,11 @@ _DEFAULT_PROVIDER_BUDGETS_PATH = str(
 # Auto-Reanimierung mit hartem Limit). Live mtime-geprüft wie Policy/Watchdog.
 _DEFAULT_LIVENESS_PATH = str(Path(__file__).resolve().parent.parent / "config" / "liveness.yaml")
 
+# Standard-Ort der Transport-Konfiguration (PROJ-63): backend/config/transport.yaml.
+# Muss NICHT existieren — fehlt/defekt → konservativer Default (global "direct", keine
+# Engine-Overrides). Live mtime-geprüft wie Policy/Watchdog/Liveness.
+_DEFAULT_TRANSPORT_PATH = str(Path(__file__).resolve().parent.parent / "config" / "transport.yaml")
+
 # Standard-Wurzel der Marktplatz/Registry (PROJ-26): backend/registry/. Dort liegen die
 # installierten Rollen/Skills/Agenten (manifest.yaml + definition.md + versions/) und das
 # Import/Export-Staging. Datei-first, kein DB-Zwang — git-versionierbar, von Hand prüfbar.
@@ -211,7 +216,9 @@ class Settings(BaseSettings):
     # bisherige Fallback (geschätzt/manuell/n/v) — keine falsche Präzision.
     provider_budget_claude_cli_enabled: bool = True
     provider_budget_codex_rollout_enabled: bool = True
+    provider_budget_opencode_api_enabled: bool = True
     codex_sessions_dir: str = str(Path.home() / ".codex" / "sessions")
+    opencode_auth_path: str = str(Path.home() / ".local" / "share" / "opencode" / "auth.json")
     # Optionale Fallback-Quoten für lokale Schätzung. 0 = unbekannt → UI zeigt n/v
     # statt erfundener Prozentwerte. Live-Quelle ist provider_budgets.yaml (UI-editierbar);
     # diese env-Felder bleiben als letzter Fallback, wenn kein Store gesetzt ist (Tests).
@@ -219,6 +226,10 @@ class Settings(BaseSettings):
     provider_budget_claude_week_tokens: int = 0
     provider_budget_codex_5h_tokens: int = 0
     provider_budget_codex_week_tokens: int = 0
+    # OpenCode nutzt OpenRouter (pay-as-you-go) — keine Token-Quota, sondern USD-Credits.
+    # Fallback-Quoten bleiben 0; die Live-Probe liest die echte Credit-Bilanz via API.
+    provider_budget_opencode_5h_tokens: int = 0
+    provider_budget_opencode_week_tokens: int = 0
     # Datei mit den UI-editierbaren Schätz-Quoten (live, mtime-geprüft).
     provider_budgets_config_path: str = _DEFAULT_PROVIDER_BUDGETS_PATH
 
@@ -255,6 +266,30 @@ class Settings(BaseSettings):
     # Reanimierungs-Versuche/Backoff + globaler An/Aus-Schalter. Live mtime-geprüft;
     # fehlt/kaputt → konservative Defaults (nie „kein Liveness").
     liveness_config_path: str = _DEFAULT_LIVENESS_PATH
+
+    # --- PROJ-63: Tmux-Session-Transport (Spike + Transport-Abstraktion) ------
+    # Pfad/Name des tmux-Binaries. Fehlt es, meldet der tmux-Transport klar
+    # "nicht verfügbar" statt zu crashen; `direct` bleibt davon unberührt.
+    tmux_bin: str = "tmux"
+    # Arbeitsverzeichnis für FIFOs + stdout/stderr-Logs pro tmux-transportierter
+    # Session (ein Unterordner je tmux-Session-Name). Kein Vault-/DB-Ersatz — rein
+    # laufzeitbezogene Artefakte, analog zu den anderen jupiter-data-Pfaden.
+    tmux_data_dir: str = str(Path.home() / "jupiter-data" / "tmux")
+    # Transport-Konfigurationsdatei (globaler Default + optionale Engine-Overrides).
+    # Live mtime-geprüft; fehlt/kaputt → Default "direct" für alle Engines (Spec-
+    # Vorgabe: konservativ, bis der Spike abgeschlossen und ausgerollt ist).
+    transport_config_path: str = _DEFAULT_TRANSPORT_PATH
+    # Hartes Zeitlimit je einzelnem `tmux`-CLI-Aufruf (has-session/new-session/
+    # list-panes/kill-session — NICHT der Agenten-Turn selbst, der läuft unabhängig
+    # in der Pane weiter). Bug (2026-07-07, echter Produktionsvorfall): ohne dieses
+    # Limit hängt `asyncio.create_subprocess_exec(...).communicate()` bei einer
+    # seltenen, nicht deterministischen Reaping-Störung (im selben Prozess auch bei
+    # der unabhängigen `systemctl is-active`-Prüfung in metrics.py als liegen-
+    # gebliebener Zombie beobachtet, siehe PROJ-63-Spec) auf unbestimmte Zeit —
+    # `TmuxTransport.spawn()` und damit `POST /sessions` kehren dann NIE zurück,
+    # obwohl tmux/der Agent im Hintergrund normal weiterläuft. Analog zu
+    # `metrics_systemctl_timeout_seconds`, das dieselbe Absicherung schon hat.
+    tmux_cmd_timeout_seconds: float = 10.0
 
     # Marktplatz/Registry-Wurzel (PROJ-26): installierte Rollen/Skills/Agenten +
     # Import/Export-Staging. Wird bei Bedarf angelegt; leerer Ordner = leerer Katalog.

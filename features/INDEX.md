@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-59
+**Next Available ID:** PROJ-64
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -70,7 +70,12 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-55 | Session-Kondensierung — Wochen-Sweep alter Sessions in Hal-Knowledge | P1 | Approved | PROJ-2, PROJ-1, PROJ-15 | [Spec](PROJ-55-session-kondensierung-hal-knowledge.md) |
 | PROJ-56 | Kontext-Persistenz & Resume für Nicht-Claude-Engines (Codex, GLM/OpenRouter) | P1 | Deployed | PROJ-48, PROJ-18, PROJ-14 | [Spec](PROJ-56-kontext-persistenz-nicht-claude-engines.md) |
 | PROJ-57 | Engine — OpenCode als Harness (OpenRouter-Modelle über OpenCode statt Direkt-HTTP) | P1 | Deployed | PROJ-18, PROJ-48, PROJ-56, PROJ-51 | [Spec](PROJ-57-engine-opencode-harness.md) |
-| PROJ-58 | Bugfix: OpenCode-Stdin-Race — falsches „Wartet auf dich" + Transport-Fehler bei Folge-Eingabe | P1 | Approved | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-58-opencode-stdin-race-wartet-auf-dich.md) |
+| PROJ-58 | Bugfix: OpenCode-Stdin-Race — falsches „Wartet auf dich" + Transport-Fehler bei Folge-Eingabe | P1 | Deployed | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-58-opencode-stdin-race-wartet-auf-dich.md) |
+| PROJ-59 | Bugfix: OpenCode-Session hängt nach „Stopp" in „Aktive Sessions" | P1 | Deployed | PROJ-57, PROJ-48, PROJ-56 | [Spec](PROJ-59-opencode-stop-haengt-in-aktive-sessions.md) |
+| PROJ-60 | Bugfix: OpenCode-Session hängt lautlos in „Arbeitet" nach Absturz hinter Tool-Zwischenschritt | P1 | Deployed | PROJ-57, PROJ-58, PROJ-48 | [Spec](PROJ-60-opencode-lautloser-haenger-nach-absturz.md) |
+| PROJ-61 | Live-Aktivitäts-Ticker fehlt im Connect-Snapshot (OpenCode/Codex wirken eingefroren) | P1 | Deployed | PROJ-46, PROJ-49 | [Spec](PROJ-61-live-aktivitaets-ticker-bei-connect.md) |
+| PROJ-62 | Bugfix: OpenCode-Session endet lautlos ohne Transkript und ohne Fehler bei Tool-Only-Turn | P1 | Approved | PROJ-57, PROJ-58, PROJ-60 | [Spec](PROJ-62-opencode-leeres-transkript-tool-only-turn.md) |
+| PROJ-63 | Tmux-Session-Transport für stabile Jupiter-Agenten | P1 | Deployed | PROJ-1, PROJ-14, PROJ-27, PROJ-33, PROJ-56 | [Spec](PROJ-63-tmux-session-transport.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

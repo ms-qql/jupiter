@@ -45,6 +45,7 @@ function session(id: string, status: SessionStatus, lastActivity: string): Sessi
     liveness: "aktiv",
     liveness_auto_attempts: 0,
     liveness_last_result: null,
+    transport: "direct",
   };
 }
 

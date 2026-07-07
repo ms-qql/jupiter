@@ -64,5 +64,6 @@ describe("sidebar-config (PROJ-38)", () => {
   it("budgetProviderFromItemKey ist die Umkehr von budgetProviderItemKey", () => {
     expect(budgetProviderFromItemKey(budgetProviderItemKey("claude"))).toBe("claude");
     expect(budgetProviderFromItemKey(budgetProviderItemKey("codex"))).toBe("codex");
+    expect(budgetProviderFromItemKey(budgetProviderItemKey("opencode"))).toBe("opencode");
   });
 });

@@ -10,8 +10,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
+import threading
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -53,6 +56,57 @@ class UiCheckConflict(RuntimeError):
     pass
 
 
+class UiCheckRegistryError(RuntimeError):
+    """Registry-Katalog fehlt oder ist nicht lesbar (PROJ-21 Edge Case)."""
+
+
+class UiCheckRegistryGap(RuntimeError):
+    """`registry-only` verlangt, aber mindestens eine Sektion hat keinen passenden Block."""
+
+    def __init__(self, missing: list[str]) -> None:
+        self.missing = missing
+        super().__init__(
+            "Registry-only: keine passenden Blocks fuer Sektionen: " + ", ".join(missing)
+        )
+
+
+class UiCheckBrandingIncomplete(RuntimeError):
+    """Branding-Profil existiert, aber Pflichtteile (Tokens/Theme) fehlen."""
+
+    def __init__(self, slug: str, missing: list[str]) -> None:
+        self.slug = slug
+        self.missing = missing
+        super().__init__(
+            f"Branding-Profil '{slug}' ist unvollstaendig, es fehlen: " + ", ".join(missing)
+        )
+
+
+# Sektionstyp-Synonyme, gespiegelt aus scripts/registry-select.mjs (SECTION_ALIASES),
+# damit der Backend-Vorab-Check dieselben Sektionen matcht wie der echte Selector.
+_SECTION_ALIASES = {
+    "nav": "nav", "navbar": "nav", "header": "nav",
+    "hero": "hero", "intro": "hero",
+    "about": "about", "ueber-uns": "about", "ueber": "about", "about-us": "about", "story": "about",
+    "services": "services", "leistungen": "services", "angebot": "services", "angebote": "services",
+    "loesungen": "services", "features": "services",
+    "portfolio": "portfolio", "cases": "portfolio", "case-studies": "portfolio", "referenzen": "portfolio",
+    "projekte": "portfolio", "work": "portfolio",
+    "process": "process", "prozess": "process", "ablauf": "process", "steps": "process",
+    "wie-es-funktioniert": "process",
+    "team": "team", "people": "team", "das-team": "team",
+    "trust": "trust", "awards": "trust", "auszeichnungen": "trust", "zertifikate": "trust",
+    "partner": "trust", "logos": "trust",
+    "social-proof": "social-proof", "testimonials": "social-proof", "stimmen": "social-proof",
+    "bewertungen": "social-proof", "reviews": "social-proof",
+    "faq": "faq", "fragen": "faq",
+    "cta": "cta", "kontakt": "cta", "contact": "cta", "abschluss": "cta", "call-to-action": "cta",
+    "anfrage": "cta",
+    "footer": "footer", "fuss": "footer",
+}
+_BRANDING_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_INDUSTRY_TAG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8") as fh:
@@ -87,6 +141,8 @@ class UiCheckService:
         self.runs_dir = self.project_path / "runs"
         self.data_file = self.project_path / "data" / "runs.jsonl"
         self._processes: dict[str, subprocess.Popen[bytes]] = {}
+        self._cancelled_runs: set[str] = set()
+        self._chain_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
 
     def list_runs(self) -> dict[str, Any]:
         runs = [self._summary(p) for p in self._run_dirs()]
@@ -131,14 +187,45 @@ class UiCheckService:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        self._processes[run_dir.name] = proc
-        return {"run_id": run_dir.name, "status": "running"}
+        run_id = run_dir.name
+        # AC-3: depth="redesign" + full_pipeline soll nicht nur den Audit starten,
+        # sondern fachlich /ui-check → /ui-redesign → /ui-images-fill →
+        # /ui-mockup-export verketten. Die Skripte laufen fire-and-forget (Popen),
+        # daher beobachtet ein Hintergrund-Thread den laufenden Prozess per
+        # .wait() und startet bei Erfolg (Exit 0 ok / 1 degradiert) den naechsten
+        # Schritt. Ein harter Fehler (Exit >=2) bricht die Kette ab und schreibt
+        # chain_error in status.json — kein Task-Queue-System, minimal-invasiv.
+        if payload.depth == "redesign" and payload.full_pipeline:
+            gen_model_args = []
+            if payload.ai_provider == "claude":
+                alias = _CLAUDE_MODEL_ALIAS.get(payload.ai_model or "")
+                if alias:
+                    gen_model_args = ["--gen-model", alias]
+            steps = [
+                ("redesign", [str(self.project_path / "scripts" / "redesign-auto.sh"), str(run_dir)] + gen_model_args),
+                ("images", [str(self.project_path / "scripts" / "images-fill.sh"), str(run_dir)]),
+                ("mockup", [str(self.project_path / "scripts" / "mockup-export.sh"), str(run_dir)]),
+            ]
+            self._processes[run_id] = proc
+            self._run_chain(run_id, run_dir, proc, steps, first_step_name="audit")
+        else:
+            self._processes[run_id] = proc
+        return {"run_id": run_id, "status": "running"}
 
     def cancel_run(self, run_id: str) -> dict[str, Any]:
         run_id = _safe_run_id(run_id)
-        proc = self._processes.get(run_id)
-        if proc and proc.poll() is None:
-            os.killpg(proc.pid, signal.SIGTERM)
+        # Chain-Worker-Thread haengt in proc.wait() und wuerde ein SIGTERM als
+        # harten Fehler (chain_error) interpretieren und "cancelled" ueberschreiben.
+        self._cancelled_runs.add(run_id)
+        # Gleicher Lock wie der Chain-Schrittwechsel: sonst kann killpg genau in
+        # der Luecke zwischen "alter Schritt beendet" und "naechster Schritt
+        # eingetragen" noch die veraltete (bereits beendete) Proc-Referenz
+        # treffen und der frisch gestartete naechste Schritt liefe unbeeinflusst
+        # weiter, obwohl der Lauf schon als "cancelled" markiert wird.
+        with self._chain_locks[run_id]:
+            proc = self._processes.get(run_id)
+            if proc and proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGTERM)
         path = self._run_path(run_id)
         if not path.exists():
             raise UiCheckNotFound(run_id)
@@ -158,8 +245,6 @@ class UiCheckService:
             raise UiCheckNotFound(run_id)
         if not (path / "scores.json").exists():
             raise UiCheckConflict("Redesign braucht einen abgeschlossenen Audit-Lauf mit scores.json.")
-        if run_id in self._processes and self._processes[run_id].poll() is None:
-            raise UiCheckConflict("Fuer diesen Lauf arbeitet bereits ein Prozess.")
         # redesign-auto.sh verkettet INIT → Generierung (headless Claude,
         # ui-redesign) → Verify. redesign.sh allein scaffoldet nur und stoppt bei
         # awaiting_generation — die Generierung würde sonst nie ausgelöst.
@@ -169,15 +254,218 @@ class UiCheckService:
             alias = _CLAUDE_MODEL_ALIAS.get(ctx.get("ai_model") or "")
             if alias:
                 cmd += ["--gen-model", alias]
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(self.project_path),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        self._processes[run_id] = proc
+        self._spawn_exclusive(run_id, cmd)
         return self._detail(path)
+
+    def start_images(self, run_id: str, force: bool = False, only: str | None = None) -> dict[str, Any]:
+        run_id = _safe_run_id(run_id)
+        path = self._run_path(run_id)
+        if not path.exists():
+            raise UiCheckNotFound(run_id)
+        if not (path / "redesign").exists():
+            raise UiCheckConflict("Bilder fuellen braucht einen vorhandenen Redesign-Lauf (redesign/).")
+        cmd = [str(self.project_path / "scripts" / "images-fill.sh"), str(path)]
+        if force:
+            cmd.append("--force")
+        if only in {"safe", "bold"}:
+            cmd += ["--only", only]
+        self._spawn_exclusive(run_id, cmd)
+        return self._detail(path)
+
+    def start_mockup_export(self, run_id: str, force: bool = False) -> dict[str, Any]:
+        run_id = _safe_run_id(run_id)
+        path = self._run_path(run_id)
+        if not path.exists():
+            raise UiCheckNotFound(run_id)
+        if not (path / "redesign").exists():
+            raise UiCheckConflict("Mockup-Export braucht einen vorhandenen Redesign-Lauf (redesign/).")
+        if (path / "mockup.html").exists() and not force:
+            raise UiCheckConflict(
+                "mockup.html existiert bereits fuer diesen Lauf. Erneuten Export mit force=true erzwingen."
+            )
+        cmd = [str(self.project_path / "scripts" / "mockup-export.sh"), str(path)]
+        if force:
+            cmd.append("--force")
+        self._spawn_exclusive(run_id, cmd)
+        return self._detail(path)
+
+    def start_recycle(
+        self,
+        run_id: str,
+        min_total: int | None = None,
+        min_visual: int | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        run_id = _safe_run_id(run_id)
+        path = self._run_path(run_id)
+        if not path.exists():
+            raise UiCheckNotFound(run_id)
+        if not (path / "redesign").exists():
+            raise UiCheckConflict("Registry-Recycling braucht einen vorhandenen Redesign-Lauf (redesign/).")
+        cmd = ["node", str(self.project_path / "scripts" / "registry-recycle.mjs"), "--run", str(path)]
+        if min_total is not None:
+            cmd += ["--min-total", str(min_total)]
+        if min_visual is not None:
+            cmd += ["--min-visual", str(min_visual)]
+        if force:
+            cmd.append("--force")
+        self._spawn_exclusive(run_id, cmd)
+        return self._detail(path)
+
+    def list_registry(self) -> dict[str, Any]:
+        data = self._read_registry_raw()
+        version = None
+        version_file = self.project_path / "registry" / "VERSION"
+        if version_file.exists():
+            try:
+                first_line = version_file.read_text(encoding="utf-8").splitlines()
+                version = first_line[0].strip() if first_line else None
+            except OSError:
+                version = None
+        items = []
+        for raw in data.get("items", []):
+            if not isinstance(raw, dict):
+                continue
+            meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+            files = []
+            for f in raw.get("files", []) if isinstance(raw.get("files"), list) else []:
+                if isinstance(f, dict) and f.get("path"):
+                    files.append({"path": f["path"], "type": f.get("type")})
+            items.append({
+                "name": raw.get("name") or "",
+                "type": raw.get("type") or "",
+                "title": raw.get("title"),
+                "description": raw.get("description"),
+                "section": meta.get("section"),
+                "style": meta.get("style"),
+                "industry": meta.get("industry") or [],
+                "interactive": bool(meta.get("interactive")),
+                "source": meta.get("source"),
+                "image_slots": meta.get("image_slots") or [],
+                "files": files,
+                "assembler_selectable": raw.get("type") == "registry:block",
+            })
+        return {"items": items, "version": version}
+
+    def list_branding_profiles(self) -> dict[str, Any]:
+        branding_dir = self.project_path / "branding"
+        profiles: list[dict[str, Any]] = []
+        if not branding_dir.exists():
+            return {"profiles": profiles}
+        for entry in sorted(p for p in branding_dir.iterdir() if p.is_dir()):
+            profile = _read_json(entry / "profile.json")
+            current = entry / "current"
+            tokens = _read_json(current / "tokens.json")
+            missing = []
+            if not (current / "tokens.json").exists():
+                missing.append("tokens.json")
+            if not (current / "tailwind-theme.css").exists():
+                missing.append("tailwind-theme.css")
+            has_logo = (current / "logo.svg").exists() or (current / "logo.png").exists()
+            profiles.append({
+                "slug": entry.name,
+                "name": profile.get("name"),
+                "industry": profile.get("industry"),
+                "tags": profile.get("tags") or [],
+                "active_version": profile.get("active_version"),
+                "colors": self._token_colors(tokens)[:12],
+                "fonts": self._token_fonts(tokens)[:8],
+                "has_logo": has_logo,
+                "complete": not missing,
+                "missing": missing,
+            })
+        return {"profiles": profiles}
+
+    def start_assemble(self, payload: Any) -> dict[str, Any]:
+        branding = payload.branding
+        industry = payload.industry
+        if not _BRANDING_SLUG_RE.match(branding):
+            raise UiCheckConflict(f"Ungueltiger Branding-Slug: {branding}")
+        if not _INDUSTRY_TAG_RE.match(industry):
+            raise UiCheckConflict(f"Ungueltiger Industrie-Tag: {industry}")
+
+        profile_dir = self.project_path / "branding" / branding / "current"
+        if not profile_dir.exists():
+            raise UiCheckNotFound(f"branding/{branding}")
+        missing_profile = []
+        if not (profile_dir / "tokens.json").exists():
+            missing_profile.append("tokens.json")
+        if not (profile_dir / "tailwind-theme.css").exists():
+            missing_profile.append("tailwind-theme.css")
+        if missing_profile:
+            raise UiCheckBrandingIncomplete(branding, missing_profile)
+
+        sections = list(payload.sections) or ["hero", "trust", "features", "pricing", "cta"]
+        overrides = {o.section: o for o in payload.overrides}
+        blocks = self._registry_blocks()
+
+        pins: list[str] = []
+        excludes: set[str] = set()
+        active_sections: list[str] = []
+        for sec in sections:
+            override = overrides.get(sec)
+            if override and override.decision == "exclude":
+                continue  # Sektion bewusst weglassen — nicht Teil des Sektionsplans.
+            active_sections.append(sec)
+            if override and override.decision == "block" and override.block:
+                pins.append(f"{sec}={override.block}")
+            elif override and override.decision == "generate":
+                # assemble.sh/registry-select.mjs kennen keinen "force generate"-Flag
+                # pro Sektion — nur --exclude auf Blocknamen. Wir schliessen daher
+                # gezielt alle fuer diese Sektion passenden Blocks aus, was den
+                # Selector zuverlaessig auf "generate" fuer diese Sektion zwingt.
+                matches = self._candidates_for_section(blocks, sec, industry, set())
+                excludes.update(b["name"] for b in matches)
+
+        if not active_sections:
+            raise UiCheckConflict("Sektionsplan ist nach Ausschluessen leer.")
+
+        if payload.registry_only:
+            # Explizit vom Nutzer gepinnte oder auf "generate" gesetzte Sektionen
+            # sind keine unbeabsichtigte Luecke — nur "auto"-Sektionen ohne Treffer
+            # zaehlen als harte registry-only-Luecke.
+            check_sections = [
+                s for s in active_sections
+                if not (overrides.get(s) and overrides[s].decision in {"block", "generate"})
+            ]
+            missing = self._missing_sections(blocks, check_sections, industry)
+            if missing:
+                raise UiCheckRegistryGap(missing)
+
+        run_dir = self._next_assemble_run_dir(branding, industry)
+        cmd = [
+            str(self.project_path / "scripts" / "assemble.sh"),
+            "--branding", branding,
+            "--industry", industry,
+            "--sections", ",".join(active_sections),
+            "--out", str(run_dir),
+        ]
+        if payload.prompt:
+            cmd += ["--prompt", payload.prompt]
+        for pin in pins:
+            cmd += ["--pin", pin]
+        for excl in sorted(excludes):
+            cmd += ["--exclude", excl]
+        if payload.registry_only:
+            cmd.append("--registry-only")
+
+        self._processes[run_dir.name] = self._spawn(cmd)
+        return {"run_id": run_dir.name, "status": "running", "run_type": "assemble"}
+
+    def delete_run(self, run_id: str) -> None:
+        run_id = _safe_run_id(run_id)
+        proc = self._processes.get(run_id)
+        if proc and proc.poll() is None:
+            raise UiCheckConflict("Lauf kann nicht geloescht werden, waehrend er noch laeuft — erst abbrechen.")
+        path = self._run_path(run_id)
+        if not path.exists():
+            raise UiCheckNotFound(run_id)
+        # Defensive Pfadbegrenzung: nur direkte Kinder des runs-Ordner duerfen
+        # geloescht werden, niemals der Elternordner selbst (Path-Traversal).
+        if path.resolve() == self.runs_dir.resolve():
+            raise UiCheckNotFound(run_id)
+        shutil.rmtree(path, ignore_errors=False)
+        self._processes.pop(run_id, None)
 
     def artifact_path(self, run_id: str, kind: str) -> Path:
         path = self._run_path(run_id)
@@ -231,13 +519,20 @@ class UiCheckService:
         url = status.get("final_url") or ctx.get("final_url") or status.get("url") or ctx.get("url") or meta.get("url")
         raw_status = status.get("status") or ("done" if scores else "error")
         mapped_status = self._status(path.name, raw_status)
+        run_type = self._run_type(path)
+        # ctx.get("mode") ist bei Assemble-Laeufen "assemble" (assemble.sh
+        # ueberlaedt denselben Feldnamen fuer sein Greenfield-Kennzeichen) — das
+        # ist kein gueltiger Wert fuer das Landing/App-Mode-Feld der Audit-Antwort.
+        raw_mode = ctx.get("mode")
+        mode = raw_mode if raw_mode in {"auto", "landing", "app"} else "auto"
         return {
             "run_id": path.name,
             "created_at": status.get("started_at") or ctx.get("started_at") or scores.get("timestamp"),
             "url_hash": _url_hash(url, path.name),
             "display_url": url,
-            "mode": ctx.get("mode") or "auto",
+            "mode": mode,
             "depth": "redesign" if (path / "redesign").exists() or (path / "mockup.html").exists() else "audit",
+            "run_type": run_type,
             "industry": status.get("industry_tag") or ctx.get("industry_tag") or scores.get("meta", {}).get("industry_tag"),
             "status": mapped_status,
             "rubric_version": ctx.get("rubric_version") or scores.get("rubric_version"),
@@ -261,8 +556,67 @@ class UiCheckService:
             "branding": self._branding(path, base["display_url"]),
             "artifacts": self._artifacts(path),
             "status_message": self._status_message(status, bool(scores)),
+            "mockup_status": self._mockup_status(path),
+            "registry_selection": self._registry_selection(path),
+            "chain_error": status.get("chain_error"),
         })
         return base
+
+    def _run_type(self, path: Path) -> str:
+        redesign_ctx = _read_json(path / "redesign" / "redesign-context.json")
+        ui_check_ctx = _read_json(path / "ui-check.json")
+        if redesign_ctx.get("source") == "assemble" or ui_check_ctx.get("mode") == "assemble":
+            return "assemble"
+        return "audit_redesign"
+
+    def _mockup_status(self, path: Path) -> dict[str, Any]:
+        rd = path / "redesign"
+        fill = _read_json(rd / "images-fill.json")
+        counts = fill.get("counts") if isinstance(fill.get("counts"), dict) else {}
+        filled = counts.get("filled") or 0
+        placeholder = counts.get("placeholder") or 0
+        total = filled + placeholder
+        exported = (path / "mockup.html").exists()
+        return {
+            "safe_ready": (rd / "safe").exists(),
+            "bold_ready": (rd / "bold").exists(),
+            "exported": exported,
+            "export_conflict": exported,
+            "images": {
+                "total_slots": total,
+                "filled_slots": filled,
+                "placeholder_slots": placeholder,
+                "degraded": total > 0 and placeholder > 0,
+            },
+            "score_delta": self._score_delta(path),
+        }
+
+    def _score_delta(self, path: Path) -> int | float | None:
+        before = _read_json(path / "scores.json").get("total")
+        after = self._redesign_score(path)
+        if before is None or after is None:
+            return None
+        return after - before
+
+    def _registry_selection(self, path: Path) -> dict[str, Any]:
+        rd = path / "redesign"
+
+        def variant(name: str) -> list[dict[str, Any]]:
+            sel = _read_json(rd / f"registry-selection.{name}.json")
+            sections = sel.get("sections") if isinstance(sel.get("sections"), list) else []
+            out = []
+            for section in sections:
+                if isinstance(section, dict):
+                    out.append({
+                        "id": section.get("id"),
+                        "type": section.get("type"),
+                        "decision": section.get("decision"),
+                        "block": section.get("block"),
+                        "reason": section.get("reason"),
+                    })
+            return out
+
+        return {"safe": variant("safe"), "bold": variant("bold")}
 
     def _status(self, run_id: str, raw: str) -> str:
         proc = self._processes.get(run_id)
@@ -377,6 +731,10 @@ class UiCheckService:
                 value = item.get("$value")
                 if isinstance(value, str):
                     out.append(value.split(",", 1)[0].strip())
+                elif isinstance(value, list) and value and isinstance(value[0], str):
+                    # Branding-Profile (DTCG fontFamily) speichern $value als Liste
+                    # ("Geist", "ui-sans-serif", ...) statt als Komma-String.
+                    out.append(value[0].strip())
         return out
 
     def _artifacts(self, path: Path) -> dict[str, Any]:
@@ -425,6 +783,142 @@ class UiCheckService:
         })
 
     def _write_json(self, path: Path, data: dict[str, Any]) -> None:
+        # Atomar schreiben (tmp + os.replace): status.json wird vom Dashboard
+        # gepollt, waehrend der Hintergrund-Thread der Pipeline-Kette parallel
+        # schreibt — ein truncate-in-place wuerde dem Poller sonst gelegentlich
+        # eine leere/kaputte Datei zeigen.
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
+        tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
+        with tmp.open("w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+
+    def _reject_running(self, run_id: str) -> None:
+        proc = self._processes.get(run_id)
+        if proc and proc.poll() is None:
+            raise UiCheckConflict("Fuer diesen Lauf arbeitet bereits ein Prozess.")
+
+    def _spawn(self, cmd: list[str]) -> subprocess.Popen[bytes]:
+        return subprocess.Popen(
+            cmd,
+            cwd=str(self.project_path),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    def _spawn_exclusive(self, run_id: str, cmd: list[str]) -> subprocess.Popen[bytes]:
+        # Gleicher Lock wie der Chain-Worker beim Schrittwechsel, damit ein
+        # manueller Einzelschritt-Start nicht in das kurze Zeitfenster zwischen
+        # "Prozess beendet" und "naechster Prozess eingetragen" reinlaufen kann.
+        with self._chain_locks[run_id]:
+            self._reject_running(run_id)
+            proc = self._spawn(cmd)
+            self._processes[run_id] = proc
+            return proc
+
+    def _run_chain(
+        self,
+        run_id: str,
+        path: Path,
+        first_proc: subprocess.Popen[bytes],
+        steps: list[tuple[str, list[str]]],
+        first_step_name: str,
+    ) -> None:
+        def worker() -> None:
+            proc = first_proc
+            step_name = first_step_name
+            remaining = list(steps)
+            while True:
+                returncode = proc.wait()
+                if run_id in self._cancelled_runs:
+                    self._cancelled_runs.discard(run_id)
+                    return
+                if returncode not in (0, 1):
+                    self._write_chain_error(path, step_name, returncode)
+                    return
+                if not remaining:
+                    return
+                step_name, cmd = remaining.pop(0)
+                with self._chain_locks[run_id]:
+                    proc = self._spawn(cmd)
+                    self._processes[run_id] = proc
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _write_chain_error(self, path: Path, step: str, returncode: int) -> None:
+        status = _read_json(path / "status.json")
+        status["chain_error"] = {
+            "step": step,
+            "returncode": returncode,
+            "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        status["status"] = "error"
+        self._write_json(path / "status.json", status)
+
+    def _read_registry_raw(self) -> dict[str, Any]:
+        reg_path = self.project_path / "registry" / "registry.json"
+        try:
+            with reg_path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError as exc:
+            raise UiCheckRegistryError(f"Registry-Katalog nicht gefunden: {reg_path}") from exc
+        except json.JSONDecodeError as exc:
+            raise UiCheckRegistryError(f"Registry-Katalog ist fehlerhaft (kein gueltiges JSON): {reg_path}") from exc
+        except OSError as exc:
+            raise UiCheckRegistryError(f"Registry-Katalog nicht lesbar: {reg_path}") from exc
+        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+            raise UiCheckRegistryError(f"Registry-Katalog hat ein unerwartetes Format: {reg_path}")
+        return data
+
+    def _registry_blocks(self) -> list[dict[str, Any]]:
+        data = self._read_registry_raw()
+        blocks = []
+        for item in data.get("items", []):
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "registry:block"
+                and isinstance(item.get("meta"), dict)
+                and item["meta"].get("section")
+            ):
+                blocks.append(item)
+        return blocks
+
+    def _canon_section(self, section_type: str) -> str:
+        key = str(section_type or "").lower()
+        return _SECTION_ALIASES.get(key, key)
+
+    def _matches_industry(self, item: dict[str, Any], industry: str | None) -> bool:
+        if not industry:
+            return True
+        tags = item.get("meta", {}).get("industry") or []
+        return any(industry in tag or tag in industry for tag in tags)
+
+    def _candidates_for_section(
+        self,
+        blocks: list[dict[str, Any]],
+        section_type: str,
+        industry: str | None,
+        exclude: set[str],
+    ) -> list[dict[str, Any]]:
+        canon = self._canon_section(section_type)
+        return [
+            b for b in blocks
+            if self._canon_section(b["meta"]["section"]) == canon
+            and self._matches_industry(b, industry)
+            and b.get("name") not in exclude
+        ]
+
+    def _missing_sections(
+        self, blocks: list[dict[str, Any]], sections: list[str], industry: str | None
+    ) -> list[str]:
+        return [s for s in sections if not self._candidates_for_section(blocks, s, industry, set())]
+
+    def _next_assemble_run_dir(self, branding: str, industry: str) -> Path:
+        today = datetime.now().strftime("%Y-%m-%d")
+        base = f"{today}-assemble-{branding}-{industry}"
+        for n in range(1, 1000):
+            candidate = self.runs_dir / f"{base}-{n:03d}"
+            if not candidate.exists():
+                return candidate
+        raise UiCheckConflict("Kein freier Run-Ordner fuer Assemble gefunden.")

@@ -151,6 +151,11 @@ class SessionRead(BaseModel):
     liveness: str = "aktiv"
     liveness_auto_attempts: int = 0
     liveness_last_result: str | None = None
+    # PROJ-63: "direct" (Default) oder "tmux" — Cockpit-Badge. QA-BUG-3: fehlte hier,
+    # obwohl `SessionState.to_read()` es lieferte — Pydantic filtert unbekannte Dict-
+    # Schlüssel beim `response_model`-Serialisieren heraus, das Frontend bekam den Wert
+    # nie zugestellt.
+    transport: str = "direct"
 
 
 class PermissionHookRequest(BaseModel):

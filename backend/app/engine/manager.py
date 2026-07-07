@@ -25,12 +25,12 @@ from ..config import (
     settings,
 )
 from ..db import NullSessionIndexRepository, SessionIndexRepository
-from . import abc_phases, curation, liveness, policy, watchdog
+from . import abc_phases, curation, liveness, policy, transport_settings, watchdog
 from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .generic_cli_driver import GenericCliDriver
 from .openai_driver import OpenAIDriver
-from .registry import DRIVER_OPENAI, EngineProfile, engine_registry
+from .registry import DRIVER_GENERIC_CLI, DRIVER_OPENAI, EngineProfile, engine_registry
 from .cache_manager import CacheManager
 from .constitution import resolve_constitution
 from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
@@ -259,8 +259,8 @@ def validate_project_path(path: str) -> str:
 
 @dataclass
 class TranscriptEntry:
-    role: str  # "assistant"
-    kind: str  # "text" | "thinking"
+    role: str  # "assistant" | "user" | "tool" (PROJ-62)
+    kind: str  # "text" | "thinking" | "tool_use" (PROJ-62)
     text: str
     ts: str
 
@@ -331,6 +331,11 @@ class SessionState:
     # PROJ-22 (M3): bei vollem Engine-Slot eingereihte Tickets (Plan-Posten als dict);
     # ein Hintergrund-Tick rückt sie automatisch nach, sobald ein Slot frei wird.
     queued_tickets: list[dict] = field(default_factory=list)
+    # PROJ-63: "direct" (Default) oder "tmux" — nur für generic_cli-Engines (Codex/
+    # OpenCode/Hermes) auflösbar; bei Claude bleibt es immer "direct". Wird beim
+    # Erststart aufgelöst und am State gehalten, damit ein Resume/Rehydrate denselben
+    # Transport verwendet (kein Wechsel mitten in einer Session durch Settings-Änderung).
+    transport: str = "direct"
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -385,6 +390,8 @@ class SessionState:
             "contract_pointer": self.contract_pointer,
             # M3: eingereihte (noch nicht gestartete) Tickets — nur IDs fürs Cockpit.
             "queued_ticket_ids": [t.get("ticket_id") for t in self.queued_tickets],
+            # PROJ-63: Transport-Badge fürs Cockpit ("direct" | "tmux").
+            "transport": self.transport,
         }
 
 
@@ -480,6 +487,11 @@ class SessionRuntime:
         data["liveness"] = self.derive_liveness()
         data["liveness_auto_attempts"] = self.liveness.auto_attempts
         data["liveness_last_result"] = self.liveness.last_result
+        # PROJ-61: aktuellen Aktivitäts-Ticker-Stand mitschicken (sonst sieht ein frisch
+        # (re)verbundener Client den Ticker leer, bis der NÄCHSTE Tool-Call kommt — bei
+        # OpenCode/Codex (seltener sichtbarer Zwischentext als bei Claude) wirkt eine
+        # Session dadurch minutenlang wie eingefroren, obwohl sie längst aktiv war).
+        data["live_activity"] = self.last_activity
         return data
 
     def _maybe_persist(self) -> None:
@@ -553,6 +565,13 @@ class SessionRuntime:
             elif event.subtype == "closed":
                 if self.state.status != ERROR:
                     self.state.status = DONE
+                # PROJ-62: der stille PROJ-60-Fallback (Prozess endete ohne echtes Turn-
+                # Ende) liefert einen Grund mit — nur setzen, falls noch kein aussage-
+                # kräftigerer Fehler (z. B. aus dem error-Zweig) vorhanden ist.
+                if event.raw.get("reason") == "no_final_result" and not self.state.error:
+                    self.state.error = (
+                        "Der Prozess wurde beendet, ohne den Turn regulär abzuschließen."
+                    )
             # hook_* / thinking_tokens: kein Zustandswechsel.
 
         elif event.type == "assistant":
@@ -596,6 +615,15 @@ class SessionRuntime:
             tool_input = event.raw.get("input") if isinstance(event.raw.get("input"), dict) else {}
             self.watchdog.note_progress()
             self._emit_activity(tool_name, tool_input)
+            # PROJ-62: zusätzlich zum flüchtigen Activity-Ticker (oben) einen persistenten
+            # Transkript-Eintrag hinterlassen — sonst bleibt ein Turn, der ausschließlich aus
+            # Tool-Aufrufen besteht (kein Assistant-Text), im Transkript vollständig leer,
+            # obwohl Kosten/Turns/Kontext dafür bereits verbucht werden (PROJ-58).
+            target = sanitize_target(tool_name, tool_input)
+            tool_text = f"{tool_name}: {target}" if target else tool_name
+            self.transcript.append(
+                TranscriptEntry("tool", "tool_use", tool_text, _now().isoformat())
+            )
             prospective = abc_phases.detect_phase_signal(
                 tool_name, tool_input,
                 phase=self.state.abc_phase,
@@ -1207,6 +1235,7 @@ class SessionManager:
             "drained_at": s.drained_at,  # PROJ-33
             "resume_id": s.resume_id,  # PROJ-56
             "context_status": s.context_status,  # PROJ-56
+            "transport": s.transport,  # PROJ-63
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -1398,6 +1427,7 @@ class SessionManager:
             drained_at=row.get("drained_at"),  # PROJ-33
             resume_id=row.get("resume_id"),  # PROJ-56
             context_status=row.get("context_status"),  # PROJ-56
+            transport=row.get("transport") or "direct",  # PROJ-63
         )
 
     async def create(
@@ -1496,6 +1526,13 @@ class SessionManager:
         if profile.key == "codex":
             initial_prompt = f"{_CODEX_QUESTION_CARD_INSTRUCTION}\n\n{initial_prompt}"
 
+        # PROJ-63: Transport nur für generic_cli-Engines auflösen (Codex/OpenCode/Hermes
+        # zuerst) — Claude bleibt unberührt bei "direct". Am State gehalten (nicht bei
+        # jedem Resume neu aufgelöst), damit eine Settings-Änderung eine laufende Session
+        # nicht mitten im Betrieb auf einen anderen Transport umschaltet.
+        if profile.driver == DRIVER_GENERIC_CLI:
+            state.transport = transport_settings.transport_store.resolve(profile.key)
+
         driver = self._make_driver(profile)
         runtime = SessionRuntime(
             state, driver, on_done=self._write_session_log, on_persist=self._persist
@@ -1522,6 +1559,7 @@ class SessionManager:
             # PROJ-18: der Freigabe-Hook (PROJ-4) ist Claude-Code-spezifisch; andere
             # Engines kennen keinen PreToolUse-Hook → keine Settings-JSON.
             settings_json=self._hook_settings() if profile.is_claude else None,
+            transport=state.transport,  # PROJ-63
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -1667,6 +1705,7 @@ class SessionManager:
             resume=is_claude or resume_id is not None,
             resume_id=resume_id,
             settings_json=self._hook_settings() if is_claude else None,
+            transport=state.transport,  # PROJ-63: derselbe Transport wie beim Erststart.
         )
         try:
             await driver.start(spec, runtime.handle_event)

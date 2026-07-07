@@ -84,6 +84,7 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
           target?: string;
           ts?: string | null;
           transcript?: TranscriptEntry[];
+          live_activity?: LiveActivity | null;
         } & Partial<Session>;
         try {
           msg = JSON.parse(ev.data);
@@ -92,6 +93,12 @@ export function useSessionStream(id: string, opts?: StreamOptions): StreamResult
         }
         if (msg.kind === "state") {
           setState(msg as Session);
+          // PROJ-61: den Ticker-Stand aus JEDEM State-Snapshot übernehmen (nicht nur aus
+          // dedizierten `kind:"activity"`-Pushes) — sonst zeigt ein frisch (re)verbundener
+          // Client den Ticker leer, bis der NÄCHSTE Tool-Call kommt, obwohl die Session
+          // längst aktiv war (besonders bei OpenCode/Codex sichtbar, die seltener
+          // Zwischentext liefern als Claude).
+          setLastActivity(msg.live_activity ?? null);
           // PROJ-49 B: Nur der Connect-Snapshot trägt `transcript` (Live-`state`-
           // Broadcasts nicht) → als Baseline übernehmen und den seit-Snapshot-Strom
           // leeren. Idempotent: verpasste Chunks stecken bereits im Transkript,

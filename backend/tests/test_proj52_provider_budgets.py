@@ -72,6 +72,8 @@ class _Cfg:
     provider_budget_claude_week_tokens = 0
     provider_budget_codex_5h_tokens = 0
     provider_budget_codex_week_tokens = 0
+    provider_budget_opencode_5h_tokens = 0
+    provider_budget_opencode_week_tokens = 0
 
 
 class _FixedClockService(ProviderBudgetService):
@@ -91,7 +93,7 @@ def _cfg(**over) -> _Cfg:
 
 
 def _registry(**profiles) -> _FakeRegistry:
-    defaults = {"claude": _FakeProfile(), "codex": _FakeProfile()}
+    defaults = {"claude": _FakeProfile(), "codex": _FakeProfile(), "opencode": _FakeProfile()}
     defaults.update(profiles)
     return _FakeRegistry(defaults)
 

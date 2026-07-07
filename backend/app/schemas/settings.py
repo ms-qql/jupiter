@@ -172,12 +172,13 @@ class WatchdogSettingRead(WatchdogLimitsPut):
 
 
 class ProviderBudgetLimitsPut(BaseModel):
-    """Nutzergepflegte Budget-Schnappschüsse für Claude/Codex (PUT /settings/provider-budgets).
+    """Nutzergepflegte Budget-Schnappschüsse für Claude/Codex/OpenCode (PUT /settings/provider-budgets).
 
     Pro Provider/Fenster ein Prozentwert (``ge=0``, leer = ``None`` = unbekannt → n/v) und
     ein Reset-Zeitpunkt (ISO 8601, leer = automatisch ``jetzt + Fensterdauer``). Die Werte
     werden in der Sidebar genau so angezeigt; abgelaufene Reset-Zeiten werden als
     *veraltet* markiert. Quelle ist Claudes/Codex' eigene Verbrauchsanzeige (z. B. ``/usage``).
+    OpenCode wird i. d. R. live via OpenRouter-API abgefragt; manuelle Werte sind Fallback.
     """
 
     claude_5h_pct: float | None = Field(None, ge=0, description="Claude 5h-Verbrauch in %.")
@@ -188,6 +189,10 @@ class ProviderBudgetLimitsPut(BaseModel):
     codex_5h_reset_at: str | None = Field(None, description="Codex 5h-Reset (ISO 8601).")
     codex_week_pct: float | None = Field(None, ge=0, description="Codex Wochen-Verbrauch in %.")
     codex_week_reset_at: str | None = Field(None, description="Codex Wochen-Reset (ISO 8601).")
+    opencode_5h_pct: float | None = Field(None, ge=0, description="OpenCode Guthaben-Verbrauch in %.")
+    opencode_5h_reset_at: str | None = Field(None, description="OpenCode Guthaben-Reset (ISO 8601).")
+    opencode_week_pct: float | None = Field(None, ge=0, description="OpenCode Wochen-Verbrauch in %.")
+    opencode_week_reset_at: str | None = Field(None, description="OpenCode Wochen-Reset (ISO 8601).")
 
 
 class ProviderBudgetSettingRead(ProviderBudgetLimitsPut):
@@ -226,3 +231,28 @@ class LivenessSettingRead(LivenessLimitsPut):
 
     source: str
     warning: str | None = None
+
+
+# --- PROJ-63: Tmux-Session-Transport (globaler Default + Engine-Overrides) --
+
+
+class TransportSettingPut(BaseModel):
+    """Transport-Wahl (PUT /settings/transports).
+
+    ``default_transport`` gilt für alle Engines ohne eigenen Eintrag in
+    ``engine_overrides``. Beide nur ``"direct"`` oder ``"tmux"`` — Default bleibt
+    konservativ ``"direct"``, bis der Spike ausgerollt ist.
+    """
+
+    default_transport: str = Field(default="direct", description="'direct' oder 'tmux'.")
+    engine_overrides: dict[str, str] = Field(
+        default_factory=dict, description="Engine-Key -> 'direct'/'tmux', z. B. {'codex': 'tmux'}."
+    )
+
+
+class TransportSettingRead(TransportSettingPut):
+    """Aktuelle Transport-Config + Herkunft/Warnung + tmux-Verfügbarkeit (GET /settings/transports)."""
+
+    source: str
+    warning: str | None = None
+    tmux_available: bool

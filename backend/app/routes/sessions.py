@@ -19,6 +19,7 @@ from ..engine.manager import (
     SessionManager,
     SessionRuntime,
 )
+from ..engine.transport import TransportError
 from ..schemas.sessions import (
     ConstitutionRead,
     DecisionResolve,
@@ -75,6 +76,8 @@ async def create_session(
         raise HTTPException(
             status_code=503, detail="Claude-CLI nicht gefunden — ist `claude` installiert/eingeloggt?"
         ) from exc
+    except TransportError as exc:  # PROJ-63 (QA-BUG-2): tmux fehlt/Start fehlgeschlagen.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return runtime.to_read()
 
 

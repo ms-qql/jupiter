@@ -59,6 +59,11 @@ class LaunchSpec:
     # PROJ-56: engine-eigene Wiederaufnahme-ID (z. B. Codex' thread_id) für den
     # kontext-erhaltenden Resume eines oneshot-CLI-Treibers. None = kein Resume-Kontext.
     resume_id: str | None = None
+    # PROJ-63: "direct" (Default, unverändertes Verhalten) oder "tmux". Nur
+    # ``GenericCliDriver`` wertet dieses Feld aus (Codex/OpenCode-Rollout zuerst);
+    # ``ClaudeCodeDriver`` ignoriert es bewusst (bleibt bis zum eigenen Rollout-Schritt
+    # ausschließlich "direct").
+    transport: str = "direct"
 
 
 class EngineDriver(ABC):

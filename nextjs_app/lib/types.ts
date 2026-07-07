@@ -197,7 +197,13 @@ export interface Session {
   liveness_auto_attempts: number;
   /** PROJ-27: Ergebnis des letzten Reanimations-Versuchs (für die UI-Rückmeldung). */
   liveness_last_result: LivenessResult;
+  /** PROJ-63: "direct" (Default) oder "tmux" — nur bei generic_cli-Engines (Codex/
+   *  OpenCode/Hermes) je "tmux" möglich; bei Claude immer "direct". */
+  transport: SessionTransport;
 }
+
+/** PROJ-63: Transport-Badge — spiegelt ``engine/manager.py: SessionState.transport``. */
+export type SessionTransport = "direct" | "tmux";
 
 /** PROJ-8: kanonische ABC-Workflow-Phasen (spiegelt backend/app/engine/abc_phases.py). */
 export type AbcPhase =
@@ -475,6 +481,10 @@ export interface ProviderBudgetLimits {
   codex_5h_reset_at: string | null;
   codex_week_pct: number | null;
   codex_week_reset_at: string | null;
+  opencode_5h_pct: number | null;
+  opencode_5h_reset_at: string | null;
+  opencode_week_pct: number | null;
+  opencode_week_reset_at: string | null;
 }
 
 /** Gesamte Budget-Config (GET /settings/provider-budgets) — Werte + Herkunft/Warnung. */
@@ -915,6 +925,9 @@ export type UiCheckRunStatus = "queued" | "running" | "done" | "error" | "cancel
 export type UiCheckMode = "auto" | "landing" | "app";
 export type UiCheckDepth = "audit" | "redesign";
 export type UiCheckAiProvider = "claude" | "codex" | "openrouter";
+/** PROJ-21: unterscheidet URL-Läufe (Audit/Redesign) von Assembler-Läufen ohne
+ *  Original-Screenshots. */
+export type UiCheckRunType = "audit_redesign" | "assemble";
 
 export interface UiCheckDimensionScore {
   key: string;
@@ -962,6 +975,42 @@ export interface UiCheckRunSummary {
   redesign_score: number | null;
   ai_provider: UiCheckAiProvider | string | null;
   ai_model: string | null;
+  run_type: UiCheckRunType;
+}
+
+/** PROJ-21: Bildfüllstatus (PROJ-20) über beide Varianten hinweg. */
+export interface UiCheckImageFillStatus {
+  total_slots: number;
+  filled_slots: number;
+  placeholder_slots: number;
+  degraded: boolean;
+}
+
+/** PROJ-21: Zusammengefasster Mockup-Status für den Mockup-Tab. */
+export interface UiCheckMockupStatus {
+  safe_ready: boolean;
+  bold_ready: boolean;
+  exported: boolean;
+  export_conflict: boolean;
+  images: UiCheckImageFillStatus;
+  score_delta: number | null;
+}
+
+export type UiCheckRegistryDecision = "registry" | "generate" | string;
+
+/** Ein Eintrag aus redesign/registry-selection.<safe|bold>.json. */
+export interface UiCheckSectionSelection {
+  id: string | null;
+  type: string | null;
+  decision: UiCheckRegistryDecision | null;
+  block: string | null;
+  reason: string | null;
+}
+
+/** PROJ-21: Registry-Entscheidung je Sektion, getrennt nach Safe/Bold. */
+export interface UiCheckRegistrySelection {
+  safe: UiCheckSectionSelection[];
+  bold: UiCheckSectionSelection[];
 }
 
 export interface UiCheckRunDetail extends UiCheckRunSummary {
@@ -973,6 +1022,10 @@ export interface UiCheckRunDetail extends UiCheckRunSummary {
   branding: UiCheckBranding | null;
   artifacts: UiCheckArtifactLinks;
   status_message: string | null;
+  mockup_status: UiCheckMockupStatus;
+  registry_selection: UiCheckRegistrySelection;
+  /** Nur bei "Komplette Pipeline" gesetzt, wenn ein Kettenschritt hart abbricht. */
+  chain_error: { step: string; returncode: number; at: string } | null;
 }
 
 export interface UiCheckRunsResponse {
@@ -989,12 +1042,117 @@ export interface UiCheckStartRequest {
   prompt?: string;
   industry?: string | null;
   desktop?: boolean;
+  /** AC-3: bei depth="redesign" hängt der Runner Redesign, Bildbefüllung und
+   *  Mockup-Export automatisch an den Audit-Lauf an ("Komplette Pipeline"). */
+  full_pipeline?: boolean;
 }
 
 export interface UiCheckStartResponse {
   run_id: string;
   status: UiCheckRunStatus;
 }
+
+export interface UiCheckImagesRequest {
+  force?: boolean;
+  only?: "safe" | "bold" | null;
+}
+
+export interface UiCheckMockupExportRequest {
+  force?: boolean;
+}
+
+export interface UiCheckRecycleRequest {
+  min_total?: number | null;
+  min_visual?: number | null;
+  force?: boolean;
+}
+
+// --- PROJ-21: Registry-Katalog (Portfolio-Tab) -----------------------------
+
+export interface UiCheckRegistryFile {
+  path: string;
+  type: string | null;
+}
+
+export interface UiCheckRegistryItem {
+  name: string;
+  /** z. B. "registry:block", "registry:template", "registry:lib", "registry:style". */
+  type: string;
+  title: string | null;
+  description: string | null;
+  section: string | null;
+  style: "safe" | "bold" | string | null;
+  industry: string[];
+  interactive: boolean;
+  source: string | null;
+  image_slots: string[];
+  files: UiCheckRegistryFile[];
+  assembler_selectable: boolean;
+}
+
+export interface UiCheckRegistryResponse {
+  items: UiCheckRegistryItem[];
+  version: string | null;
+}
+
+// --- PROJ-21: Branding-Profile (Assembler-Tab) -----------------------------
+
+export interface UiCheckBrandingProfileSummary {
+  slug: string;
+  name: string | null;
+  industry: string | null;
+  tags: string[];
+  active_version: string | null;
+  colors: string[];
+  fonts: string[];
+  has_logo: boolean;
+  /** false, wenn Pflichtteile (tokens.json/tailwind-theme.css) fehlen. */
+  complete: boolean;
+  missing: string[];
+}
+
+export interface UiCheckBrandingProfilesResponse {
+  profiles: UiCheckBrandingProfileSummary[];
+}
+
+// --- PROJ-21: Portfolio-Assembler -------------------------------------------
+
+export type UiCheckSectionOverrideDecision = "auto" | "block" | "generate" | "exclude";
+
+export interface UiCheckAssembleSectionOverride {
+  section: string;
+  decision: UiCheckSectionOverrideDecision;
+  block?: string | null;
+}
+
+export interface UiCheckAssembleRequest {
+  branding: string;
+  industry: string;
+  /** Vollständiger Sektionsplan (Rollen-IDs); Ausschlüsse werden über
+   *  `overrides` mit decision "exclude" markiert, nicht durch Weglassen. */
+  sections: string[];
+  prompt?: string | null;
+  registry_only: boolean;
+  overrides: UiCheckAssembleSectionOverride[];
+}
+
+export interface UiCheckAssembleResponse {
+  run_id: string;
+  status: UiCheckRunStatus;
+  run_type: UiCheckRunType;
+}
+
+/** 409-Konfliktkörper von POST /ui-check/assemble (Registry-Lücke oder
+ *  unvollständiges Branding-Profil) bzw. anderer UiCheckConflict-Text. */
+export interface UiCheckAssembleConflict {
+  message: string;
+  missing_sections?: string[];
+  missing_profile_parts?: string[];
+}
+
+export type UiCheckAssembleOutcome =
+  | { ok: true; response: UiCheckAssembleResponse }
+  | { ok: false; conflict: UiCheckAssembleConflict };
 
 /** Ergebnis von POST /book-nuggets/queue (Erfolg). */
 export interface BookNuggetsAddResult {

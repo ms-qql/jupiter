@@ -44,6 +44,7 @@ function session(overrides: Partial<Session> = {}): Session {
     liveness: "aktiv",
     liveness_auto_attempts: 0,
     liveness_last_result: null,
+    transport: "direct",
     ...overrides,
   };
 }
