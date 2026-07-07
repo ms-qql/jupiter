@@ -1,6 +1,6 @@
 # PROJ-67: Peppermint Dashboard + automatische Frontdesk-Triage
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -594,3 +594,13 @@ cd nextjs_app && npm test
 
 ### Entscheidung
 **Alle deployment-blockierenden Tests bestanden. Status auf Approved gesetzt.** Nächster Schritt: `/abc-deploy`.
+
+## Deployment Notes (abc-deploy)
+**Vorbereitet:** 2026-07-07 · **Version:** 0.27.17 · **Branch:** main · **Status:** Deployed
+
+- Deploy-Modell laut Projekt-Doku: host-nativ auf dem Dev-/Prod-VPS mit systemd-Services und GitHub-Webhook-Auto-Deploy auf Push nach `main`; keine versionierten Docker-/Compose-Dateien im Repo.
+- Version-Bump: `nextjs_app/package.json` und `nextjs_app/package-lock.json` von `0.27.16` auf `0.27.17`.
+- QA-Gate vor Deploy: PROJ-67 `Approved`, keine Critical-/High-Bugs offen.
+- Nach Bump geprüft: `cd nextjs_app && npm run build` bestanden.
+- CodeGraph-Reindex übersprungen: `.codegraph` ist vorhanden, aber keine `codegraph`-CLI in dieser Shell verfügbar.
+- Ops-Hinweis: `backend/config/engines.yaml` ist git-ignored. Die produktive Runtime-Registry muss den Eintrag `peppermint_dashboard` aus `backend/config/engines.example.yaml` übernehmen, sonst erscheint die Micro-App nach Deploy nicht in der Live-Sidebar.
