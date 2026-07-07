@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-65
+**Next Available ID:** PROJ-67
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -77,6 +77,8 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-62 | Bugfix: OpenCode-Session endet lautlos ohne Transkript und ohne Fehler bei Tool-Only-Turn | P1 | Deployed | PROJ-57, PROJ-58, PROJ-60 | [Spec](PROJ-62-opencode-leeres-transkript-tool-only-turn.md) |
 | PROJ-63 | Tmux-Session-Transport für stabile Jupiter-Agenten | P1 | Deployed | PROJ-1, PROJ-14, PROJ-27, PROJ-33, PROJ-56 | [Spec](PROJ-63-tmux-session-transport.md) |
 | PROJ-64 | Bugfix: tmux-Transport-503 (BUG-4-Nachfolger) — Reaping-Race entschärfen statt nur sichtbar machen | P0 | Deployed | PROJ-63, PROJ-1, PROJ-27 | [Spec](PROJ-64-tmux-reaping-race-503-haertung.md) |
+| PROJ-65 | Bugfix: Frisch erstellte tmux-Session zeigt sofort „beendet" statt aktiv (Status-Race bei schnellen Oneshot-Turns) | P0 | Planned | PROJ-63, PROJ-64, PROJ-56, PROJ-58, PROJ-60 | [Spec](PROJ-65-tmux-oneshot-status-race-nach-spawn.md) |
+| PROJ-66 | Bugfix: Session-Transkript von Oneshot-Engines geht bei Backend-Neustart dauerhaft verloren | P0 | Planned | PROJ-56, PROJ-58, PROJ-60, PROJ-63, PROJ-64 | [Spec](PROJ-66-transkript-persistenz-oneshot-engines-nach-neustart.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
