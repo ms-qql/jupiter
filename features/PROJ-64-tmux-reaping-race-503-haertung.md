@@ -1,6 +1,6 @@
 # PROJ-64: Bugfix: tmux-Transport-503 (BUG-4-Nachfolger) — Reaping-Race entschärfen statt nur sichtbar machen
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -124,7 +124,78 @@ metrics.py::_systemctl_is_active()  → gleiche zugrunde liegende Fehlerklasse, 
 - Live-Nachweis der Reaping-Race-Reduktion unter echter Last (mehrere parallele Session-Starts) konnte im Test nur simuliert (Fake-Binary), nicht mit der echten, nicht-deterministischen Störung selbst reproduziert werden — wie bereits in PROJ-63/BUG-4 dokumentiert, ist diese nicht deterministisch auslösbar. QA sollte den gemeldeten Vorfall (mehrere gleichzeitige Sessions) nach Deploy im Live-Betrieb weiter beobachten.
 
 ## QA Test Results
-_To be added by /abc-qa_
+
+**Tested:** 2026-07-07
+**Branch:** `dev` (wie im Tech Design festgelegt)
+**Tester:** QA Engineer (AI)
+
+### Methodik
+- Automatisierte Suite: `test_proj64_tmux_reaping_haertung.py` (8 Tests) + volle Backend-Suite (1132 Tests inkl. neuer PROJ-64-Tests).
+- **Unabhängige Live-Verifikation** direkt gegen die echten Produktionsklassen (`TmuxTransport`, `MetricsService`), NICHT nur ein erneuter Lauf der bereits vom Backend-Dev geschriebenen Tests:
+  1. Ein deterministischer, monkeypatch-basierter Repro-Test der im Spec explizit genannten Edge-Case-Race ("Race zwischen Original-Call und Retry") — siehe Bug 1 unten.
+  2. Ein echter Concurrency-Lasttest gegen das reale `tmux`-Binary (kein Fake-Binary): 100 parallele `TmuxTransport.spawn()`-Aufrufe (4 Runden × 25 gleichzeitige Sessions) — 0 Fehler, kein Hänger, alle Sessions sauber verifiziert (`session_exists() == True`) und aufgeräumt.
+  3. Code-Review aller neuen `except`-Zweige in `_spawn_new_session()`/`_tmux()` auf Exception-Typ-Präzision (`TmuxTimeoutError` vs. generischer `TransportError`), um sicherzustellen, dass echte (nicht timeout-bedingte) Fehler weiterhin sofort durchschlagen.
+
+### Acceptance Criteria Status
+- [x] Ein einmaliger, isolierter Hänger im ersten `_tmux()`-Aufruf wird intern automatisch retried — verifiziert per direktem `_tmux(..., retries=1)`-Aufruf gegen ein Fake-Binary (deterministisch, 2 Invocations, kein Fehler).
+- [~] Existiert die tmux-Session nach einem Timeout tatsächlich bereits, liefert `POST /sessions` Erfolg statt `503` — **gilt nur für den direkten Fall** (Session existiert bereits beim ERSTEN `has-session`-Check nach dem ersten Timeout, der in der Praxis die meisten realen BUG-4-Fälle abdeckt, da die zugrunde liegende tmux-Aktion i. d. R. lange vor dem Timeout-Ablauf real abgeschlossen ist). **Nicht abgedeckt:** siehe Bug 1 — kollidiert der zweite (Retry-)`new-session`-Versuch selbst mit einer inzwischen doch entstandenen Session (`rc≠0`, "duplicate session", KEIN Timeout), wird das fälschlich als harter Fehler statt als Attach-Erfolg behandelt.
+- [ ] Der Retry legt bei existierender Session nicht eine zweite/doppelte tmux-Session an — **strukturell erfüllt** (tmux selbst verweigert eine echte Duplizierung, `rc≠0`), aber die daraus resultierende Fehlerbehandlung ist fehlerhaft (Bug 1) — kein Datenverlust/keine Doppel-Session, aber ein falscher User-facing-Fehler genau in dem Szenario, das dieses Ticket beheben soll.
+- [~] Event-Loop-Reaping-Härtung "umgesetzt" — **bewusste Abweichung vom wörtlichen AC-Text**, im Tech Design (Abschnitt D.3) begründet dokumentiert: statt eines globalen Event-Loop-/Child-Watcher-Wechsels wurde der Retry-/Attach-Mechanismus als Härtung gewählt (geringeres Risiko für andere Engine-Treiber). Architektonisch nachvollziehbar und explizit dokumentiert, daher kein eigener Bug, aber als Abweichung hier vermerkt.
+- [x] Der bestehende `503`-Pfad aus PROJ-63 bleibt für echte, dauerhafte Hänger unverändert erhalten — verifiziert (`test_spawn_raises_tmux_timeout_error_after_retry_and_attach_check_fail`, unabhängig erneut ausgeführt).
+- [x] `metrics.py::_systemctl_is_active()` auf dieselbe Fehlerklasse geprüft und gehärtet — verifiziert (`test_systemctl_retries_once_before_degrading`, `test_systemctl_gives_up_after_configured_retries`).
+- [x] Neue Regressionstests für alle drei genannten Fälle vorhanden — 8 Tests in `test_proj64_tmux_reaping_haertung.py`, alle grün.
+- [x] Lasttest-Regression (mehrere parallele Session-Starts ohne Hänger) — eigener, unabhängiger Lauf: 100 reale parallele Spawns (4×25) gegen echtes `tmux`, 0 Fehler, 0 Hänger, siehe Methodik.
+- [x] Volle Backend-Suite grün — 1131 passed (+8 neue PROJ-64-Tests bereits enthalten), 1 vorbestehender/unabhängiger Fail (`test_generator_check_passes_no_drift`, Codex-Skill-Sync, per `git stash` bestätigt unabhängig von PROJ-64).
+
+### Bugs Found
+
+**Bug 1 (High) — Retry-Kollision mit real entstandener Session wird nicht als Attach-Erfolg erkannt, sondern wirft einen rohen `TransportError` → `503`**
+- **Severity:** High (Kernfunktionalität dieses Tickets betroffen — genau der im Spec explizit benannte Edge Case "Race zwischen Original-Call und Retry" ist unbehandelt).
+- **Wo:** `backend/app/engine/transport.py`, `TmuxTransport._spawn_new_session()` — der ZWEITE `new-session`-Versuch (`await self._tmux(*new_session_args)` im unteren `try`-Block) ist nur mit `except TmuxTimeoutError` abgesichert, nicht mit dem allgemeineren `TransportError`.
+- **Szenario:** Versuch 1 timet aus (Reaping-Race). `has-session`-Check direkt danach sagt "existiert nicht" (die zugrunde liegende Aktion war zu diesem Zeitpunkt noch nicht fertig — seltener, aber möglicher Fall, siehe unten). Versuch 2 (Retry) startet `new-session` — in der Zwischenzeit ist Versuch 1s tmux-Aktion im Hintergrund doch fertig geworden. Echtes `tmux` antwortet auf Versuch 2 sofort mit `rc=1` ("duplicate session"), KEIN Timeout. Dieser Fehler ist ein normaler `TransportError` (keine `TmuxTimeoutError`-Unterklasse) und wird vom `except TmuxTimeoutError`-Block NICHT gefangen — er propagiert direkt aus `_spawn_new_session()` und `spawn()` hinaus, `routes/sessions.py` macht daraus einen `503`, **obwohl die Session zu diesem Zeitpunkt nachweislich existiert und gesund ist**.
+- **Reproduktion (deterministisch, kein Timing-Zufall, direkt gegen die echte Klasse verifiziert):**
+  ```python
+  import asyncio
+  from app.engine.transport import TmuxTransport, TmuxTimeoutError, TransportError
+
+  async def main():
+      t = TmuxTransport("qa-race-check", data_dir="/tmp/qa-proj64-race")
+      calls = {"n": 0}
+      async def fake_tmux(*args, check=True, retries=0):
+          calls["n"] += 1
+          if args and args[0] == "has-session":
+              return 1, "", ""  # existiert (noch) nicht
+          if calls["n"] == 1:
+              raise TmuxTimeoutError("simulierter Timeout beim ersten Versuch")
+          raise TransportError("tmux new-session ... fehlgeschlagen (Code 1): duplicate session: qa-race-check")
+      t._tmux = fake_tmux
+      await t._spawn_new_session(("start-server", ";", "new-session", "-d", "-s", "qa-race-check"))
+
+  asyncio.run(main())
+  # Ergebnis: TransportError propagiert bis zum Aufrufer -> waere ein 503, obwohl die
+  # Session (laut Szenario) inzwischen existiert.
+  ```
+- **Praxis-Einordnung:** Die HÄUFIGSTEN realen BUG-4-Fälle (wie der ursprünglich gemeldete Vorfall) werden bereits vom ERSTEN `has-session`-Check korrekt als "existiert bereits" erkannt, weil die zugrunde liegende tmux-Aktion zum Zeitpunkt des Timeouts (Standard 10s) so gut wie immer schon abgeschlossen ist — dieser Fix greift also im Regelfall. Der hier gefundene Bug betrifft NUR das schmalere Zeitfenster, in dem die Aktion GENAU zwischen dem ersten Check und dem zweiten Versuch fertig wird — explizit die vom Ticket selbst benannte Race, aber unter realer Last (paralleler Sessions, wie im ursprünglichen Vorfall dokumentiert) nicht auszuschließen.
+- **Empfohlener Fix (nicht selbst umgesetzt):** den zweiten `new-session`-Versuch symmetrisch zum ersten behandeln — bei JEDEM `TransportError` (nicht nur `TmuxTimeoutError`) einen abschließenden `_session_exists_after_timeout()`-Check einschieben, bevor der Fehler an den Aufrufer weitergereicht wird.
+
+### Security Audit Results
+- [x] Keine neue Angriffsfläche: reine interne Retry-/Fehlerbehandlungslogik, kein neuer Endpoint, kein neuer Request-Parameter, keine Schema-Änderung.
+- [x] Keine Shell-Injection-Regression: `new_session_args`/`cmd`-Konstruktion (inkl. `shlex.quote`) unverändert gegenüber PROJ-63 — der Retry ruft exakt dieselben, bereits sicheren Argumente erneut auf.
+- [x] Kein Info-Leak: neue `log.warning`-Aufrufe loggen nur Session-Namen (serverseitig generierte, nicht-geheime IDs) und Versuchszähler — keine Prompt-/Nutzdaten, keine Secrets.
+- [x] Kein Cross-Tenant-Risiko: der Attach-/Retry-Pfad wirkt ausschließlich innerhalb desselben `spawn()`-Aufrufs für dieselbe (server-generierte) Session-ID — nicht von außen/durch andere Nutzer beeinflussbar (PROJ-25-Owner-Scoping auf Session-Ebene bleibt unverändert vorgelagert).
+- [x] Keine neuen Env-Vars zu dokumentieren: `tmux_cmd_retries`/`metrics_systemctl_retries` folgen demselben (bereits etablierten) Muster wie `tmux_cmd_timeout_seconds`/`metrics_systemctl_timeout_seconds`, die ebenfalls nicht in `.env.example` stehen — konsistent mit bestehender Projekt-Konvention für interne Tuning-Parameter.
+
+### Regression
+- Volle Backend-Suite: 1131 passed, 1 vorbestehender/unabhängiger Fail (bestätigt unabhängig von PROJ-64 via `git stash`).
+- `test_proj63_tmux_transport.py`, `test_proj63_generic_cli_tmux.py`, `test_proj63_manager_transport.py`, `test_proj42_metrics.py`: unverändert grün.
+- Eigener Concurrency-Lasttest (100 reale parallele Spawns, echtes `tmux`): 0 Fehler.
+
+### Summary
+- **Acceptance Criteria:** 6/9 klar bestanden, 2 mit Einschränkung (1 Bug, 1 dokumentierte Architektur-Abweichung), 1 strukturell erfüllt aber fehlerbehaftet.
+- **Bugs Found:** 1 (High).
+- **Security:** Pass (keine neue Angriffsfläche).
+- **Production Ready:** NO
+- **Empfehlung:** Bug 1 vor Deploy fixen (kleiner, lokal begrenzter Fix in `_spawn_new_session()` — den zweiten `new-session`-Versuch symmetrisch zum ersten absichern). Kein neuer `/abc-architecture`-Durchlauf nötig, reine Implementierungslücke innerhalb des bereits genehmigten Designs. Danach erneut `/abc-qa` gegen genau diesen Fall.
 
 ## Deployment
 _To be added by /abc-deploy_
