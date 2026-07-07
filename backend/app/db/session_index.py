@@ -119,6 +119,18 @@ CREATE TABLE IF NOT EXISTS session_context (
     messages    TEXT NOT NULL,
     updated_at  TEXT
 );
+
+-- PROJ-66: vollständiges UI-Transkript (TranscriptEntry-Liste als JSON) je Session,
+-- fuer ALLE Nicht-Claude-Engines (Oneshot-CLIs wie Codex/OpenCode, aber auch die
+-- direkten OpenAI/OpenRouter-Treiber). Anders als session_context (Provider-Roh-
+-- format, nur fuer Treiber ohne Self-Resume) ist dies das UI-Anzeigeformat und wird
+-- unconditional bei jedem Persist-Zyklus als kompletter Blob ueberschrieben, damit
+-- rehydrate() nach einem Neustart nicht mit einem leeren Transkript startet.
+CREATE TABLE IF NOT EXISTS session_transcript (
+    session_id  TEXT PRIMARY KEY,
+    entries     TEXT NOT NULL,
+    updated_at  TEXT
+);
 """
 
 # Nachzügler-Spalten (für bereits bestehende DBs ohne diese Spalte). ``CREATE TABLE
@@ -164,6 +176,12 @@ class SessionIndexRepository(Protocol):
     async def load_context(self, session_id: str) -> str | None:
         """PROJ-56: Gespeicherten Konversationsverlauf (JSON) lesen; None wenn keiner."""
 
+    async def save_transcript(self, session_id: str, entries_json: str) -> None:
+        """PROJ-66: Vollständiges UI-Transkript (JSON) speichern/ersetzen."""
+
+    async def load_transcript(self, session_id: str) -> str | None:
+        """PROJ-66: Gespeichertes UI-Transkript (JSON) lesen; None wenn keines."""
+
     async def close(self) -> None:
         """Ressourcen freigeben."""
 
@@ -187,6 +205,12 @@ class NullSessionIndexRepository:
         return None
 
     async def load_context(self, session_id: str) -> str | None:
+        return None
+
+    async def save_transcript(self, session_id: str, entries_json: str) -> None:
+        return None
+
+    async def load_transcript(self, session_id: str) -> str | None:
         return None
 
     async def close(self) -> None:
@@ -249,6 +273,10 @@ class SqliteSessionIndexRepository:
             conn.execute(
                 "DELETE FROM session_context WHERE session_id = ?", (session_id,)
             )
+            # PROJ-66: UI-Transkript mitentfernen (kein verwaister Datenmüll nach Löschung).
+            conn.execute(
+                "DELETE FROM session_transcript WHERE session_id = ?", (session_id,)
+            )
 
     def _save_context_sync(self, session_id: str, messages_json: str, updated_at: str) -> None:
         with self._connect() as conn:
@@ -265,6 +293,22 @@ class SqliteSessionIndexRepository:
                 "SELECT messages FROM session_context WHERE session_id = ?", (session_id,)
             ).fetchone()
         return row["messages"] if row else None
+
+    def _save_transcript_sync(self, session_id: str, entries_json: str, updated_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO session_transcript (session_id, entries, updated_at) "
+                "VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
+                "entries=excluded.entries, updated_at=excluded.updated_at",
+                (session_id, entries_json, updated_at),
+            )
+
+    def _load_transcript_sync(self, session_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT entries FROM session_transcript WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return row["entries"] if row else None
 
     # --- Async-Fassade -----------------------------------------------------
 
@@ -286,6 +330,13 @@ class SqliteSessionIndexRepository:
 
     async def load_context(self, session_id: str) -> str | None:
         return await asyncio.to_thread(self._load_context_sync, session_id)
+
+    async def save_transcript(self, session_id: str, entries_json: str) -> None:
+        updated_at = datetime.now(timezone.utc).isoformat()
+        await asyncio.to_thread(self._save_transcript_sync, session_id, entries_json, updated_at)
+
+    async def load_transcript(self, session_id: str) -> str | None:
+        return await asyncio.to_thread(self._load_transcript_sync, session_id)
 
     async def close(self) -> None:
         # Verbindungen sind kurzlebig (per-Operation) → nichts zu schließen.

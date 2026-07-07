@@ -1,6 +1,6 @@
 # PROJ-66: Bugfix: Session-Transkript von Oneshot-Engines geht bei Backend-Neustart dauerhaft verloren
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -113,7 +113,32 @@ Keine neuen oder geänderten Endpunkte. `GET /sessions/{id}` und die WS-Snapshot
 Keine neuen Pakete — nutzt dieselbe `sqlite3`/sync-über-`asyncio.to_thread`-Infrastruktur, die `session_index.py` bereits für `session_context` verwendet.
 
 ## Implementation Notes
-_To be added by /abc-backend_
+**Umgesetzt:** 2026-07-07 · **Branch:** dev
+
+### Umgesetzt (mit einer Verfeinerung gegenüber dem Tech Design)
+- Neue Tabelle `session_transcript` (`backend/app/db/session_index.py`): `session_id` (PK), `entries` (JSON), `updated_at`. Repository-Methoden `save_transcript`/`load_transcript` in `SessionIndexRepository`-Protokoll, `NullSessionIndexRepository` (No-op) und `SqliteSessionIndexRepository` (Upsert/Select, analog `session_context`).
+- Löschpfad (`_delete_sync`): zusätzliche `DELETE FROM session_transcript`-Zeile — kein verwaister Datenmüll nach Session-Löschen (PROJ-21).
+- `backend/app/engine/manager.py::_persist()`: neuer Block, der `runtime.transcript` (als `[vars(e) for e in ...]`, gleiches Format wie `routes/sessions.py`) unconditional über `_safe_save_transcript` best-effort/fire-and-forget sichert.
+- `backend/app/engine/manager.py::rehydrate()`: lädt `session_transcript` und befüllt `runtime.transcript`, aber **nur** wenn `engine_registry.get(state.engine)` ein Profil mit `is_claude == False` liefert — Claude bleibt dadurch unverändert (kein Doppel-Replay über den nativen `--resume`-Pfad).
+
+**Abweichung vom Tech-Design-Entwurf:** Statt die vier ursprünglich skizzierten `TranscriptEntry`-Append-Stellen (`:582-584`, `:589-591`, `:624-626`, `:1615`) einzeln zu instrumentieren, wurde der Schreib-Hook in die bereits bestehende `_persist()`-Methode gelegt (denselben Punkt, an dem `session_context` für PROJ-56 gesichert wird). `_persist()` feuert exakt an den Stellen, die für dieses Ticket ausreichen — bei jedem Statuswechsel (`_maybe_persist`, inkl. Turn-Abschluss) UND explizit beim Senden neuer Eingabe (`send_input`, unmittelbar nach dem User-Text-Append). Das ist einfacher (ein Hook-Punkt statt vier), performant (keine zusätzliche Schreib-Last pro einzelnem Assistant-/Tool-Event, sondern dieselbe grobe Kadenz wie der bestehende Live-Index-Upsert) und erfüllt die Acceptance Criteria vollständig: ein abgeschlossener Turn hat vor seinem Abschluss mindestens einen Statuswechsel (→ RUNNING bei Start, → WAITING/DONE bei Ende) durchlaufen, an dem der komplette bisherige Transkript-Stand bereits geschrieben wurde. Anders als `session_context` ist der Transkript-Save **nicht** auf `status in (WAITING, DONE)` beschränkt — er läuft bei jedem `_persist()`-Aufruf, unabhängig vom Status, weil hier (im Gegensatz zum Provider-Rohkontext) kein Risiko besteht, einen „halben Turn" inkonsistent zu speichern (jeder Append ist bereits ein abgeschlossenes UI-Element).
+
+### Tests
+Neue Datei `backend/tests/test_proj66_transkript_persistenz_rehydrate.py` (8 Tests):
+1. Repo-Roundtrip `session_transcript` (speichern/lesen/ersetzen/löschen).
+2. `_persist` sichert das Transkript auch mitten im Turn (RUNNING), nicht nur bei SETTLED-Status.
+3. `_persist` überschreibt den Blob korrekt bei wiederholten Aufrufen (kein Duplikat).
+4. `rehydrate()` lädt das Transkript für eine Codex-Session korrekt.
+5. `rehydrate()` lädt **nicht** für eine Claude-Session (Regression, Verhalten unverändert).
+6. Echter Absturz (Status `error`) bleibt korrekt als `ERROR` erkennbar, Transkript wird trotzdem geladen.
+7. Mehrfache Neustarts hintereinander (Peppermint-Szenario) verursachen keine Dopplung.
+8. Korrupter/kaputter Transkript-JSON degradiert auf leeres Transkript, crasht nicht (Red-Team).
+
+**Ergebnis:** Volle Backend-Suite `conda run -n Dashboard --no-capture-output python -m pytest backend/` → **1140 passed, 1 failed** in 126 s. Der eine Fehlschlag (`test_proj50_codex_abc.py::test_generator_check_passes_no_drift`) ist eine vorbestehende, unabhängige Codex-Skill-Mirror-Drift (abc-clarification/abc-customer-journey/abc-dokploy-data/abc-frontdesk-check zwischen `~/.claude/skills` und `~/.codex/skills`) — betrifft keine der hier geänderten Dateien, keine Regression durch PROJ-66. Alle PROJ-14/17/33/56/60/62/63/64-Regressionstests grün.
+
+### Für QA
+- Manuelles End-to-End-Szenario zum Nachstellen von „Peppermint": Codex-Session mit ≥2 Turns starten, Backend neu starten (`systemctl restart jupiter-backend` bzw. lokal Prozess neu starten), prüfen dass das Transkript nach Reconnect vollständig da ist.
+- Gegenprobe Claude: eine Claude-Session mit ≥2 Turns, Backend-Neustart, Transkript-Verhalten muss identisch zu vor PROJ-66 sein (leer/verwaist, wie bisher).
 
 ## QA Test Results
 _To be added by /abc-qa_
