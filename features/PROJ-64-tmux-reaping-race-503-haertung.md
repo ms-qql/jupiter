@@ -1,6 +1,6 @@
 # PROJ-64: Bugfix: tmux-Transport-503 (BUG-4-Nachfolger) — Reaping-Race entschärfen statt nur sichtbar machen
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -211,5 +211,29 @@ metrics.py::_systemctl_is_active()  → gleiche zugrunde liegende Fehlerklasse, 
 - **Production Ready:** NO
 - **Empfehlung:** Bug 1 vor Deploy fixen (kleiner, lokal begrenzter Fix in `_spawn_new_session()` — den zweiten `new-session`-Versuch symmetrisch zum ersten absichern). Kein neuer `/abc-architecture`-Durchlauf nötig, reine Implementierungslücke innerhalb des bereits genehmigten Designs. Danach erneut `/abc-qa` gegen genau diesen Fall.
 
-## Deployment
-_To be added by /abc-deploy_
+## QA Re-Test Results (Round 2 — nach Bugfix)
+
+**Tested:** 2026-07-07
+**Branch:** `dev`
+**Tester:** QA Engineer (AI)
+
+### Methodik
+- Volle Backend-Suite frisch ausgeführt (nicht nur die neuen Tests).
+- **Unabhängige Re-Verifikation von Bug 1** — zwei eigene, frisch geschriebene Monkeypatch-Skripte (nicht der vom Backend-Dev committete Regressionstest), direkt gegen die echte `TmuxTransport._spawn_new_session()`:
+  1. Exakt das ursprüngliche Kollisions-Szenario (Versuch 1 Timeout, `has-session` "existiert nicht", Versuch 2 kollidiert mit "duplicate session", `has-session` danach "existiert doch") → **kein Fehler mehr, Attach korrekt erkannt** (`new_session_calls=2, has_session_calls=2`).
+  2. Negativ-Kontrolle (permanenter Hänger, Session existiert nachweislich NIE) → **weiterhin korrekt `TmuxTimeoutError`**, kein stiller Fehlschlag, 503-Pfad unverändert intakt.
+- Frischer Concurrency-Sanity-Check gegen echtes `tmux` (20 parallele Spawns): 0 Fehler, 0.18s.
+
+### Ergebnis
+- **Bug 1 (High) — VERIFIED FIXED.** Beide unabhängigen Repros (Kollisionsfall + Negativ-Kontrolle) verhalten sich exakt wie im Tech Design vorgesehen. Der committete Regressionstest (`test_spawn_attaches_when_retry_collides_with_now_existing_session`) deckt denselben Fall bereits dauerhaft ab.
+- AC „Existiert die tmux-Session nach einem Timeout tatsächlich bereits … Erfolg (attached) statt 503" gilt jetzt **vollständig** (direkter Fall UND Kollisionsfall), nicht mehr nur der direkte Fall aus Runde 1.
+- AC „Der Retry legt bei existierender Session nicht eine zweite/doppelte tmux-Session an" — jetzt vollständig PASS (keine Fehlbehandlung mehr im Kollisionsfall).
+- Volle Backend-Suite: **1132 passed**, weiterhin derselbe 1 vorbestehende/unabhängige Fail (`test_generator_check_passes_no_drift`, Codex-Skill-Sync — unverändert, nicht PROJ-64-bezogen).
+- Keine neuen Regressionen, keine neuen Bugs gefunden.
+- Security-Audit aus Runde 1 bleibt unverändert gültig (keine sicherheitsrelevanten Codeänderungen im Fix — reine Erweiterung der Exception-Behandlung von `TmuxTimeoutError` auf `TransportError`, dieselbe Argument-/Logging-Konstruktion wie zuvor geprüft).
+
+### Finaler Status
+- **Bugs Found (gesamt über beide Runden):** 1 (High) — behoben und verifiziert.
+- **Offene Abweichung (kein Bug):** Event-Loop-Reaping-Härtung wurde bewusst nicht als globaler Child-Watcher-Wechsel umgesetzt, sondern als Retry-/Attach-Mechanismus — architektonisch begründet im Tech Design (Abschnitt D.3), akzeptiert.
+- **Production Ready:** YES
+- **Empfehlung:** Approved. Bereit für `/abc-deploy`.
