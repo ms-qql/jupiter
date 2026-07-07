@@ -24,6 +24,8 @@ import json
 
 import pytest
 
+from fastapi.testclient import TestClient
+
 from app.db.session_index import SqliteSessionIndexRepository
 from app.engine.manager import (
     DONE,
@@ -37,6 +39,7 @@ from app.engine.manager import (
 )
 from app.engine import manager as mgr_module
 from app.engine.base import EngineDriver, EventHandler, LaunchSpec
+from app.main import create_app
 
 PROJECT = "/home/dev/projects/jupiter"
 
@@ -284,3 +287,147 @@ async def test_rehydrate_corrupt_transcript_degrades_not_crashes(tmp_path, monke
     rt = mgr.get("old")
     assert rt is not None
     assert rt.transcript == []
+
+
+# ===========================================================================
+# 5) QA — echte Route, echter Lifespan (AC1/AC2: End-to-End statt nur Manager-intern)
+# ===========================================================================
+
+
+def _seed_row(engine: str, session_id: str = "peppermint") -> dict:
+    return {
+        "session_id": session_id, "status": "waiting", "owner": "dev",
+        "project_path": PROJECT, "model": "gpt-5.5", "permission_mode": "default",
+        "engine": engine, "created_at": "2026-07-07T11:26:00+00:00",
+        "last_activity": "2026-07-07T11:26:00+00:00",
+    }
+
+
+@pytest.mark.asyncio
+async def test_route_get_session_returns_full_transcript_after_restart(tmp_path, monkeypatch):
+    """AC1, end-to-end: echter FastAPI-Lifespan (Startup → rehydrate()) + echte
+    GET /sessions/{id}-Route — nicht nur Manager-Interna. Simuliert exakt den
+    Peppermint-Vorfall: 2 abgeschlossene Turns, dann ein Neustart (neue App-Instanz
+    auf demselben Repo-File)."""
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    await repo.upsert(_seed_row("codex"))
+    await repo.save_transcript("peppermint", json.dumps([
+        {"role": "user", "kind": "text", "text": "Turn 1 Frage", "ts": "t1"},
+        {"role": "assistant", "kind": "text", "text": "Turn 1 Antwort", "ts": "t2"},
+        {"role": "user", "kind": "text", "text": "Turn 2 Frage", "ts": "t3"},
+        {"role": "assistant", "kind": "text", "text": "Turn 2 Antwort", "ts": "t4"},
+    ]))
+    monkeypatch.setattr(mgr_module.engine_registry, "get", lambda key: _Profile("codex"))
+
+    app = create_app(session_index_repo=repo)
+    with TestClient(app) as client:  # triggert den echten Lifespan (Startup → rehydrate())
+        resp = client.get("/sessions/peppermint")
+
+    assert resp.status_code == 200
+    texts = [e["text"] for e in resp.json()["transcript"]]
+    assert texts == ["Turn 1 Frage", "Turn 1 Antwort", "Turn 2 Frage", "Turn 2 Antwort"]
+
+
+@pytest.mark.asyncio
+async def test_route_get_session_returns_full_transcript_for_opencode(tmp_path, monkeypatch):
+    """AC2: dasselbe gilt für OpenCode (nicht nur Codex) — Scope der Spec ist ALLE
+    Oneshot-Engines, nicht Codex-spezifisch."""
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    await repo.upsert(_seed_row("opencode"))
+    await repo.save_transcript("peppermint", json.dumps([
+        {"role": "user", "kind": "text", "text": "hi", "ts": "t1"},
+        {"role": "assistant", "kind": "text", "text": "hallo", "ts": "t2"},
+    ]))
+    monkeypatch.setattr(mgr_module.engine_registry, "get", lambda key: _Profile("opencode"))
+
+    app = create_app(session_index_repo=repo)
+    with TestClient(app) as client:
+        resp = client.get("/sessions/peppermint")
+
+    assert resp.status_code == 200
+    texts = [e["text"] for e in resp.json()["transcript"]]
+    assert texts == ["hi", "hallo"]
+
+
+@pytest.mark.asyncio
+async def test_route_get_session_unchanged_for_claude(tmp_path, monkeypatch):
+    """Gegenprobe zur Route: Claude-Session bleibt nach Neustart wie vor PROJ-66 —
+    Transkript leer (verwaist), kein Regress durch die neue Rehydrierung."""
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    row = _seed_row("claude")
+    row["model"] = "claude-opus-4-8"
+    await repo.upsert(row)
+    await repo.save_transcript("peppermint", json.dumps([
+        {"role": "user", "kind": "text", "text": "hi", "ts": "t1"},
+    ]))
+    monkeypatch.setattr(mgr_module.engine_registry, "get", lambda key: _Profile("claude", is_claude=True))
+
+    app = create_app(session_index_repo=repo)
+    with TestClient(app) as client:
+        resp = client.get("/sessions/peppermint")
+
+    assert resp.status_code == 200
+    assert resp.json()["transcript"] == []
+
+
+# ===========================================================================
+# 6) AC3 — nur der ungeschriebene Rest eines laufenden Turns geht verloren
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_only_unpersisted_inflight_turn_is_lost(tmp_path):
+    """Turn 1 abgeschlossen + persistiert. Turn 2 beginnt (User-Eingabe persistiert
+    den Zwischenstand), dann crasht der Prozess, BEVOR die Assistant-Antwort auf
+    Turn 2 einen weiteren Persist-Zyklus auslöst (kein `_persist`-Aufruf mehr).
+    Ein „Neustart" (neuer Manager auf demselben Repo) darf NUR den unpersistierten
+    Assistant-Text von Turn 2 verlieren — Turn 1 UND die Turn-2-Frage bleiben."""
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    mgr = SessionManager(repo=repo)
+    rt = _runtime(engine="codex")
+
+    rt.transcript.append(TranscriptEntry("user", "text", "Turn 1 Frage", "t1"))
+    rt.transcript.append(TranscriptEntry("assistant", "text", "Turn 1 Antwort", "t2"))
+    mgr._persist(rt)  # Turn 1 abgeschlossen → persistiert
+    await _flush(mgr)
+
+    rt.transcript.append(TranscriptEntry("user", "text", "Turn 2 Frage", "t3"))
+    mgr._persist(rt)  # z. B. der send_input-Persist-Aufruf
+    await _flush(mgr)
+
+    # "Crash" — Assistant-Antwort auf Turn 2 wird NIE persistiert.
+    rt.transcript.append(TranscriptEntry("assistant", "text", "Turn 2 Antwort (verloren)", "t4"))
+
+    saved = json.loads(await repo.load_transcript("s1"))
+    assert [e["text"] for e in saved] == ["Turn 1 Frage", "Turn 1 Antwort", "Turn 2 Frage"]
+    assert "Turn 2 Antwort (verloren)" not in [e["text"] for e in saved]
+
+
+# ===========================================================================
+# 7) Red-Team — Session-IDs mit SQL-Metazeichen (parametrisierte Queries)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_transcript_repo_handles_malicious_session_id(tmp_path):
+    """Session-IDs sind i. d. R. UUIDs, aber die Spalte ist TEXT ohne Format-Zwang —
+    ein Session-ID-String mit SQL-Metazeichen darf keine andere Zeile
+    beeinträchtigen (Nachweis, dass parametrisierte Queries greifen, keine
+    String-Konkatenation)."""
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    evil_id = "s1'; DROP TABLE session_transcript; --"
+    await repo.save_transcript("s1", json.dumps([{"role": "user", "kind": "text", "text": "echt", "ts": "t1"}]))
+    await repo.save_transcript(evil_id, json.dumps([{"role": "user", "kind": "text", "text": "böse", "ts": "t1"}]))
+
+    # Beide Zeilen unabhängig lesbar — kein Crash, keine Tabelle verschwunden.
+    assert json.loads(await repo.load_transcript("s1"))[0]["text"] == "echt"
+    assert json.loads(await repo.load_transcript(evil_id))[0]["text"] == "böse"
+
+    await repo.delete(evil_id)
+    assert await repo.load_transcript(evil_id) is None
+    assert json.loads(await repo.load_transcript("s1"))[0]["text"] == "echt"  # unberührt

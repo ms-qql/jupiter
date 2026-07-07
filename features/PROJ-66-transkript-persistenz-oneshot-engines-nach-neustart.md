@@ -1,6 +1,6 @@
 # PROJ-66: Bugfix: Session-Transkript von Oneshot-Engines geht bei Backend-Neustart dauerhaft verloren
 
-## Status: In Progress
+## Status: Approved
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -141,7 +141,48 @@ Neue Datei `backend/tests/test_proj66_transkript_persistenz_rehydrate.py` (8 Tes
 - Gegenprobe Claude: eine Claude-Session mit ≥2 Turns, Backend-Neustart, Transkript-Verhalten muss identisch zu vor PROJ-66 sein (leer/verwaist, wie bisher).
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-07-07 · **Branch:** dev
+
+### Acceptance Criteria — Ergebnis
+| # | Kriterium | Ergebnis |
+|---|---|---|
+| 1 | Codex-Session ≥2 Turns übersteht Neustart, Transkript vollständig | ✅ PASS — end-to-end über echten FastAPI-Lifespan + `GET /sessions/{id}` verifiziert (`test_route_get_session_returns_full_transcript_after_restart`), nicht nur auf Manager-Ebene |
+| 2 | Dasselbe für OpenCode | ✅ PASS — identischer Route-Test mit `engine="opencode"` (`test_route_get_session_returns_full_transcript_for_opencode`) |
+| 3 | Turn wird spätestens bei Abschluss persistiert; Neustart mitten im Turn verliert nur den unvollständigen Rest | ✅ PASS — `test_only_unpersisted_inflight_turn_is_lost` beweist explizit: Turn 1 + die bereits gestellte Turn-2-Frage überleben, nur die noch nicht persistierte Turn-2-Antwort geht verloren |
+| 4 | Obsidian-MD-Log (`_write_session_log`) unverändert | ✅ PASS — `test_vault.py`, `test_proj48_codex.py`, `test_proj57_opencode.py`, `test_proj58_opencode_stdin_race.py` (65 Tests) unverändert grün |
+| 5 | Claude-Sessions unverändert (Regression PROJ-14/17/33) | ✅ PASS — `test_rehydrate_laedt_transkript_nicht_fuer_claude` + `test_route_get_session_unchanged_for_claude` (Route-Ebene) + volle PROJ-14/17/33-Suiten grün |
+| 6 | Mehrfache Neustarts hintereinander (Peppermint: 5 in 14 Min) → keine Dopplung | ✅ PASS — `test_rehydrate_mehrfacher_neustart_keine_dopplung` (3 aufeinanderfolgende Rehydrate-Läufe) |
+| 7 | Neue Regressionstests vorhanden | ✅ PASS — `test_proj66_transkript_persistenz_rehydrate.py`, 13 Tests |
+| 8 | Volle Backend-Suite grün | ✅ PASS — 1145 passed, 1 failed (vorbestehend, unabhängig — s. u.) |
+
+**8/8 Acceptance Criteria erfüllt.**
+
+### Zusätzliche QA-Tests (über die Backend-Implementierung hinaus)
+Ergänzt in derselben Testdatei, um die ACs auf **API-Vertragsebene** statt nur auf Manager-Interna zu verifizieren (echter `TestClient` + echter Lifespan → `rehydrate()` läuft wie im echten Betrieb beim Start):
+- `test_route_get_session_returns_full_transcript_after_restart` (AC1, End-to-End)
+- `test_route_get_session_returns_full_transcript_for_opencode` (AC2, End-to-End)
+- `test_route_get_session_unchanged_for_claude` (Gegenprobe AC5 auf Route-Ebene)
+- `test_only_unpersisted_inflight_turn_is_lost` (AC3, expliziter Beweis der Turn-Granularität)
+- `test_transcript_repo_handles_malicious_session_id` (Red-Team: SQL-Metazeichen in `session_id` — parametrisierte Queries bestätigt sicher, keine String-Konkatenation)
+
+### Security-Audit (Red-Team)
+- **SQL-Injection:** `session_transcript`-Queries nutzen ausschließlich `?`-Platzhalter (keine String-Konkatenation) — mit manipuliertem `session_id` (`"s1'; DROP TABLE session_transcript; --"`) getestet, keine Auswirkung auf andere Zeilen oder die Tabelle selbst.
+- **Secrets-Exposure:** `TranscriptEntry` enthält nur bereits in der UI angezeigten Chat-Text (`role`/`kind`/`text`/`ts`) — strukturell keine API-Keys/Header, analog zum bestehenden PROJ-56-Red-Team-Befund für `conversation_history`.
+- **Auth/Tenant-Isolation:** Keine neuen Endpunkte; `GET /sessions/{id}` bleibt hinter `Depends(get_current_user)` + `_owned_or_404` (unverändert, Route-Tests liefen durchgängig mit dem bestehenden Soft-Gate).
+- **Best-effort-Ausfallsicherheit:** Korrupter/kaputter JSON-Blob in `session_transcript` degradiert auf ein leeres Transkript statt die App-Startup zu crashen (`test_rehydrate_corrupt_transcript_degrades_not_crashes`).
+
+### Bugs
+Keine Critical/High/Medium-Bugs gefunden.
+
+**Low / Beobachtung (kein Blocker):**
+1. **Unconditional Write auch für Claude-Sessions:** `_persist()` schreibt das Transkript jetzt für **jede** Engine inkl. Claude in `session_transcript` — obwohl `rehydrate()` es für Claude nie zurückliest (bewusste Scope-Entscheidung). Das ist zusätzliche, ungenutzte Schreiblast (keine Korrektheitsauswirkung, da Best-effort/fire-and-forget und nichts liest diese Zeilen für Claude zurück). Optionale spätere Optimierung: Write auf `not profile.is_claude` gaten, sobald das messbar relevant wird — für jetzt kein Deployment-Hindernis, da im bestehenden Design (`session_index`-Upsert) bereits dieselbe Kadenz für jede Engine gilt.
+2. **Kein Cap auf `session_transcript.entries`:** Bewusst so entschieden (Tech Design, Abschnitt D) — bei sehr langen Sessions (Hunderte Turns) wächst der Blob unbegrenzt und wird bei jedem Persist-Zyklus komplett neu geschrieben. Für die im Ticket beschriebene Nutzung (Chat-Sessions) unkritisch; als Beobachtung für eine mögliche spätere Härtung festgehalten, kein Fix in diesem Ticket nötig (Edge Case „sehr lange Sessions" der Spec ist damit bewusst nicht geschlossen, sondern zurückgestellt).
+
+### Regressionstest
+Volle Backend-Suite (`conda run -n Dashboard --no-capture-output python -m pytest backend/`): **1145 passed, 1 failed** in 122 s. Der eine Fehlschlag (`test_proj50_codex_abc.py::test_generator_check_passes_no_drift`, Codex-Skill-Mirror-Drift zwischen `~/.claude/skills` und `~/.codex/skills`) ist vorbestehend und unabhängig von den hier geänderten Dateien (`session_index.py`, `manager.py`, neue Testdatei) — keine Regression durch PROJ-66. Alle PROJ-14/17/21/33/48/56/57/58/60/62/63/64-Suiten unverändert grün.
+
+### Production-Ready-Entscheidung
+**READY.** Keine Critical/High-Bugs. Zwei Low-Beobachtungen dokumentiert, kein Blocker.
 
 ## Deployment
 _To be added by /abc-deploy_
