@@ -655,3 +655,9 @@ python -m pytest backend/tests/test_proj67_peppermint_backend.py
 conda run -n Dashboard --no-capture-output python -c "import pytest; print(pytest.__version__)"
 # Nicht ausführbar: conda ist in dieser Shell nicht verfügbar.
 ```
+
+### Nachtrag — Deployment UI-Lesbarkeit (2026-07-08)
+- **Version:** 0.27.20.
+- **Branch:** main.
+- **Umfang:** Ticketliste über volle Breite, Detailbefund darunter, bereinigte Anzeige von `Ticket Assigned -` im Betreff, Ticket-ID aus der Übersicht entfernt.
+- **QA-Gate:** Fokussierte `/abc-qa` grün; keine Critical-/High-Bugs offen.
