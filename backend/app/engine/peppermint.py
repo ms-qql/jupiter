@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -17,14 +18,34 @@ from ..db.peppermint_queue import (
     RUNNING, WAITING, PeppermintRepository,
 )
 from .manager import (
+    ACTIVE_STATES,
     DONE as SESSION_DONE,
     ERROR as SESSION_ERROR,
     WAITING as SESSION_WAITING,
     SessionLimitError,
     SessionManager,
+    validate_project_path,
 )
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_RESOLUTION_PROJECT = "/home/dev/projects/jupiter"
+PEPPERMINT_MISSING_CHECK_BATCH = 5
+PRIORITY_LABELS = {"low": "Niedrig", "medium": "Mittel", "high": "Hoch", "urgent": "Dringend"}
+TYPE_LABELS = {
+    "question": "Frage",
+    "incident": "Incident",
+    "problem": "Problem",
+    "feature_request": "Feature Request",
+    "other": "Sonstiges",
+}
+STATUS_LABELS = {
+    "open": "Offen",
+    "assigned": "Zugewiesen",
+    "on_hold": "On Hold",
+    "resolved": "Gelöst",
+    "closed": "Geschlossen",
+}
 
 
 def _now() -> str:
@@ -53,6 +74,30 @@ def build_triage_prompt(row: dict) -> str:
     )
 
 
+def build_resolution_prompt(row: dict) -> str:
+    report = row.get("report_text") or ""
+    if len(report) > 12000:
+        report = report[:12000].rstrip() + "\n\n[Report gekürzt: vollständiger Report im Peppermint Dashboard.]"
+    return (
+        "Löse dieses analysierte Peppermint-Ticket oder erarbeite den nächsten konkret "
+        "umsetzbaren Schritt. Beziehe dich ausdrücklich auf die Ticketnummer aus dem "
+        "Analyse-Report.\n\n"
+        f"Peppermint-Ticket-ID: {row.get('peppermint_ticket_id')}\n"
+        f"Jupiter-Ticket-Datensatz: {row.get('id')}\n"
+        f"Betreff: {row.get('title') or '-'}\n"
+        f"Kunde: {row.get('requester_name') or '-'} <{row.get('requester_email') or '-'}>\n"
+        f"Peppermint-Link: {row.get('ticket_url') or '-'}\n"
+        f"Projekt: {row.get('project_label') or row.get('project_path') or '-'}\n"
+        f"Priorität: {_label(PRIORITY_LABELS, row.get('manual_priority'))}\n"
+        f"Typ: {_label(TYPE_LABELS, row.get('manual_type'))}\n"
+        f"Status: {_label(STATUS_LABELS, row.get('manual_status'))}\n\n"
+        "Frontdesk-Report:\n"
+        f"{report or row.get('short_finding') or '-'}\n\n"
+        "Arbeite pragmatisch: prüfe zuerst den Projektkontext, identifiziere die betroffenen "
+        "Dateien oder Systeme und liefere eine umsetzbare Lösung bzw. einen klaren nächsten Schritt."
+    )
+
+
 def parse_frontdesk_result(text: str) -> dict:
     tail = text[text.rfind("JUPITER_FRONTDESK_RESULT"):] if "JUPITER_FRONTDESK_RESULT" in text else text
 
@@ -68,6 +113,21 @@ def parse_frontdesk_result(text: str) -> dict:
         "missing_info_guidance": field("rueckfragen|rückfragen"),
         "report_text": text.strip(),
     }
+
+
+def _label(labels: dict[str, str], value: str | None) -> str:
+    return labels.get(value or "", value or "-")
+
+
+def _candidate_project_roots() -> list[str]:
+    roots: list[str] = []
+    for root in settings.allowed_roots:
+        real = os.path.realpath(root)
+        if real == "/home/dev":
+            roots.extend([os.path.realpath("/home/dev/projects"), os.path.realpath("/home/dev/tools")])
+        else:
+            roots.append(real)
+    return list(dict.fromkeys(roots))
 
 
 def format_internal_note(row: dict) -> str:
@@ -277,16 +337,110 @@ class PeppermintTriageWorker:
     async def summary(self) -> dict:
         return await self._repo.summary()
 
+    async def patch_ticket(self, item_id: int, fields: dict) -> dict:
+        row = await self._repo.get_ticket(item_id)
+        if row is None:
+            raise KeyError(item_id)
+        clean = {k: v for k, v in fields.items() if v is not None}
+        if "project_path" in clean:
+            if clean["project_path"]:
+                clean["project_path"] = validate_project_path(clean["project_path"])
+                clean.setdefault("project_label", os.path.basename(clean["project_path"]) or clean["project_path"])
+            else:
+                clean["project_path"] = None
+                clean.setdefault("project_label", None)
+        clean["updated_at"] = _now()
+        await self._repo.update_ticket(item_id, **clean)
+        return await self._repo.get_ticket(item_id)
+
+    async def set_hidden(self, item_id: int, hidden: bool) -> dict:
+        row = await self._repo.get_ticket(item_id)
+        if row is None:
+            raise KeyError(item_id)
+        await self._repo.update_ticket(
+            item_id,
+            hidden_at=_now() if hidden else None,
+            updated_at=_now(),
+        )
+        return await self._repo.get_ticket(item_id)
+
+    async def set_ignored(self, item_id: int, ignored: bool, reason: str | None = None) -> dict:
+        row = await self._repo.get_ticket(item_id)
+        if row is None:
+            raise KeyError(item_id)
+        await self._repo.update_ticket(
+            item_id,
+            ignored_at=_now() if ignored else None,
+            ignored_reason=reason if ignored else None,
+            ignored_by=settings.default_owner if ignored else None,
+            hidden_at=None if not ignored else row.get("hidden_at"),
+            updated_at=_now(),
+        )
+        return await self._repo.get_ticket(item_id)
+
+    async def project_options(self) -> list[dict]:
+        seen: dict[str, dict] = {}
+
+        def add(path: str, label: str | None = None) -> None:
+            try:
+                real = validate_project_path(path)
+            except ValueError:
+                return
+            seen[real] = {
+                "label": label or os.path.basename(real) or real,
+                "project_path": real,
+                "has_abc": os.path.exists(os.path.join(real, "features", "INDEX.md")),
+            }
+
+        add(DEFAULT_RESOLUTION_PROJECT, "Jupiter")
+        for runtime in self._manager.list():
+            add(runtime.state.project_path, runtime.state.project_name)
+        for root in _candidate_project_roots():
+            if not os.path.isdir(root):
+                continue
+            try:
+                names = sorted(os.listdir(root))[:200]
+            except OSError:
+                continue
+            for name in names:
+                path = os.path.join(root, name)
+                if not os.path.isdir(path):
+                    continue
+                if os.path.isdir(os.path.join(path, ".git")) or os.path.exists(os.path.join(path, "features", "INDEX.md")):
+                    add(path)
+        return sorted(seen.values(), key=lambda item: item["label"].lower())
+
     async def ingest_ticket(self, ticket: dict) -> dict:
         return await self._repo.upsert_ticket(ticket, _now(), settings.default_owner)
 
     async def poll_now(self) -> dict:
         cfg = await self._repo.get_settings()
         await self._repo.save_settings({"last_poll_at": _now(), "last_error": None})
-        tickets = await self.client_for(cfg).list_open_tickets()
+        client = self.client_for(cfg)
+        tickets = await client.list_open_tickets()
         rows = [await self.ingest_ticket(t) for t in tickets if t.get("peppermint_ticket_id")]
+        seen_ids = {t["peppermint_ticket_id"] for t in tickets if t.get("peppermint_ticket_id")}
+        try:
+            await self._flag_missing_tickets(client, seen_ids)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Peppermint-Missing-Check fehlgeschlagen: %s", exc)
         await self._repo.save_settings({"last_successful_poll_at": _now(), "last_error": None})
         return {"imported": len(rows), "items": rows}
+
+    async def _flag_missing_tickets(self, client: PeppermintClient, seen_ids: set[str]) -> None:
+        """Erkennt Tickets, die lokal noch aktiv sind, aber nicht mehr im Peppermint-Poll auftauchen.
+
+        Nur eine gezielte Einzelabfrage (statt „fehlt in der Liste" = „geloescht") verhindert
+        Fehlalarme durch Paginierung/Filterung der Peppermint-API.
+        """
+        candidates = await self._repo.missing_check_candidates(seen_ids, PEPPERMINT_MISSING_CHECK_BATCH)
+        for row in candidates:
+            try:
+                found = await client.get_ticket(row["peppermint_ticket_id"])
+            except Exception:  # noqa: BLE001
+                continue
+            if found is None:
+                await self._repo.update_ticket(row["id"], peppermint_missing_at=_now(), updated_at=_now())
 
     async def retry_analysis(self, item_id: int) -> dict:
         row = await self._repo.get_ticket(item_id)
@@ -313,6 +467,40 @@ class PeppermintTriageWorker:
             note_sync_status=NOTE_PENDING,
             sync_error_message=None,
             sync_retry_count=int(row.get("sync_retry_count") or 0) + 1,
+            updated_at=_now(),
+        )
+        return await self._repo.get_ticket(item_id)
+
+    async def start_resolution_session(self, item_id: int, force: bool = False) -> dict:
+        row = await self._repo.get_ticket(item_id)
+        if row is None:
+            raise KeyError(item_id)
+        if row.get("ignored_at"):
+            raise ValueError("Ignorierte Tickets können keine Lösungs-Session starten.")
+        if row.get("analysis_status") != ANALYZED:
+            raise ValueError("Lösungs-Sessions sind erst nach erfolgreicher Analyse verfügbar.")
+        old_session_id = row.get("resolution_session_id")
+        old_runtime = self._manager.get(old_session_id) if old_session_id else None
+        if not force and old_runtime and old_runtime.state.status in ACTIVE_STATES:
+            return row
+        project_path = row.get("project_path") or DEFAULT_RESOLUTION_PROJECT
+        try:
+            real_project = validate_project_path(project_path)
+            runtime = await self._manager.create(
+                project_path=real_project,
+                initial_prompt=build_resolution_prompt(row),
+                owner=settings.default_owner,
+                project_name=f"Peppermint {row.get('peppermint_ticket_id')}",
+                ticket_id=f"PEPPERMINT-{row.get('peppermint_ticket_id')}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self._repo.update_ticket(item_id, resolution_session_error=str(exc), updated_at=_now())
+            raise
+        await self._repo.update_ticket(
+            item_id,
+            resolution_session_id=runtime.state.session_id,
+            resolution_session_started_at=_now(),
+            resolution_session_error=None,
             updated_at=_now(),
         )
         return await self._repo.get_ticket(item_id)
