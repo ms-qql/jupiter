@@ -80,7 +80,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-65 | Bugfix: Frisch erstellte tmux-Session zeigt sofort „beendet" statt aktiv (Status-Race bei schnellen Oneshot-Turns) | P0 | Planned | PROJ-63, PROJ-64, PROJ-56, PROJ-58, PROJ-60 | [Spec](PROJ-65-tmux-oneshot-status-race-nach-spawn.md) |
 | PROJ-66 | Bugfix: Session-Transkript von Oneshot-Engines geht bei Backend-Neustart dauerhaft verloren | P0 | Deployed | PROJ-56, PROJ-58, PROJ-60, PROJ-63, PROJ-64 | [Spec](PROJ-66-transkript-persistenz-oneshot-engines-nach-neustart.md) |
 | PROJ-67 | Peppermint Dashboard + automatische Frontdesk-Triage | P1 | Deployed | PROJ-40, PROJ-1, PROJ-48, PROJ-50, PROJ-14, PROJ-16 | [Spec](PROJ-67-peppermint-dashboard-frontdesk-triage.md) |
-| PROJ-68 | Peppermint Ticket-Bedienung und Lösungs-Session | P1 | Approved | PROJ-67, PROJ-9, PROJ-34, PROJ-1, PROJ-48, PROJ-50 | [Spec](PROJ-68-peppermint-ticket-bedienung-und-loesungs-session.md) |
+| PROJ-68 | Peppermint Ticket-Bedienung und Lösungs-Session | P1 | Deployed | PROJ-67, PROJ-9, PROJ-34, PROJ-1, PROJ-48, PROJ-50 | [Spec](PROJ-68-peppermint-ticket-bedienung-und-loesungs-session.md) |
 | PROJ-69 | Clipboard (native Micro-App: geräteübergreifender Datei-Clipboard mit HAL Inbox) | P1 | Approved | PROJ-40, PROJ-2, PROJ-11 | [Spec](PROJ-69-clipboard-microapp.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)

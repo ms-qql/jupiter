@@ -152,6 +152,10 @@ function manualStatusLabel(value: PeppermintManualStatus | null): string {
   return value ? MANUAL_STATUS_LABEL[value] : "-";
 }
 
+function displayTicketTitle(title: string): string {
+  return title.replace(/^ticket\s+assigned\s*[-–—:]\s*/i, "").trim() || title;
+}
+
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "nie";
   const d = new Date(iso);
@@ -642,8 +646,8 @@ export default function PeppermintDashboardApp() {
         </div>
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.8fr)]">
-        <section className="flex h-[460px] flex-col overflow-hidden rounded-lg border border-border bg-card">
+      <div className="space-y-4">
+        <section className="flex h-[58vh] min-h-[560px] max-h-[760px] flex-col overflow-hidden rounded-lg border border-border bg-card">
           <div className="border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">Tickets</h2>
           </div>
@@ -651,7 +655,6 @@ export default function PeppermintDashboardApp() {
             <table className="w-full min-w-[1400px] text-left text-sm">
               <thead className="sticky top-0 z-10 border-b border-border bg-muted text-xs text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2 font-medium">ID</th>
                   <th className="px-4 py-2 font-medium">Betreff</th>
                   <th className="px-4 py-2 font-medium">Kunde</th>
                   <th className="px-4 py-2 font-medium">Projekt</th>
@@ -674,9 +677,8 @@ export default function PeppermintDashboardApp() {
                     }`}
                     onClick={() => setSelectedId(ticket.id)}
                   >
-                    <td className="px-4 py-3 font-mono text-xs">{ticket.peppermint_ticket_id}</td>
                     <td className="max-w-[260px] px-4 py-3">
-                      <div className="truncate font-medium">{ticket.title}</div>
+                      <div className="truncate font-medium">{displayTicketTitle(ticket.title)}</div>
                       {ticket.ticket_url && (
                         <a
                           className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
@@ -861,11 +863,11 @@ function TicketDetail({
   }
 
   return (
-    <section className="rounded-lg border border-border bg-card">
+    <section className="w-full rounded-lg border border-border bg-card">
       <div className="border-b border-border px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">{ticket.title}</h2>
+            <h2 className="truncate text-sm font-semibold">{displayTicketTitle(ticket.title)}</h2>
             <p className="mt-1 text-xs text-muted-foreground">
               Peppermint-ID {ticket.peppermint_ticket_id} · aktualisiert{" "}
               {fmtDateTime(ticket.peppermint_updated_at || ticket.updated_at)}
@@ -1010,7 +1012,7 @@ function InfoBlock({ title, value }: { title: string; value: string | null }) {
   return (
     <div>
       <div className="mb-1 text-xs font-medium text-muted-foreground">{title}</div>
-      <div className="rounded-lg border border-border bg-muted/30 p-3">
+      <div className="whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/30 p-3 leading-relaxed">
         {value || <span className="text-muted-foreground">Noch nicht vorhanden</span>}
       </div>
     </div>
@@ -1171,7 +1173,7 @@ function IgnoreTicketDialog({
         </DialogHeader>
         <div className="grid gap-3 text-sm">
           <div className="rounded-lg border border-border bg-muted/30 p-3">
-            <div className="font-medium">{ticket.title}</div>
+            <div className="font-medium">{displayTicketTitle(ticket.title)}</div>
             <div className="mt-1 font-mono text-xs text-muted-foreground">
               Peppermint-ID {ticket.peppermint_ticket_id}
             </div>
@@ -1223,7 +1225,7 @@ function NewResolutionSessionDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-          <div className="font-medium">{ticket.title}</div>
+          <div className="font-medium">{displayTicketTitle(ticket.title)}</div>
           <div className="mt-1 font-mono text-xs text-muted-foreground">
             Peppermint-ID {ticket.peppermint_ticket_id}
           </div>
