@@ -356,6 +356,10 @@ class Settings(BaseSettings):
     # bei Bedarf automatisch angelegt. Pro Lauf via JUPITER_CLIPBOARD_DIR / PATCH
     # /settings/clipboard-dir überschreibbar.
     clipboard_dir: str = "/home/dev/projects/clipboard"
+    # PROJ-69: Native Clipboard-Micro-App. Die aktive Liste lebt als SQLite-
+    # Live-Index; Dateien + Sidecar-Metadaten landen direkt im Hal-Inbox.
+    clipboard_db_path: str = str(Path.home() / "jupiter-data" / "clipboard.db")
+    clipboard_inbox_dir: str = "/home/dev/tools/Hal/00 Inbox/Clipboard"
     # Obergrenze pro hochgeladener Datei (Streaming-Abbruch bei Überschreitung).
     upload_max_file_bytes: int = 50 * 1024 * 1024  # 50 MB
     # Erlaubte Datei-Endungen (lowercase, ohne Punkt) für Uploads. LEERE Menge =

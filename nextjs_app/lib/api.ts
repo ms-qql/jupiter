@@ -11,6 +11,11 @@ import type {
   AuthUser,
   LoginResult,
   ClipboardDir,
+  ClipboardItem,
+  ClipboardList,
+  ClipboardSettings,
+  ClipboardSourceDevice,
+  ClipboardSourceMethod,
   DeleteResult,
   DirListing,
   EnginesOverview,
@@ -827,6 +832,101 @@ export async function uploadFiles(
     throw new ApiError(detail, resp.status);
   }
   return (await resp.json()) as UploadResult;
+}
+
+// --- PROJ-69: Clipboard Micro-App -----------------------------------------
+
+export function getClipboardItems(signal?: AbortSignal): Promise<ClipboardList> {
+  return request<ClipboardList>("/clipboard/items", { signal });
+}
+
+export function getClipboardSettings(signal?: AbortSignal): Promise<ClipboardSettings> {
+  return request<ClipboardSettings>("/clipboard/settings", { signal });
+}
+
+export async function uploadClipboardItem(
+  file: File,
+  sourceMethod: ClipboardSourceMethod,
+  sourceDevice: ClipboardSourceDevice,
+  notes?: string,
+): Promise<ClipboardItem> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("source_method", sourceMethod);
+  fd.append("source_device", sourceDevice);
+  if (notes?.trim()) fd.append("notes", notes.trim());
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}/clipboard/items`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (!resp.ok) {
+    if (resp.status === 401) handleAuthFailure();
+    let detail = `Fehler ${resp.status}`;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(detail, resp.status);
+  }
+  return (await resp.json()) as ClipboardItem;
+}
+
+export function patchClipboardItem(
+  id: number,
+  fields: { display_name?: string; notes?: string },
+): Promise<ClipboardItem> {
+  return request<ClipboardItem>(`/clipboard/items/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(fields),
+  });
+}
+
+export function deleteClipboardItem(id: number): Promise<void> {
+  return request<void>(`/clipboard/items/${id}`, { method: "DELETE" });
+}
+
+export async function fetchClipboardBlob(
+  id: number,
+  mode: "download" | "preview" = "download",
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const url = `/clipboard/items/${id}/${mode}`;
+  let resp: Response;
+  try {
+    resp = await rawFetch(url, { signal });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (resp.status === 401 && (await refreshAccessToken())) {
+    resp = await rawFetch(url, { signal });
+  }
+  if (resp.status === 401) {
+    handleAuthFailure();
+    throw new ApiError("Nicht angemeldet", 401);
+  }
+  if (!resp.ok) throw new ApiError(`Fehler ${resp.status}`, resp.status);
+  return resp.blob();
+}
+
+export async function downloadClipboardItem(item: ClipboardItem): Promise<void> {
+  const blob = await fetchClipboardBlob(item.id, "download");
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = item.display_name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export function makeDir(parent: string, name: string): Promise<FileEntry> {

@@ -19,12 +19,14 @@ from fastapi import Depends
 from .config import settings
 from .db import (
     BookNuggetsRepository,
+    ClipboardRepository,
     PeppermintRepository,
     SessionCondenseRepository,
     SessionIndexRepository,
     VideoSummaryRepository,
     build_auth_repo,
     build_book_nuggets_repo,
+    build_clipboard_repo,
     build_peppermint_repo,
     build_session_condense_repo,
     build_session_index_repo,
@@ -38,6 +40,7 @@ from .engine.challenge import ChallengeService
 from .engine.consumers import consumer_registry
 from .engine.coordinator import CoordinatorService
 from .engine.files import FileService
+from .engine.clipboard import ClipboardService
 from .engine.git_service import GitService
 from .engine.launcher import LauncherService
 from .engine.manager import SessionManager
@@ -59,6 +62,7 @@ from .routes import (
     agents,
     auth as auth_routes,
     book_nuggets,
+    clipboard,
     challenge,
     constitution,
     coordinator,
@@ -211,6 +215,7 @@ def create_app(
     engine_factory: Callable[..., EngineDriver] | None = None,
     video_summary_repo: VideoSummaryRepository | None = None,
     book_nuggets_repo: BookNuggetsRepository | None = None,
+    clipboard_repo: ClipboardRepository | None = None,
     session_condense_repo: SessionCondenseRepository | None = None,
     peppermint_repo: PeppermintRepository | None = None,
 ) -> FastAPI:
@@ -221,6 +226,8 @@ def create_app(
     vs_repo = video_summary_repo or build_video_summary_repo(settings)
     # PROJ-53: Warteschlangen-Repo der Buch-Nuggets-Micro-App (eigene SQLite-Datei).
     bn_repo = book_nuggets_repo or build_book_nuggets_repo(settings)
+    # PROJ-69: Clipboard-Micro-App Live-Index (eigene SQLite-Datei).
+    cb_repo = clipboard_repo or build_clipboard_repo(settings)
     # PROJ-55: Repo der Session-Kondensierung (Queue + Einstellungen + Lauf-Protokoll).
     sc_repo = session_condense_repo or build_session_condense_repo(settings)
     # PROJ-67: Repo des Peppermint-Dashboards (Ticket-Spiegel + Settings).
@@ -255,6 +262,11 @@ def create_app(
         try:
             await app.state.book_nuggets.startup()
         except Exception:  # noqa: BLE001 — Queue-Persistenz ist best-effort.
+            pass
+        # PROJ-69: Clipboard-Live-Index initialisieren (Dateien liegen im Hal-Inbox).
+        try:
+            await app.state.clipboard.startup()
+        except Exception:  # noqa: BLE001 — Clipboard-Persistenz ist best-effort.
             pass
         # PROJ-55: Session-Kondensierung initialisieren (Schema + verwaiste running→pending
         # + Kandidaten-Scan). Startet KEINEN Sweep automatisch (nur Plan/manuell).
@@ -302,6 +314,7 @@ def create_app(
             await repo.close()
             await vs_repo.close()  # PROJ-41
             await bn_repo.close()  # PROJ-53
+            await cb_repo.close()  # PROJ-69
             await sc_repo.close()  # PROJ-55
             await pm_repo.close()  # PROJ-67
             await auth_repo.close()  # PROJ-25
@@ -362,6 +375,8 @@ def create_app(
     # PROJ-53: Buch-Nuggets-Worker (Warteschlange + sequenzielle Verarbeitung).
     app.state.book_nuggets_repo = bn_repo
     app.state.book_nuggets = BookNuggetsWorker(app.state.manager, bn_repo)
+    app.state.clipboard_repo = cb_repo
+    app.state.clipboard = ClipboardService(cb_repo)
     # PROJ-55: Session-Kondensierungs-Worker (Wochen-Sweep alter Sessions → Knowledge).
     app.state.session_condense_repo = sc_repo
     app.state.session_condense = SessionCondenseWorker(app.state.manager, sc_repo, vault_service)
@@ -399,6 +414,7 @@ def create_app(
     app.include_router(transcription.router, dependencies=auth_gate)
     app.include_router(video_summary.router, dependencies=auth_gate)
     app.include_router(book_nuggets.router, dependencies=auth_gate)  # PROJ-53
+    app.include_router(clipboard.router, dependencies=auth_gate)  # PROJ-69
     app.include_router(session_condense.router, dependencies=auth_gate)  # PROJ-55
     app.include_router(peppermint.webhook_router)  # PROJ-67: eigener Secret-Check
     app.include_router(peppermint.router, dependencies=auth_gate)  # PROJ-67

@@ -164,6 +164,14 @@ engines:
     group: micro
     icon: book-open
 
+  # PROJ-69: Clipboard — native Micro-App fuer geraeteuebergreifenden Datei-Puffer
+  # mit automatischer Rohablage im Hal-Inbox. Backend ueber /clipboard/*.
+  - key: clipboard
+    label: "Clipboard"
+    kind: native
+    group: micro
+    icon: clipboard
+
   # UI-Check PROJ-14 — native Micro-App fuer Website-Audit, Branding-Extraktion,
   # Redesign-Artefakte und Run-Historie. Code unter components/microapps/ui_check/.
   - key: ui_check

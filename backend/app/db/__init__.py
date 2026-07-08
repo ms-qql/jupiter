@@ -23,6 +23,11 @@ from .book_nuggets_queue import (
     SqliteBookNuggetsRepository,
     build_book_nuggets_repo,
 )
+from .clipboard_items import (
+    ClipboardRepository,
+    SqliteClipboardRepository,
+    build_clipboard_repo,
+)
 from .session_condense_queue import (
     SessionCondenseRepository,
     SqliteSessionCondenseRepository,
@@ -46,6 +51,9 @@ __all__ = [
     "BookNuggetsRepository",
     "SqliteBookNuggetsRepository",
     "build_book_nuggets_repo",
+    "ClipboardRepository",
+    "SqliteClipboardRepository",
+    "build_clipboard_repo",
     "SessionCondenseRepository",
     "SqliteSessionCondenseRepository",
     "build_session_condense_repo",

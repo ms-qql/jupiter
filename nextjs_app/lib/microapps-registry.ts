@@ -44,6 +44,10 @@ export const MICROAPP_REGISTRY: Record<string, MicroAppComponent> = {
   book_nuggets: lazy(
     () => import("@/components/microapps/book_nuggets/book-nuggets-app"),
   ),
+  // PROJ-69: Clipboard — geräteübergreifender Datei-Puffer mit HAL-Inbox.
+  clipboard: lazy(
+    () => import("@/components/microapps/clipboard/clipboard-app"),
+  ),
   // UI-Check PROJ-14: Website-Audit + Branding + Redesign-Artefakte.
   ui_check: lazy(
     () => import("@/components/microapps/ui_check/ui-check-app"),
