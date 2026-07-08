@@ -435,7 +435,11 @@ class Settings(BaseSettings):
     peppermint_poll_interval_seconds: float = 60.0
     peppermint_request_timeout_seconds: float = 15.0
     peppermint_analysis_model: str = "sonnet"
-    peppermint_analysis_permission_mode: str = "default"
+    # bypassPermissions, weil der Peppermint-Worker headless laeuft und kein
+    # interaktives Decision-Card-Gate bedienen kann (sonst haengt jede Analyse
+    # auf einer nie erteilten Freigabe) — analog zu video_summary/book_nuggets/
+    # session_condense.
+    peppermint_analysis_permission_mode: str = "bypassPermissions"
     peppermint_frontdesk_report_dir: str = "/home/dev/projects/immo-crm/docs/frontdesk-check"
 
     # --- Buch-Nuggets (PROJ-53) ------------------------------------------
