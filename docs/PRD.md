@@ -79,6 +79,7 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-66 | Bugfix: Session-Transkript von Oneshot-Engines geht bei Backend-Neustart dauerhaft verloren | P0 | Engine-Layer / Persistenz | Deployed |
 | PROJ-67 | Peppermint Dashboard + automatische Frontdesk-Triage | P1 | Micro-Apps / Support-Triage | Deployed |
 | PROJ-68 | Peppermint Ticket-Bedienung und Lösungs-Session | P1 | Micro-Apps / Support-Triage | Deployed |
+| PROJ-69 | Clipboard (native Micro-App: geräteübergreifender Datei-Clipboard mit HAL Inbox) | P1 | Micro-Apps / Arbeitsraum / Vault | In Progress |
 
 ---
 

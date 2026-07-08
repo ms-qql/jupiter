@@ -30,6 +30,9 @@ def _isolate_vault(tmp_path, monkeypatch):
     # praktisch aus (Tests treiben tick() deterministisch selbst).
     monkeypatch.setattr(settings, "book_nuggets_db_path", str(tmp_path / "book_nuggets.db"))
     monkeypatch.setattr(settings, "book_nuggets_poll_interval_seconds", 3600.0)
+    # PROJ-69: Clipboard-Micro-App niemals in den echten Hal-Vault/Home-SQLite schreiben.
+    monkeypatch.setattr(settings, "clipboard_db_path", str(tmp_path / "clipboard.db"))
+    monkeypatch.setattr(settings, "clipboard_inbox_dir", str(tmp_path / "vault" / "00 Inbox" / "Clipboard"))
     # PROJ-25 Hardening: Rate-Limiting der Auth-Endpunkte im Test AUS (sonst teilen
     # sich alle Tests die "testclient"-IP und laufen nach 5 Logins/Bootstraps in 429).
     monkeypatch.setattr(settings, "auth_rate_limit_enabled", False)

@@ -743,6 +743,41 @@ export interface ClipboardDir {
   path: string;
 }
 
+// --- PROJ-69: Clipboard Micro-App -----------------------------------------
+
+export type ClipboardStatus = "active" | "removed_from_clipboard" | "error";
+export type ClipboardSourceMethod = "drag_drop" | "paste" | "upload" | "ios_share";
+export type ClipboardSourceDevice = "pc" | "mac" | "ipad" | "iphone" | "unknown";
+
+export interface ClipboardItem {
+  id: number;
+  owner: string | null;
+  created_at: string;
+  source_method: ClipboardSourceMethod;
+  source_device: ClipboardSourceDevice | null;
+  original_filename: string | null;
+  display_name: string;
+  mime_type: string | null;
+  extension: string | null;
+  size_bytes: number;
+  hal_inbox_path: string;
+  metadata_path: string;
+  status: ClipboardStatus;
+  notes: string | null;
+  error_message: string | null;
+  removed_at: string | null;
+}
+
+export interface ClipboardList {
+  items: ClipboardItem[];
+}
+
+export interface ClipboardSettings {
+  inbox_dir: string;
+  max_file_bytes: number;
+  allowed_extensions: string[];
+}
+
 // --- PROJ-13: Git-Branch-Handling ------------------------------------------
 
 /** Live aus dem Repo gelesener Branch-Status (GET /git/status). Spiegelt
