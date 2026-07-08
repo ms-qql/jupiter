@@ -16,6 +16,27 @@ NEW, WAITING, RUNNING, ANALYZED, ERROR = "neu", "wartet", "laeuft", "analysiert"
 NOTE_PENDING, NOTE_SYNCED, NOTE_ERROR = "ausstehend", "synchronisiert", "fehler"
 NOTE_NOT_NEEDED = "nicht_noetig"
 
+PRIORITIES = {"low", "medium", "high", "urgent"}
+TICKET_TYPES = {"question", "incident", "problem", "feature_request", "other"}
+MANUAL_STATUSES = {"open", "assigned", "on_hold", "resolved", "closed"}
+
+_SEARCH_LABELS = {
+    "low": "niedrig",
+    "medium": "mittel",
+    "high": "hoch",
+    "urgent": "dringend",
+    "question": "frage",
+    "incident": "incident",
+    "problem": "problem",
+    "feature_request": "feature request",
+    "other": "sonstiges",
+    "open": "offen",
+    "assigned": "zugewiesen",
+    "on_hold": "on hold",
+    "resolved": "gelöst geloest",
+    "closed": "geschlossen",
+}
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS peppermint_tickets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,6 +64,19 @@ CREATE TABLE IF NOT EXISTS peppermint_tickets (
     sync_error_message TEXT,
     retry_count INTEGER NOT NULL DEFAULT 0,
     sync_retry_count INTEGER NOT NULL DEFAULT 0,
+    hidden_at TEXT,
+    ignored_at TEXT,
+    ignored_reason TEXT,
+    ignored_by TEXT,
+    project_path TEXT,
+    project_label TEXT,
+    manual_priority TEXT,
+    manual_type TEXT,
+    manual_status TEXT,
+    resolution_session_id TEXT,
+    resolution_session_started_at TEXT,
+    resolution_session_error TEXT,
+    peppermint_missing_at TEXT,
     owner TEXT,
     peppermint_created_at TEXT,
     peppermint_updated_at TEXT,
@@ -83,6 +117,7 @@ class PeppermintRepository(Protocol):
     async def update_ticket(self, item_id: int, **fields) -> None: ...
     async def next_for_analysis(self) -> dict | None: ...
     async def next_for_note_sync(self) -> dict | None: ...
+    async def missing_check_candidates(self, seen_peppermint_ids: set[str], limit: int) -> list[dict]: ...
     async def summary(self) -> dict: ...
     async def get_settings(self) -> dict: ...
     async def save_settings(self, fields: dict) -> dict: ...
@@ -95,8 +130,12 @@ class SqlitePeppermintRepository:
         "analysis_status", "note_sync_status", "urgency", "short_finding",
         "scope_hint", "customer_reply_draft", "missing_info_guidance",
         "report_text", "session_id", "error_message", "sync_error_message",
-        "retry_count", "sync_retry_count", "owner", "peppermint_created_at",
-        "peppermint_updated_at", "updated_at", "analyzed_at", "note_synced_at",
+        "retry_count", "sync_retry_count", "hidden_at", "ignored_at",
+        "ignored_reason", "ignored_by", "project_path", "project_label",
+        "manual_priority", "manual_type", "manual_status", "resolution_session_id",
+        "resolution_session_started_at", "resolution_session_error", "peppermint_missing_at",
+        "owner", "peppermint_created_at", "peppermint_updated_at", "updated_at",
+        "analyzed_at", "note_synced_at",
     })
 
     def __init__(self, db_path: str) -> None:
@@ -113,6 +152,7 @@ class SqlitePeppermintRepository:
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
             _ensure_column(conn, "peppermint_settings", "api_token", "TEXT NOT NULL DEFAULT ''")
+            _ensure_proj68_schema(conn)
             conn.execute(
                 "INSERT OR IGNORE INTO peppermint_settings "
                 "(id, base_url, active, polling_interval_seconds, webhook_secret, api_token) "
@@ -126,10 +166,18 @@ class SqlitePeppermintRepository:
     def _list_tickets_sync(self, filters: dict | None, limit: int) -> list[dict]:
         where, params = [], []
         filters = filters or {}
+        if not filters.get("include_ignored"):
+            where.append("ignored_at IS NULL")
+        if not filters.get("include_hidden"):
+            where.append("hidden_at IS NULL")
         for key, col in (
             ("analysis_status", "analysis_status"),
             ("urgency", "urgency"),
             ("status", "status"),
+            ("project_path", "project_path"),
+            ("manual_priority", "manual_priority"),
+            ("manual_type", "manual_type"),
+            ("manual_status", "manual_status"),
         ):
             val = filters.get(key)
             if val:
@@ -137,9 +185,20 @@ class SqlitePeppermintRepository:
                 params.append(val)
         q = (filters.get("q") or "").strip()
         if q:
-            where.append("(title LIKE ? OR requester_name LIKE ? OR requester_email LIKE ? OR short_finding LIKE ?)")
+            cols = (
+                "title", "requester_name", "requester_email", "short_finding",
+                "manual_priority", "manual_type", "manual_status", "project_label",
+                "status", "priority", "urgency",
+            )
+            parts = [f"{col} LIKE ?" for col in cols]
             like = f"%{q}%"
-            params.extend([like, like, like, like])
+            params.extend([like] * len(cols))
+            enum_hits = _enum_search_hits(q)
+            for col, values in enum_hits.items():
+                if values:
+                    parts.append(f"{col} IN ({','.join('?' for _ in values)})")
+                    params.extend(values)
+            where.append("(" + " OR ".join(parts) + ")")
         sql = "SELECT * FROM peppermint_tickets"
         if where:
             sql += " WHERE " + " AND ".join(where)
@@ -202,7 +261,8 @@ class SqlitePeppermintRepository:
                     raw_json = excluded.raw_json,
                     raw_content = excluded.raw_content,
                     peppermint_updated_at = excluded.peppermint_updated_at,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    peppermint_missing_at = NULL
                 """,
                 vals,
             )
@@ -233,6 +293,7 @@ class SqlitePeppermintRepository:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM peppermint_tickets WHERE analysis_status = ? "
+                "AND ignored_at IS NULL "
                 "ORDER BY created_at ASC, id ASC LIMIT 1",
                 (status,),
             ).fetchone()
@@ -243,21 +304,34 @@ class SqlitePeppermintRepository:
             row = conn.execute(
                 "SELECT * FROM peppermint_tickets WHERE analysis_status = 'analysiert' "
                 "AND note_sync_status IN ('ausstehend', 'fehler') "
+                "AND ignored_at IS NULL "
                 "ORDER BY analyzed_at ASC, id ASC LIMIT 1"
             ).fetchone()
         return self._dict(row)
 
+    def _missing_check_candidates_sync(self, seen_peppermint_ids: set[str], limit: int) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM peppermint_tickets WHERE ignored_at IS NULL AND peppermint_missing_at IS NULL "
+                "ORDER BY updated_at ASC"
+            ).fetchall()
+        candidates = [dict(r) for r in rows if r["peppermint_ticket_id"] not in seen_peppermint_ids]
+        return candidates[:limit]
+
     def _summary_sync(self) -> dict:
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM peppermint_tickets").fetchall()
-        items = [dict(r) for r in rows]
+            all_rows = [dict(r) for r in conn.execute("SELECT * FROM peppermint_tickets").fetchall()]
+        items = [r for r in all_rows if not r.get("ignored_at") and not r.get("hidden_at")]
         return {
             "new_today": sum(1 for r in items if (r.get("created_at") or "")[:10] == _today_prefix()),
-            "open_tickets": sum(1 for r in items if (r.get("status") or "").lower() not in {"closed", "done", "completed"}),
+            "open_tickets": sum(1 for r in items if (r.get("manual_status") or r.get("status") or "").lower() not in {"closed", "done", "completed", "resolved"}),
             "analyzed_tickets": sum(1 for r in items if r.get("analysis_status") == ANALYZED),
             "failed_analyses": sum(1 for r in items if r.get("analysis_status") == ERROR),
             "urgency_distribution": _counts(r.get("urgency") or "unbekannt" for r in items),
             "finding_distribution": _counts(r.get("short_finding") or "unbekannt" for r in items),
+            "hidden_tickets": sum(1 for r in all_rows if r.get("hidden_at") and not r.get("ignored_at")),
+            "ignored_tickets": sum(1 for r in all_rows if r.get("ignored_at")),
+            "resolution_sessions": sum(1 for r in items if r.get("resolution_session_id")),
         }
 
     def _get_settings_sync(self) -> dict:
@@ -292,6 +366,8 @@ class SqlitePeppermintRepository:
         row = await asyncio.to_thread(self._next_sync, NEW)
         return row or await asyncio.to_thread(self._next_sync, WAITING)
     async def next_for_note_sync(self) -> dict | None: return await asyncio.to_thread(self._next_for_note_sync_sync)
+    async def missing_check_candidates(self, seen_peppermint_ids: set[str], limit: int) -> list[dict]:
+        return await asyncio.to_thread(self._missing_check_candidates_sync, seen_peppermint_ids, limit)
     async def summary(self) -> dict: return await asyncio.to_thread(self._summary_sync)
     async def get_settings(self) -> dict: return await asyncio.to_thread(self._get_settings_sync)
     async def save_settings(self, fields: dict) -> dict: return await asyncio.to_thread(self._save_settings_sync, fields)
@@ -313,6 +389,49 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
     cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in cols:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _ensure_proj68_schema(conn: sqlite3.Connection) -> None:
+    for column, definition in (
+        ("hidden_at", "TEXT"),
+        ("ignored_at", "TEXT"),
+        ("ignored_reason", "TEXT"),
+        ("ignored_by", "TEXT"),
+        ("project_path", "TEXT"),
+        ("project_label", "TEXT"),
+        ("manual_priority", "TEXT"),
+        ("manual_type", "TEXT"),
+        ("manual_status", "TEXT"),
+        ("resolution_session_id", "TEXT"),
+        ("resolution_session_started_at", "TEXT"),
+        ("resolution_session_error", "TEXT"),
+        ("peppermint_missing_at", "TEXT"),
+    ):
+        _ensure_column(conn, "peppermint_tickets", column, definition)
+    for name, column in (
+        ("idx_peppermint_tickets_hidden_at", "hidden_at"),
+        ("idx_peppermint_tickets_ignored_at", "ignored_at"),
+        ("idx_peppermint_tickets_manual_priority", "manual_priority"),
+        ("idx_peppermint_tickets_manual_type", "manual_type"),
+        ("idx_peppermint_tickets_manual_status", "manual_status"),
+        ("idx_peppermint_tickets_project_path", "project_path"),
+    ):
+        conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON peppermint_tickets({column})")
+
+
+def _enum_search_hits(query: str) -> dict[str, list[str]]:
+    q = query.strip().lower()
+    hits = {"manual_priority": [], "manual_type": [], "manual_status": []}
+    for value, labels in _SEARCH_LABELS.items():
+        haystack = f"{value} {labels}".lower()
+        if q and q in haystack:
+            if value in PRIORITIES:
+                hits["manual_priority"].append(value)
+            elif value in TICKET_TYPES:
+                hits["manual_type"].append(value)
+            elif value in MANUAL_STATUSES:
+                hits["manual_status"].append(value)
+    return hits
 
 
 def build_peppermint_repo(settings) -> PeppermintRepository:

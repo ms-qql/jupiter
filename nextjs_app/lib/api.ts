@@ -78,6 +78,7 @@ import type {
   PeppermintSettings,
   PeppermintStatus,
   PeppermintSummary,
+  PeppermintProjectOptions,
   PeppermintTicket,
   PeppermintTicketList,
   UiCheckRunDetail,
@@ -1677,13 +1678,19 @@ export function getPeppermintTickets(
     analysis_status?: string;
     urgency?: string;
     status?: string;
+    project_path?: string;
+    manual_priority?: string;
+    manual_type?: string;
+    manual_status?: string;
+    include_hidden?: boolean;
+    include_ignored?: boolean;
     q?: string;
   } = {},
   signal?: AbortSignal,
 ): Promise<PeppermintTicketList> {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
-    if (value) params.set(key, value);
+    if (value) params.set(key, String(value));
   }
   const qs = params.toString();
   return request<PeppermintTicketList>(`/peppermint/tickets${qs ? `?${qs}` : ""}`, {
@@ -1730,4 +1737,55 @@ export function retryPeppermintNoteSync(id: number): Promise<PeppermintTicket> {
   return request<PeppermintTicket>(`/peppermint/tickets/${id}/sync-note`, {
     method: "POST",
   });
+}
+
+export function patchPeppermintTicket(
+  id: number,
+  patch: Partial<{
+    project_path: string | null;
+    project_label: string | null;
+    manual_priority: string | null;
+    manual_type: string | null;
+    manual_status: string | null;
+  }>,
+): Promise<PeppermintTicket> {
+  return request<PeppermintTicket>(`/peppermint/tickets/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function hidePeppermintTicket(id: number): Promise<PeppermintTicket> {
+  return request<PeppermintTicket>(`/peppermint/tickets/${id}/hide`, { method: "POST" });
+}
+
+export function unhidePeppermintTicket(id: number): Promise<PeppermintTicket> {
+  return request<PeppermintTicket>(`/peppermint/tickets/${id}/unhide`, { method: "POST" });
+}
+
+export function ignorePeppermintTicket(id: number, reason?: string): Promise<PeppermintTicket> {
+  return request<PeppermintTicket>(`/peppermint/tickets/${id}/ignore`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason || undefined }),
+  });
+}
+
+export function restorePeppermintTicket(id: number): Promise<PeppermintTicket> {
+  return request<PeppermintTicket>(`/peppermint/tickets/${id}/restore`, { method: "POST" });
+}
+
+export function startPeppermintResolutionSession(
+  id: number,
+  force = false,
+): Promise<PeppermintTicket> {
+  return request<PeppermintTicket>(`/peppermint/tickets/${id}/resolution-session`, {
+    method: "POST",
+    body: JSON.stringify({ force }),
+  });
+}
+
+export function getPeppermintProjectOptions(
+  signal?: AbortSignal,
+): Promise<PeppermintProjectOptions> {
+  return request<PeppermintProjectOptions>("/peppermint/project-options", { signal });
 }

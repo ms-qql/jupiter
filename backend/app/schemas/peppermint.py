@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field
 
 AnalysisStatus = Literal["neu", "wartet", "laeuft", "analysiert", "fehler"]
 NoteSyncStatus = Literal["nicht_noetig", "ausstehend", "synchronisiert", "fehler"]
+ManualPriority = Literal["low", "medium", "high", "urgent"]
+ManualType = Literal["question", "incident", "problem", "feature_request", "other"]
+ManualStatus = Literal["open", "assigned", "on_hold", "resolved", "closed"]
 
 
 class PeppermintSettingsRead(BaseModel):
@@ -63,6 +66,18 @@ class PeppermintTicketRead(BaseModel):
     sync_error_message: str | None = None
     retry_count: int = 0
     sync_retry_count: int = 0
+    hidden_at: str | None = None
+    ignored_at: str | None = None
+    ignored_reason: str | None = None
+    project_path: str | None = None
+    project_label: str | None = None
+    manual_priority: ManualPriority | None = None
+    manual_type: ManualType | None = None
+    manual_status: ManualStatus | None = None
+    resolution_session_id: str | None = None
+    resolution_session_started_at: str | None = None
+    resolution_session_error: str | None = None
+    peppermint_missing_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
     peppermint_created_at: str | None = None
@@ -82,6 +97,35 @@ class PeppermintSummaryRead(BaseModel):
     failed_analyses: int
     urgency_distribution: dict[str, int]
     finding_distribution: dict[str, int]
+    hidden_tickets: int = 0
+    ignored_tickets: int = 0
+    resolution_sessions: int = 0
+
+
+class PeppermintTicketPatch(BaseModel):
+    project_path: str | None = Field(None, max_length=1000)
+    project_label: str | None = Field(None, max_length=300)
+    manual_priority: ManualPriority | None = None
+    manual_type: ManualType | None = None
+    manual_status: ManualStatus | None = None
+
+
+class PeppermintTicketIgnoreRequest(BaseModel):
+    reason: str | None = Field(None, max_length=1000)
+
+
+class PeppermintResolutionSessionRequest(BaseModel):
+    force: bool = False
+
+
+class PeppermintProjectOption(BaseModel):
+    label: str
+    project_path: str
+    has_abc: bool = False
+
+
+class PeppermintProjectOptionsRead(BaseModel):
+    items: list[PeppermintProjectOption]
 
 
 class PeppermintWebhookEvent(BaseModel):

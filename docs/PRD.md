@@ -78,6 +78,7 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-62 | Bugfix: OpenCode-Session endet lautlos ohne Transkript und ohne Fehler bei Tool-Only-Turn | P1 | Engine-Layer / Harness | Planned |
 | PROJ-66 | Bugfix: Session-Transkript von Oneshot-Engines geht bei Backend-Neustart dauerhaft verloren | P0 | Engine-Layer / Persistenz | Deployed |
 | PROJ-67 | Peppermint Dashboard + automatische Frontdesk-Triage | P1 | Micro-Apps / Support-Triage | Deployed |
+| PROJ-68 | Peppermint Ticket-Bedienung und Lösungs-Session | P1 | Micro-Apps / Support-Triage | In Progress |
 
 ---
 

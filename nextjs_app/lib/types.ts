@@ -1525,6 +1525,15 @@ export type PeppermintNoteSyncStatus =
   | "synchronisiert"
   | "fehler";
 
+export type PeppermintManualPriority = "low" | "medium" | "high" | "urgent";
+export type PeppermintManualType =
+  | "question"
+  | "incident"
+  | "problem"
+  | "feature_request"
+  | "other";
+export type PeppermintManualStatus = "open" | "assigned" | "on_hold" | "resolved" | "closed";
+
 export interface PeppermintSettings {
   base_url: string;
   active: boolean;
@@ -1571,6 +1580,18 @@ export interface PeppermintTicket {
   sync_error_message: string | null;
   retry_count: number;
   sync_retry_count: number;
+  hidden_at: string | null;
+  ignored_at: string | null;
+  ignored_reason: string | null;
+  project_path: string | null;
+  project_label: string | null;
+  manual_priority: PeppermintManualPriority | null;
+  manual_type: PeppermintManualType | null;
+  manual_status: PeppermintManualStatus | null;
+  resolution_session_id: string | null;
+  resolution_session_started_at: string | null;
+  resolution_session_error: string | null;
+  peppermint_missing_at: string | null;
   created_at: string | null;
   updated_at: string | null;
   peppermint_created_at: string | null;
@@ -1590,4 +1611,17 @@ export interface PeppermintSummary {
   failed_analyses: number;
   urgency_distribution: Record<string, number>;
   finding_distribution: Record<string, number>;
+  hidden_tickets: number;
+  ignored_tickets: number;
+  resolution_sessions: number;
+}
+
+export interface PeppermintProjectOption {
+  label: string;
+  project_path: string;
+  has_abc: boolean;
+}
+
+export interface PeppermintProjectOptions {
+  items: PeppermintProjectOption[];
 }

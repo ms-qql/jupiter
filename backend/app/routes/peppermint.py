@@ -6,11 +6,15 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from ..config import settings
 from ..engine.peppermint import PeppermintTriageWorker
 from ..schemas.peppermint import (
+    PeppermintProjectOptionsRead,
+    PeppermintResolutionSessionRequest,
     PeppermintSettingsPatch,
     PeppermintSettingsRead,
     PeppermintStatusRead,
     PeppermintSummaryRead,
+    PeppermintTicketIgnoreRequest,
     PeppermintTicketListRead,
+    PeppermintTicketPatch,
     PeppermintTicketRead,
     PeppermintWebhookEvent,
 )
@@ -59,6 +63,12 @@ async def list_tickets(
     analysis_status: str | None = None,
     urgency: str | None = None,
     status: str | None = None,
+    project_path: str | None = None,
+    manual_priority: str | None = None,
+    manual_type: str | None = None,
+    manual_status: str | None = None,
+    include_hidden: bool = False,
+    include_ignored: bool = False,
     q: str | None = None,
     limit: int = Query(100, ge=1, le=200),
 ) -> dict:
@@ -67,6 +77,12 @@ async def list_tickets(
             "analysis_status": analysis_status,
             "urgency": urgency,
             "status": status,
+            "project_path": project_path,
+            "manual_priority": manual_priority,
+            "manual_type": manual_type,
+            "manual_status": manual_status,
+            "include_hidden": include_hidden,
+            "include_ignored": include_ignored,
             "q": q,
         },
         limit,
@@ -80,6 +96,67 @@ async def ticket_detail(request: Request, item_id: int) -> dict:
     if row is None:
         raise HTTPException(status_code=404, detail="Ticket nicht gefunden.")
     return row
+
+
+@router.patch("/tickets/{item_id}", response_model=PeppermintTicketRead)
+async def patch_ticket(request: Request, item_id: int, payload: PeppermintTicketPatch) -> dict:
+    try:
+        return await _worker(request).patch_ticket(item_id, payload.model_dump(exclude_unset=True))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Ticket nicht gefunden.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/tickets/{item_id}/hide", response_model=PeppermintTicketRead)
+async def hide_ticket(request: Request, item_id: int) -> dict:
+    try:
+        return await _worker(request).set_hidden(item_id, True)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Ticket nicht gefunden.") from exc
+
+
+@router.post("/tickets/{item_id}/unhide", response_model=PeppermintTicketRead)
+async def unhide_ticket(request: Request, item_id: int) -> dict:
+    try:
+        return await _worker(request).set_hidden(item_id, False)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Ticket nicht gefunden.") from exc
+
+
+@router.post("/tickets/{item_id}/ignore", response_model=PeppermintTicketRead)
+async def ignore_ticket(request: Request, item_id: int, payload: PeppermintTicketIgnoreRequest | None = None) -> dict:
+    try:
+        return await _worker(request).set_ignored(item_id, True, payload.reason if payload else None)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Ticket nicht gefunden.") from exc
+
+
+@router.post("/tickets/{item_id}/restore", response_model=PeppermintTicketRead)
+async def restore_ticket(request: Request, item_id: int) -> dict:
+    try:
+        return await _worker(request).set_ignored(item_id, False)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Ticket nicht gefunden.") from exc
+
+
+@router.post("/tickets/{item_id}/resolution-session", response_model=PeppermintTicketRead)
+async def start_resolution_session(
+    request: Request, item_id: int, payload: PeppermintResolutionSessionRequest | None = None
+) -> dict:
+    try:
+        return await _worker(request).start_resolution_session(item_id, force=bool(payload and payload.force))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Ticket nicht gefunden.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Lösungs-Session konnte nicht gestartet werden: {exc}") from exc
+
+
+@router.get("/project-options", response_model=PeppermintProjectOptionsRead)
+async def project_options(request: Request) -> dict:
+    return {"items": await _worker(request).project_options()}
 
 
 @router.get("/summary", response_model=PeppermintSummaryRead)
