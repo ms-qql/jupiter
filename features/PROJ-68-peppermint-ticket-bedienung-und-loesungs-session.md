@@ -1,6 +1,6 @@
 # PROJ-68: Peppermint Ticket-Bedienung und Lösungs-Session
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-08
 **Last Updated:** 2026-07-08
 
@@ -395,3 +395,17 @@ Bestehende Routen bleiben kompatibel:
 **Offen:** BUG-2 bleibt funktional Low-Priority (kein aktives Polling in den bestehenden Tests genutzt, Feature ist rein additiv) — für den produktiven Peppermint-Betrieb sollte einmal live gegen die reale Peppermint-Instanz geprüft werden, dass `list_open_tickets()`/`get_ticket()` das erwartete 200/404-Verhalten zeigen (echte Peppermint-API-Antwortformate wurden hier nicht gegen einen echten Server getestet).
 
 **Aktualisierter Status:** Beide QA-Bugs (BUG-1 High, BUG-2 Low) sind gefixt und mit denselben Reproduktionsschritten aus der QA-Runde erneut verifiziert (automatisiert + manuell gegen `TestClient`). Der einzige Production-Ready-Blocker (BUG-1) ist behoben. **Production Ready: YES** (offener Live-Browsertest/echter Peppermint-Server-Check bleiben als Empfehlung vor dem eigentlichen Deploy bestehen, siehe oben).
+
+---
+
+## Deployment Notes (abc-deploy)
+**Deployed:** 2026-07-08 · **Version:** 0.27.19 · **Branch:** main · **Status:** Deployed
+
+- Deploy-Modell laut Projekt-Doku: host-nativ auf dem Dev-/Prod-VPS mit systemd-Services (`jupiter-backend`, `jupiter-frontend`) und GitHub-Webhook-Auto-Deploy auf Push nach `main`; keine versionierten Docker-/Compose-Dateien im Repo.
+- **Stale-`dev`-Fund vor dem Merge:** `dev` war hinter `main` zurück — `main` hatte bereits einen produktiven PROJ-67-Bugfix (`peppermint_analysis_permission_mode` Default `"default"` → `"bypassPermissions"`, sonst hängen automatische Ticket-Analysen dauerhaft in `AWAITING_APPROVAL`) plus Bump auf 0.27.18, den `dev` nicht kannte. Vor der Promotion `git merge --no-ff origin/main` in `dev` nachgezogen und die Konflikte aufgelöst (Fix übernommen, PROJ-68-Dateien blieben unverändert, da `main` sie nicht berührt hatte) — sonst hätte der Merge nach `main` diesen Fix stillschweigend zurückgerollt.
+- Merge-Reihenfolge: `dev` mit `origin/main` synchronisiert → volle Testsuite grün (1158 backend, 176 frontend) → `dev` regulär (`--no-ff`) nach `main` gemerged, konfliktfrei.
+- Version-Bump: `nextjs_app/package.json` und `nextjs_app/package-lock.json` von `0.27.18` auf `0.27.19`.
+- QA-Gate vor Deploy: PROJ-68 `Approved` (beide QA-Bugs gefixt, siehe oben), keine Critical-/High-Bugs offen. PROJ-67 war bereits separat `Deployed`.
+- Nach Bump geprüft: `pytest backend/tests` → 1158 passed; `npm run build` (nextjs_app) → erfolgreich.
+- CodeGraph-Reindex: siehe unten.
+- **Offen (Post-Deploy-Empfehlung):** Live-Browsertest der neuen Ticket-Aktionen (Ausblenden/Entfernen/Bearbeiten/Lösungs-Session, insb. Sticky-Header-Scroll + Responsive) sowie ein Live-Check von `peppermint_missing_at` gegen die reale Peppermint-Instanz — beides war in dieser Session headless nicht möglich.
