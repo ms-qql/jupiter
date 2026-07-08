@@ -1,6 +1,6 @@
 # PROJ-67: Peppermint Dashboard + automatische Frontdesk-Triage
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-07
 **Last Updated:** 2026-07-07
 
@@ -594,3 +594,18 @@ cd nextjs_app && npm test
 
 ### Entscheidung
 **Alle deployment-blockierenden Tests bestanden. Status auf Approved gesetzt.** Nächster Schritt: `/abc-deploy`.
+
+## Deployment Notes (abc-deploy)
+**Vorbereitet:** 2026-07-07 · **Version:** 0.27.17 · **Branch:** main · **Status:** Deployed
+
+- Deploy-Modell laut Projekt-Doku: host-nativ auf dem Dev-/Prod-VPS mit systemd-Services und GitHub-Webhook-Auto-Deploy auf Push nach `main`; keine versionierten Docker-/Compose-Dateien im Repo.
+- Version-Bump: `nextjs_app/package.json` und `nextjs_app/package-lock.json` von `0.27.16` auf `0.27.17`.
+- QA-Gate vor Deploy: PROJ-67 `Approved`, keine Critical-/High-Bugs offen.
+- Nach Bump geprüft: `cd nextjs_app && npm run build` bestanden.
+- CodeGraph-Reindex übersprungen: `.codegraph` ist vorhanden, aber keine `codegraph`-CLI in dieser Shell verfügbar.
+- Ops-Hinweis: `backend/config/engines.yaml` ist git-ignored. Die produktive Runtime-Registry muss den Eintrag `peppermint_dashboard` aus `backend/config/engines.example.yaml` übernehmen, sonst erscheint die Micro-App nach Deploy nicht in der Live-Sidebar.
+
+### Nachtrag — Bugfix Permission-Mode (2026-07-08)
+- **Problem:** Automatische Ticket-Analysen liefen nicht durch, weil `peppermint_analysis_permission_mode` in `backend/app/config.py` auf `"default"` defaultete. Der headless Peppermint-Worker (`backend/app/engine/peppermint.py:338-345`) kann kein interaktives Freigabe-Gate bedienen — die Session blieb in `AWAITING_APPROVAL` hängen (`backend/app/engine/manager.py:864`), statt automatisch zu laufen.
+- **Fix:** Default auf `"bypassPermissions"` gesetzt (analog zu `video_summary_permission_mode`, `book_nuggets_permission_mode`, `session_condense_permission_mode`, die alle bereits diesen Wert nutzen). Beispielwert in `backend/.env.example` mitgezogen.
+- **Version:** 0.27.18. Kein neuer QA-Zyklus — Einzeiler-Konfigurationsänderung, folgt dem etablierten Muster der übrigen headless-Worker; `backend/tests/test_proj67_peppermint_backend.py` (8 passed) und `npm run build` erneut grün.
