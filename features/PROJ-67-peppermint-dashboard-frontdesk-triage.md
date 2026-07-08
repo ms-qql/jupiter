@@ -609,3 +609,49 @@ cd nextjs_app && npm test
 - **Problem:** Automatische Ticket-Analysen liefen nicht durch, weil `peppermint_analysis_permission_mode` in `backend/app/config.py` auf `"default"` defaultete. Der headless Peppermint-Worker (`backend/app/engine/peppermint.py:338-345`) kann kein interaktives Freigabe-Gate bedienen — die Session blieb in `AWAITING_APPROVAL` hängen (`backend/app/engine/manager.py:864`), statt automatisch zu laufen.
 - **Fix:** Default auf `"bypassPermissions"` gesetzt (analog zu `video_summary_permission_mode`, `book_nuggets_permission_mode`, `session_condense_permission_mode`, die alle bereits diesen Wert nutzen). Beispielwert in `backend/.env.example` mitgezogen.
 - **Version:** 0.27.18. Kein neuer QA-Zyklus — Einzeiler-Konfigurationsänderung, folgt dem etablierten Muster der übrigen headless-Worker; `backend/tests/test_proj67_peppermint_backend.py` (8 passed) und `npm run build` erneut grün.
+
+### Nachtrag — Layout-Hotfix Ticketliste/Einzelticket-Befund (2026-07-08)
+- **Problem:** In der Peppermint-Dashboard-Ansicht waren Ticketliste und Einzelticket-Befund nebeneinander angeordnet. Dadurch wurden beide Bereiche auf Desktop unnötig schmal; lange Befundtexte und die Tabelle waren nur schwer lesbar.
+- **Fix:** `nextjs_app/components/microapps/peppermint_dashboard/peppermint-dashboard-app.tsx` stapelt Ticketliste und Befund jetzt vertikal. Die Ticketliste nutzt die volle Breite und eine höhere Scrollfläche (`58vh`, min. `560px`, max. `760px`); der Befund steht darunter ebenfalls über volle Breite. Befundtexte nutzen `whitespace-pre-wrap` und `break-words`, damit lange Texte/Pfade lesbar umbrechen.
+- **QA:** Keine neuen Critical-/High-Bugs gefunden. Eingeloggte visuelle Vollprüfung war in dieser Shell nicht möglich, weil der lokale Browser-Smoke ohne gültige Auth-Session auf `/login?next=/apps/peppermint_dashboard` weitergeleitet wurde. Code-, Build- und Regressionstests sind grün.
+
+Ausgeführte Checks:
+```bash
+cd nextjs_app && npm run lint
+# passed
+
+cd nextjs_app && npm run build
+# passed
+
+cd nextjs_app && npm test -- --run components/cockpit/session-tile.test.tsx
+# 1 test file passed, 5 tests passed
+
+python -m pytest backend/tests/test_proj67_peppermint_backend.py
+# 12 passed
+
+conda run -n Dashboard --no-capture-output python -m pytest backend/tests/test_proj67_peppermint_backend.py
+# Nicht ausführbar: conda ist in dieser Shell nicht verfügbar.
+```
+
+### Nachtrag — Betreff- und Spalten-Re-QA (2026-07-08)
+- **Änderung:** In der Ticketübersicht wird der Prefix `Ticket Assigned -` in Jupiter nur noch in der Anzeige entfernt; der Original-Betreff bleibt im lokalen Ticketdatensatz unverändert. Zusätzlich wurde die Ticket-ID-Spalte aus der Übersicht entfernt, damit Betreff und fachliche Spalten mehr Platz erhalten. Die Peppermint-ID bleibt im Detailbereich und in Dialogen sichtbar.
+- **QA-Ergebnis:** Keine neuen Critical-/High-Bugs gefunden. Statische Tabellenprüfung bestätigt: Der Tabellenkopf beginnt mit `Betreff`; `peppermint_ticket_id` wird in den Ticketzeilen der Übersicht nicht mehr gerendert; der bereinigte Titel wird in Liste, Detailkopf und Dialogen genutzt.
+- **Einschränkung:** Kein vollständiger eingeloggter Browser-Smoke in dieser Shell; vorheriger lokaler Headless-Browser-Smoke landete ohne Auth-Session am Login-Gate.
+
+Ausgeführte Checks:
+```bash
+cd nextjs_app && npm run lint
+# passed
+
+cd nextjs_app && npm run build
+# passed
+
+cd nextjs_app && npm test -- --run components/cockpit/session-tile.test.tsx
+# 1 test file passed, 5 tests passed
+
+python -m pytest backend/tests/test_proj67_peppermint_backend.py
+# 12 passed
+
+conda run -n Dashboard --no-capture-output python -c "import pytest; print(pytest.__version__)"
+# Nicht ausführbar: conda ist in dieser Shell nicht verfügbar.
+```
