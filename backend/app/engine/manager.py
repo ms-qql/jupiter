@@ -66,7 +66,13 @@ _QUESTION_BLOCK_RE = re.compile(
     re.DOTALL,
 )
 
-_CODEX_QUESTION_CARD_INSTRUCTION = """\
+# Der Fragekarten-Vertrag ist engine-neutral: JEDE Engine, die diesen Marker in ihren
+# Assistenten-Text schreibt, bekommt automatisch die AskUserQuestion-Karte (Parsing in
+# _extract_question_block). Nur die Injektion dieser Instruktion ist pro Engine verschieden:
+# Codex (kurzlebiger oneshot-Turn) bekommt sie im initial_prompt, Claude (lang-lebiger
+# Multi-Turn-Prozess) im System-Prompt via --append-system-prompt, damit der Vertrag ueber
+# ALLE Turns gilt — nicht nur den ersten.
+_QUESTION_CARD_INSTRUCTION = """\
 Wenn du dem Nutzer eine Multiple-Choice- oder Auswahlfrage stellen musst, gib zuerst
 kurz den Kontext aus und danach genau einen Fragekarten-Block in diesem Format aus:
 ```jupiter-question
@@ -75,6 +81,18 @@ kurz den Kontext aus und danach genau einen Fragekarten-Block in diesem Format a
 Nutze den Block nur fuer echte Rueckfragen. Nach dem Block nicht weiterarbeiten, sondern
 auf die Antwort im naechsten Turn warten.
 """
+
+
+def _with_question_card_instruction(system_prompt: str | None) -> str:
+    """Fragekarten-Vertrag an den System-Prompt anhaengen (Claude-Pfad).
+
+    Anders als bei Codex (Injektion in den ``initial_prompt``) laeuft Claude als
+    lang-lebiger Multi-Turn-Prozess. Der Vertrag gehoert daher in den System-Prompt
+    (``--append-system-prompt``), damit auch eine Rueckfrage in einem SPAeTEREN Turn
+    die Auswahl-Karte erzeugt und nicht nur im ersten.
+    """
+    base = (system_prompt or "").strip()
+    return f"{base}\n\n{_QUESTION_CARD_INSTRUCTION}" if base else _QUESTION_CARD_INSTRUCTION
 
 
 class SessionLimitError(RuntimeError):
@@ -1565,7 +1583,7 @@ class SessionManager:
             if seeded[0] is not None:
                 state.abc_phase, state.abc_phase_reached, state.abc_feature = seeded
         if profile.key == "codex":
-            initial_prompt = f"{_CODEX_QUESTION_CARD_INSTRUCTION}\n\n{initial_prompt}"
+            initial_prompt = f"{_QUESTION_CARD_INSTRUCTION}\n\n{initial_prompt}"
 
         # PROJ-63: Transport pro Engine auflösen (Rollout: erst Codex/OpenCode via
         # generic_cli, jetzt auch Claude — long-lived-tmux-Zweig im ClaudeCodeDriver).
@@ -1597,7 +1615,11 @@ class SessionManager:
             model=model,
             permission_mode=permission_mode,
             initial_prompt=initial_prompt,
-            system_prompt_append=effective,
+            # Claude bekommt den Fragekarten-Vertrag (Auswahl-Menue) in den System-Prompt,
+            # damit er ueber alle Turns gilt; Codex wurde bereits im initial_prompt bedient.
+            system_prompt_append=(
+                _with_question_card_instruction(effective) if profile.is_claude else effective
+            ),
             # PROJ-18: der Freigabe-Hook (PROJ-4) ist Claude-Code-spezifisch; andere
             # Engines kennen keinen PreToolUse-Hook → keine Settings-JSON.
             settings_json=self._hook_settings() if profile.is_claude else None,
@@ -1743,7 +1765,14 @@ class SessionManager:
             model=_model_alias(state.model) if is_claude else state.model,
             permission_mode=state.permission_mode,
             initial_prompt="",  # Eingabe kommt direkt danach via send_input
-            system_prompt_append=state.effective_constitution,
+            # Auch beim Fortsetzen den Fragekarten-Vertrag fuer Claude mitgeben (frischer
+            # Prozess → System-Prompt wird neu gesetzt), sonst faellt das Auswahl-Menue
+            # nach einem Resume weg.
+            system_prompt_append=(
+                _with_question_card_instruction(state.effective_constitution)
+                if is_claude
+                else state.effective_constitution
+            ),
             resume=is_claude or resume_id is not None,
             resume_id=resume_id,
             settings_json=self._hook_settings() if is_claude else None,
