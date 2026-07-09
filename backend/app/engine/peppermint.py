@@ -489,6 +489,7 @@ class PeppermintTriageWorker:
             runtime = await self._manager.create(
                 project_path=real_project,
                 initial_prompt=build_resolution_prompt(row),
+                permission_mode=settings.peppermint_resolution_permission_mode,
                 owner=settings.default_owner,
                 project_name=f"Peppermint {row.get('peppermint_ticket_id')}",
                 ticket_id=f"PEPPERMINT-{row.get('peppermint_ticket_id')}",

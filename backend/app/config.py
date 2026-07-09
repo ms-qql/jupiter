@@ -444,6 +444,10 @@ class Settings(BaseSettings):
     # auf einer nie erteilten Freigabe) — analog zu video_summary/book_nuggets/
     # session_condense.
     peppermint_analysis_permission_mode: str = "bypassPermissions"
+    # Gleicher Grund wie oben: die Lösungs-Session (Button "Ticket lösen" im
+    # Detail-Dialog) läuft ebenfalls headless — ohne bypassPermissions würde sie
+    # im Mode "default" auf einer nie erteilten Freigabe hängen.
+    peppermint_resolution_permission_mode: str = "bypassPermissions"
     peppermint_frontdesk_report_dir: str = "/home/dev/projects/immo-crm/docs/frontdesk-check"
 
     # --- Buch-Nuggets (PROJ-53) ------------------------------------------
