@@ -291,8 +291,8 @@ Nutzer-Entscheidung: Codex/OpenCode zuerst verdrahten (Claude bleibt unberührt)
 - `components/cockpit/session-tile.tsx`: neuer `tmux`-Badge neben dem bestehenden Engine-Badge — **nur sichtbar, wenn `transport === "tmux"`** (Default `direct` bleibt stumm, analog zum Claude-Engine-Badge). Tooltip erklärt den Nutzen ("übersteht Backend-Neustarts").
 - 2 neue Vitest-Fälle in `session-tile.test.tsx` (direct → kein Badge, tmux → Badge sichtbar). `npx tsc --noEmit` und `npx eslint` sauber; 2 vorbestehende, unabhängige Test-Fehlschläge (`file-preview.test.tsx`, `sidebar-prefs-provider.test.ts`) bestätigt NICHT durch diese Änderung verursacht (per `git stash` gegengeprüft).
 
-**Bewusst noch nicht angefasst:**
-- `ClaudeCodeDriver` — bleibt unverändert, wertet `spec.transport` gar nicht aus (Rollout-Reihenfolge laut Spec: Codex/OpenCode zuerst).
+**Bewusst noch nicht angefasst (Stand des ersten Rollouts, 2026-07-06 — inzwischen überholt für Claude, siehe "Rollout-Schritt 5" am Ende):**
+- ~~`ClaudeCodeDriver` — bleibt unverändert, wertet `spec.transport` gar nicht aus (Rollout-Reihenfolge laut Spec: Codex/OpenCode zuerst).~~ **Erledigt 2026-07-09:** Claude aktiviert (long-lived-tmux-Zweig), siehe unten.
 - `GET /sessions/{id}/transport`-Diagnose-Endpunkt und `tmux_session`/`tmux_pane`/`transport_status`-Befüllung am `SessionState` — die Cockpit-Sichtbarkeit ist über das einfache `transport`-Badge bereits erfüllt; der Diagnose-Endpunkt ist ein Ausbau für Betrieb/QA, kein Blocker für den Rollout.
 - Aufräumen der tmux-Arbeitsverzeichnisse (`~/jupiter-data/tmux/<session>/`) nach einem endgültigen `stop()`/`delete()` — Dateien bleiben aktuell liegen (kleine Disk-Hygiene-Lücke, kein Korrektheits-Problem).
 - Ein Betreiber muss den Transport aktiv über `PUT /settings/transports` (`engine_overrides: {"codex": "tmux"}` bzw. `"opencode": "tmux"`) einschalten — ohne diesen Schritt bleibt ALLES beim heutigen `direct`-Verhalten (Default bleibt konservativ, wie in der Spec gefordert).
@@ -478,3 +478,27 @@ Ohne diesen Schritt bleibt ALLES beim heutigen `direct`-Verhalten (Default konse
 **Deploy-Hinweis:** Codeänderung (kein reines Config-Reload) — braucht einen `jupiter-backend`-Neustart (`/abc-deploy` oder manuell), um wirksam zu werden. `backend/config/transport.yaml` (Betreiber-Schritt, `engine_overrides: {codex: tmux, opencode: tmux}`) ist bereits gesetzt und live wirksam, unabhängig vom Codefix.
 
 **BUG-4-Fix deployed:** 2026-07-07 · Version 0.27.13 · via GitHub-Webhook-Auto-Deploy (Push nach `main` → `jupiter-backend`/`jupiter-frontend`-Neustart, siehe [[jupiter-deployment]]).
+
+---
+
+## Rollout-Schritt 5: Claude auf tmux aktiviert (2026-07-09)
+
+Letzter Schritt des Rollout-Plans (Abschnitt F: „zuerst Codex/OpenCode, danach Claude"). Codex/OpenCode laufen seit dem ersten Rollout unter tmux; jetzt zieht Claude nach — inklusive des Kern-Akzeptanzkriteriums „Agent überlebt Backend-Neustart".
+
+**Warum Claude einen eigenen Zweig braucht (nicht nur ein Config-Flag):** Codex/OpenCode sind `oneshot` (ein Prozess pro Turn, Prompt per Datei-Redirect). Claude ist ein **long-lived** Multi-Turn-Prozess. Der `TmuxTransport` unterstützt beides bereits (`spawn(long_lived=True)`, `write_line()`, `_pane_command_long_lived()` mit dem im Spike verifizierten `exec 9<>fifo`-Selbst-Open, der stdin über Turns hinweg offen hält). Es fehlte nur die Verdrahtung im Treiber und die Auflösungs-Sperre im Manager.
+
+**Änderungen:**
+- `backend/config/transport.yaml`: `engine_overrides` um `claude: tmux` ergänzt (opt-in wie Codex/OpenCode; ohne Eintrag bliebe Claude auf `direct`).
+- `backend/app/engine/manager.py`: die Transport-Auflösung galt bisher nur für `driver == DRIVER_GENERIC_CLI`. Bedingung um `or profile.is_claude` erweitert → `state.transport` wird jetzt auch für Claude aus den Settings aufgelöst (Erststart **und** Resume nutzen denselben, am State gehaltenen Transport).
+- `backend/app/engine/claude_driver.py`: long-lived-tmux-Zweig ergänzt (analog `GenericCliDriver`, aber `long_lived=True` statt oneshot):
+  - `start()`: bei `spec.transport == "tmux"` → `TmuxTransport(session_id).spawn(argv, long_lived=True)` statt `create_subprocess_exec`; im tmux-Modus kein stdin-PIPE-stderr-Reader (stderr kommt über `err.log`).
+  - `send_input()`: Folge-Turns über `TmuxTransport.write_line()` (Kontroll-FIFO) statt `proc.stdin.write`.
+  - `is_alive`/`pid`/`stop()`/`_read_stdout()`: transport-bewusst verzweigt; `stop()` beendet die tmux-Session per `kill()` (sonst greift der `proc is None`-Frühausstieg und die Session leakt). Exit-Klassifizierung liest rc + stderr aus dem Transport (Exit-Marker-Zeile gefiltert).
+- `direct`-Pfad byte-identisch unverändert — ohne `claude: tmux` keine Verhaltensänderung.
+
+**Tests:**
+- Neu: `backend/tests/test_proj63_claude_tmux.py` — echter tmux-Lauf mit Fake-`claude`-CLI: Einzelturn über tmux, Multi-Turn über **denselben** Prozess (gleiche PID/Session, kein Respawn — Kernunterschied zum oneshot-Pfad), `stop()` killt die Session, Default bleibt `direct`.
+- Aktualisiert: `backend/tests/test_proj63_manager_transport.py` — der frühere „Claude bleibt immer direct"-Test ist durch drei neue ersetzt (Override → tmux, globaler Default → tmux, ohne Konfiguration → direct).
+- Grün: gesamte tmux/transport-Suite + bestehende Claude-Driver-/Manager-Tests (direct-Regression) ohne Fehlschlag.
+
+**Deploy-Hinweis:** Codeänderung → braucht `jupiter-backend`-Neustart (`/abc-deploy` oder Push nach `main` via Auto-Deploy). Erst dann greift `claude: tmux`. `direct` bleibt für Claude jederzeit wählbar (Override entfernen / `default_transport`).

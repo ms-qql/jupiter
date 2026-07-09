@@ -197,8 +197,8 @@ export interface Session {
   liveness_auto_attempts: number;
   /** PROJ-27: Ergebnis des letzten Reanimations-Versuchs (für die UI-Rückmeldung). */
   liveness_last_result: LivenessResult;
-  /** PROJ-63: "direct" (Default) oder "tmux" — nur bei generic_cli-Engines (Codex/
-   *  OpenCode/Hermes) je "tmux" möglich; bei Claude immer "direct". */
+  /** PROJ-63: "direct" (Default) oder "tmux" — bei generic_cli-Engines (Codex/OpenCode/
+   *  Hermes) und Claude je "tmux" möglich (Claude aktiviert 2026-07-09). */
   transport: SessionTransport;
 }
 

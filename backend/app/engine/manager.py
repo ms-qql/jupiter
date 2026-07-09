@@ -343,10 +343,10 @@ class SessionState:
     # PROJ-22 (M3): bei vollem Engine-Slot eingereihte Tickets (Plan-Posten als dict);
     # ein Hintergrund-Tick rückt sie automatisch nach, sobald ein Slot frei wird.
     queued_tickets: list[dict] = field(default_factory=list)
-    # PROJ-63: "direct" (Default) oder "tmux" — nur für generic_cli-Engines (Codex/
-    # OpenCode/Hermes) auflösbar; bei Claude bleibt es immer "direct". Wird beim
-    # Erststart aufgelöst und am State gehalten, damit ein Resume/Rehydrate denselben
-    # Transport verwendet (kein Wechsel mitten in einer Session durch Settings-Änderung).
+    # PROJ-63: "direct" (Default) oder "tmux" — für generic_cli-Engines (Codex/OpenCode/
+    # Hermes) UND Claude auflösbar (Rollout-Schritt 5, 2026-07-09). Wird beim Erststart
+    # aufgelöst und am State gehalten, damit ein Resume/Rehydrate denselben Transport
+    # verwendet (kein Wechsel mitten in einer Session durch Settings-Änderung).
     transport: str = "direct"
 
     @property
@@ -1567,11 +1567,12 @@ class SessionManager:
         if profile.key == "codex":
             initial_prompt = f"{_CODEX_QUESTION_CARD_INSTRUCTION}\n\n{initial_prompt}"
 
-        # PROJ-63: Transport nur für generic_cli-Engines auflösen (Codex/OpenCode/Hermes
-        # zuerst) — Claude bleibt unberührt bei "direct". Am State gehalten (nicht bei
-        # jedem Resume neu aufgelöst), damit eine Settings-Änderung eine laufende Session
-        # nicht mitten im Betrieb auf einen anderen Transport umschaltet.
-        if profile.driver == DRIVER_GENERIC_CLI:
+        # PROJ-63: Transport pro Engine auflösen (Rollout: erst Codex/OpenCode via
+        # generic_cli, jetzt auch Claude — long-lived-tmux-Zweig im ClaudeCodeDriver).
+        # Am State gehalten (nicht bei jedem Resume neu aufgelöst), damit eine
+        # Settings-Änderung eine laufende Session nicht mitten im Betrieb auf einen
+        # anderen Transport umschaltet.
+        if profile.driver == DRIVER_GENERIC_CLI or profile.is_claude:
             state.transport = transport_settings.transport_store.resolve(profile.key)
 
         driver = self._make_driver(profile)
