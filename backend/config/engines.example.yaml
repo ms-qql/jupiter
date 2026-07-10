@@ -26,11 +26,8 @@ engines:
     context_window: 128000
     capabilities: [usage, multi_turn]
 
-  # PROJ-57: OpenRouter NICHT mehr als roher HTTP-`openai`-Eintrag — es läuft jetzt über
-  # die OpenCode-Harness (Eintrag `opencode` unten: Tool-Loop, Datei-/Shell-Zugriff, echte
-  # USD-Kosten). Der frühere `key: openrouter`-Direkteintrag ist bewusst entfernt (ein
-  # klarer Weg zu OpenRouter/GLM). Zum Verständnis der `openai`-Treiber-Tiefe bleibt der
-  # generische OpenAI-Eintrag oben stehen; für OpenRouter siehe `opencode`.
+  # Der frühere rohe OpenRouter-HTTP-Eintrag ist entfernt. OpenCode Go läuft weiter
+  # unten über die vollständige OpenCode-Harness mit Tool-Loop und Abo-Budget.
 
   # PROJ-51: Swisscom als OpenAI-kompatibler HTTP-Provider. Der Eintrag ist bewusst
   # deaktiviert, bis api_base/Modelle/Auth-Env zum echten Tenant passen. Die App-
@@ -76,16 +73,16 @@ engines:
     capabilities: [usage, resume, multi_turn, abc]
 
   # PROJ-57: OpenCode-Harness über den generischen Treiber (adapter: opencode).
-  # Ersetzt den rohen OpenRouter-HTTP-Pfad — OpenRouter-Modelle laufen mit Tool-Loop.
+  # OpenCode-Go-Abo direkt; kein OpenRouter-Zwischenweg.
   # Platzhalter: {model} {resume_id}.
   #
   # Auth: KEIN auth_env — OpenCode nutzt seinen eigenen Auth-Store
-  #   (~/.local/share/opencode/auth.json, OpenRouter-Key) über geerbtes HOME=/home/dev.
+  #   (~/.local/share/opencode/auth.json, Eintrag `opencode-go`) über HOME=/home/dev.
   # Sandbox: `--auto` (Permissions non-blocking im Headless-Lauf) + cwd=Projektpfad
   #   (der Treiber pinnt cwd) + Non-Root — OpenCode hat KEINE OS-Sandbox (bewusst, Spec G4).
   # Resume: `-s <sessionID>` (aus jedem Event; der opencode-Adapter reicht sie als
   #   resume_id durch) → serverseitiger Kontext bleibt an OpenCodes SQLite-Session.
-  # Kosten: OpenRouter liefert echte `cost` je Turn → echte USD (nicht „n/v").
+  # Budget: lokale Turn-Kosten gegen die Go-Limits (12 USD/5h, 30 USD/Woche).
   - key: opencode
     label: "OpenCode"
     kind: engine
@@ -97,8 +94,8 @@ engines:
     prompt_via: stdin
     input_format: text
     oneshot: true
-    models: [openrouter/z-ai/glm-5.2, openrouter/minimax/minimax-m3, openrouter/deepseek/deepseek-v4-pro]
-    default_model: openrouter/minimax/minimax-m3
+    models: [opencode-go/glm-5.2, opencode-go/qwen3.7-max, opencode-go/kimi-k2.7-code, opencode-go/minimax-m3, opencode-go/mimo-v2.5-pro, opencode-go/deepseek-v4-pro, opencode-go/qwen3.7-plus, opencode-go/mimo-v2.5, opencode-go/deepseek-v4-flash]
+    default_model: opencode-go/minimax-m3
     context_window: 128000
     capabilities: [usage, resume, multi_turn]
 

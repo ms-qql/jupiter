@@ -31,7 +31,7 @@ CostStatus = str  # "complete" | "partial" | "none"
 
 
 # Engines mit echter, per-Turn gelieferter USD-Abrechnung. Claude (Max-Sub, aber die CLI
-# meldet echte total_cost_usd) + OpenCode (PROJ-57: OpenRouter liefert `cost` je step_finish
+# meldet echte total_cost_usd) + OpenCode (PROJ-57: Provider liefert `cost` je step_finish
 # → echte € statt „n/v", im Gegensatz zu Codex/Hermes-Subscriptions).
 _COST_ENGINES: frozenset[str] = frozenset({"claude", "opencode"})
 
@@ -364,12 +364,8 @@ class ProviderBudgetService:
             return "unavailable", reason or "Provider ist nicht verfügbar."
         return "available", None
 
-    # Provider-spezifische Fenster-Labels. Die Keys bleiben "5h"/"week" (Frontend-Typ,
-    # Probe-Rückgabewerte), aber das Label steuert die Anzeige. OpenCode/OpenRouter ist
-    # pay-as-you-go → "Guthaben" + "Woche" statt "5h" + "Woche".
-    _WINDOW_LABELS: dict[str, tuple[str, str]] = {
-        "opencode": ("Guthaben", "Woche"),
-    }
+    # Provider-spezifische Fenster-Labels. OpenCode Go nutzt dieselben 5h-/Wochenfenster.
+    _WINDOW_LABELS: dict[str, tuple[str, str]] = {}
     _DEFAULT_LABELS: tuple[str, str] = ("5h", "Woche")
 
     def _windows(self, provider: str) -> list[_WindowSpec]:
@@ -422,6 +418,13 @@ class ProviderBudgetService:
         live_window = (live or {}).get(spec.key)
         if live_window is not None:
             return self._live_window(spec, now, live_window)
+        # OpenCode Go dokumentiert Dollar-Limits, aber keinen API-Endpunkt für den
+        # aktuellen Abo-Stand. Die CLI liefert echte Turn-Kosten; diese sind daher die
+        # beste automatisierbare Quelle und genauer als eine Token-Schätzung.
+        if provider == "opencode":
+            cost_window = self._opencode_cost_window(spec, rows, now)
+            if cost_window is not None:
+                return cost_window
         # Produktivpfad (PROJ-52): vom Nutzer gepflegter Schnappschuss aus den Einstellungen.
         if self._store is not None:
             return self._manual_window(provider, spec, now)
@@ -449,13 +452,39 @@ class ProviderBudgetService:
             "error": None,
         }
 
+    def _opencode_cost_window(
+        self, spec: _WindowSpec, rows: list[dict], now: datetime
+    ) -> dict | None:
+        suffix = "5h" if spec.key == "5h" else "week"
+        limit_usd = float(
+            getattr(self._settings, f"provider_budget_opencode_{suffix}_usd", 0) or 0
+        )
+        if limit_usd <= 0:
+            return None
+        scoped = self._rows_for_provider_window(rows, "opencode", spec, now)
+        used_usd = round(
+            sum(float(row.get("total_cost_usd") or 0) for row in scoped), 6
+        )
+        return {
+            "window": spec.key,
+            "label": spec.label,
+            "used_pct": round(100.0 * used_usd / limit_usd, 1),
+            "used_tokens": None,
+            "limit_tokens": None,
+            "reset_at": self._reset_at(scoped, spec, now).isoformat(),
+            "quality": "estimated",
+            "source": "local_cost_estimate:opencode_go",
+            "updated_at": now.isoformat(),
+            "error": None,
+        }
+
     def _live_window(self, spec: _WindowSpec, now: datetime, live_window) -> dict:
-        """Fenster aus echtem providerseitigem Live-Wert (Claude-CLI / Codex-Rollout / OpenRouter-API).
+        """Fenster aus echtem providerseitigem Live-Wert (Claude-CLI / Codex-Rollout).
 
         Ist der gemeldete Reset-Zeitpunkt bereits überschritten, wird der Wert als
         ``veraltet`` (``stale``) markiert statt fälschlich als frisch — ein neuer Abruf
         liefert dann beim nächsten Intervall aktuelle Zahlen. Provider ohne Reset
-        (OpenCode/OpenRouter pay-as-you-go) liefern ``reset_at=None`` → ``kein Reset``.
+        Provider ohne bekannten Reset liefern ``reset_at=None`` → ``kein Reset``.
         """
         reset_at = getattr(live_window, "reset_at", None)
         if reset_at is None:

@@ -178,7 +178,7 @@ class ProviderBudgetLimitsPut(BaseModel):
     ein Reset-Zeitpunkt (ISO 8601, leer = automatisch ``jetzt + Fensterdauer``). Die Werte
     werden in der Sidebar genau so angezeigt; abgelaufene Reset-Zeiten werden als
     *veraltet* markiert. Quelle ist Claudes/Codex' eigene Verbrauchsanzeige (z. B. ``/usage``).
-    OpenCode wird i. d. R. live via OpenRouter-API abgefragt; manuelle Werte sind Fallback.
+    OpenCode Go wird aus lokalen Turn-Kosten berechnet; manuelle Werte sind Fallback.
     """
 
     claude_5h_pct: float | None = Field(None, ge=0, description="Claude 5h-Verbrauch in %.")
@@ -189,8 +189,8 @@ class ProviderBudgetLimitsPut(BaseModel):
     codex_5h_reset_at: str | None = Field(None, description="Codex 5h-Reset (ISO 8601).")
     codex_week_pct: float | None = Field(None, ge=0, description="Codex Wochen-Verbrauch in %.")
     codex_week_reset_at: str | None = Field(None, description="Codex Wochen-Reset (ISO 8601).")
-    opencode_5h_pct: float | None = Field(None, ge=0, description="OpenCode Guthaben-Verbrauch in %.")
-    opencode_5h_reset_at: str | None = Field(None, description="OpenCode Guthaben-Reset (ISO 8601).")
+    opencode_5h_pct: float | None = Field(None, ge=0, description="OpenCode-Go-5h-Verbrauch in %.")
+    opencode_5h_reset_at: str | None = Field(None, description="OpenCode-Go-5h-Reset (ISO 8601).")
     opencode_week_pct: float | None = Field(None, ge=0, description="OpenCode Wochen-Verbrauch in %.")
     opencode_week_reset_at: str | None = Field(None, description="OpenCode Wochen-Reset (ISO 8601).")
 

@@ -22,14 +22,9 @@ Die echten Limits stehen aber strukturiert in jeder Rollout-Datei
 → ``primary`` = 5h-Fenster (300 min), ``secondary`` = Woche (10080 min = 7 d).
 Wird **read-only** gelesen; Rollouts bleiben durch Jupiters eigene Codex-Sessions frisch.
 
-**OpenCode** — OpenRouter ist pay-as-you-go (USD), keine Subscription-Quota. Die
-``/api/v1/credits``- und ``/api/v1/key``-Endpunkte liefern Credit-Guthaben und
-rollierende Tages-/Wochen-/Monatsverbräuche in USD. Da das Budget-Widget prozentual
-arbeitet, wird der Verbrauch als Anteil am Credit-Pool dargestellt:
-    - Fenster „Guthaben" (key=5h): total_usage / total_credits * 100
-    - Fenster „Woche"     (key=week): usage_weekly / total_credits * 100
-Kein Reset (Credits verfallen nicht; der Wochenverbrauch ist rollierend, aber der
-Reset-Zeitpunkt ist unbekannt → ``reset_at=None`` → Frontend zeigt „kein Reset").
+**OpenCode Go** — die offizielle API dokumentiert keinen Endpunkt für den aktuellen
+Abo-Verbrauch. Jupiter berechnet die 5h-/Wochenwerte deshalb im Budget-Service aus
+den von der OpenCode-CLI gemeldeten Turn-Kosten gegen die offiziellen Go-Limits.
 
 Jede Probe liefert ``{"5h": LiveWindow, "week": LiveWindow}`` (Teilmenge erlaubt) oder
 ein leeres Dict, wenn keine Live-Daten vorliegen. CLI-/Parser-Fehler werden geschluckt
@@ -46,9 +41,6 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-import httpx
 
 from ..config import settings
 
@@ -265,103 +257,9 @@ class CodexRolloutProbe:
         return parse_codex_rate_limits(rate_limits, now)
 
 
-# --------------------------------------------------------------------------- OpenCode
-
-_DEFAULT_OPENCODE_AUTH_PATH = str(Path.home() / ".local" / "share" / "opencode" / "auth.json")
-_OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-
-
-def _load_openrouter_key(auth_path: str) -> str | None:
-    """Liest den OpenRouter-API-Key aus der OpenCode-auth.json (best-effort)."""
-    try:
-        with open(auth_path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError) as exc:
-        log.debug("OpenCode auth.json nicht lesbar (%s): %s", auth_path, exc)
-        return None
-    entry = data.get("openrouter")
-    if not isinstance(entry, dict):
-        return None
-    key = entry.get("key")
-    return str(key) if key else None
-
-
-def parse_openrouter_credits(
-    credits: dict, key_info: dict, now: datetime
-) -> dict[str, LiveWindow]:
-    """Credit-Guthaben + Wochenverbrauch → ``{5h: Guthaben, week: Woche}`` (reine Funktion).
-
-    OpenRouter ist pay-as-you-go; der „Verbrauch" ist der Anteil am Credit-Pool, nicht
-    eine rollierende Quota. ``total_credits`` = gesamtes Guthaben, ``total_usage`` =
-    bisher verbraucht. ``usage_weekly`` = laufende 7-Tage-Summe in USD. Kein Reset.
-    """
-    credit_data = credits.get("data") or credits
-    key_data = key_info.get("data") or key_info
-    total_credits = float(credit_data.get("total_credits") or 0)
-    total_usage = float(credit_data.get("total_usage") or 0)
-    usage_weekly = float(key_data.get("usage_weekly") or 0)
-    if total_credits <= 0:
-        return {}
-    guthaben_pct = round(total_usage / total_credits * 100, 1)
-    woche_pct = round(usage_weekly / total_credits * 100, 1)
-    return {
-        "5h": LiveWindow(
-            used_pct=guthaben_pct,
-            reset_at=None,
-            source="openrouter_api:credits",
-        ),
-        "week": LiveWindow(
-            used_pct=woche_pct,
-            reset_at=None,
-            source="openrouter_api:credits",
-        ),
-    }
-
-
-class OpenRouterUsageProbe:
-    """Fragt das echte OpenRouter-Credit-Guthaben über die API ab.
-
-    OpenCode läuft über OpenRouter (pay-as-you-go USD). Die ``/api/v1/credits``- und
-    ``/api/v1/key``-Endpunkte liefern Credit-Pool + rollierende Verbräuche. Der
-    API-Key liegt in ``~/.local/share/opencode/auth.json`` (OpenCode eigener Auth-Store).
-    """
-
-    def __init__(self, *, cfg=settings) -> None:
-        self._cfg = cfg
-
-    async def __call__(self, now: datetime) -> dict[str, LiveWindow]:
-        if not getattr(self._cfg, "provider_budget_opencode_api_enabled", True):
-            return {}
-        auth_path = getattr(self._cfg, "opencode_auth_path", _DEFAULT_OPENCODE_AUTH_PATH)
-        key = await asyncio.to_thread(_load_openrouter_key, auth_path)
-        if not key:
-            return {}
-        timeout = max(1.0, float(self._cfg.provider_budget_timeout_seconds))
-        headers = {"Authorization": f"Bearer {key}"}
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                credits_resp, key_resp = await asyncio.gather(
-                    client.get(f"{_OPENROUTER_BASE}/credits", headers=headers),
-                    client.get(f"{_OPENROUTER_BASE}/key", headers=headers),
-                )
-                credits_resp.raise_for_status()
-                key_resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            log.warning("OpenRouter-API-Probe fehlgeschlagen: %s", exc)
-            return {}
-        try:
-            credits = credits_resp.json()
-            key_info = key_resp.json()
-        except (ValueError, json.JSONDecodeError) as exc:
-            log.warning("OpenRouter-API-Antwort nicht parsebar: %s", exc)
-            return {}
-        return parse_openrouter_credits(credits, key_info, now)
-
-
 def build_live_probes(cfg=settings) -> dict:
     """Echte Live-Probes für den ``ProviderBudgetService`` (Production-Wiring)."""
     return {
         "claude": ClaudeUsageProbe(cfg=cfg),
         "codex": CodexRolloutProbe(cfg=cfg),
-        "opencode": OpenRouterUsageProbe(cfg=cfg),
     }

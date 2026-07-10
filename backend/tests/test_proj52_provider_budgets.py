@@ -74,6 +74,8 @@ class _Cfg:
     provider_budget_codex_week_tokens = 0
     provider_budget_opencode_5h_tokens = 0
     provider_budget_opencode_week_tokens = 0
+    provider_budget_opencode_5h_usd = 12.0
+    provider_budget_opencode_week_usd = 30.0
 
 
 class _FixedClockService(ProviderBudgetService):
