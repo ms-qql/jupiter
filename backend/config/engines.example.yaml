@@ -71,8 +71,8 @@ engines:
     prompt_via: stdin                 # stdin | arg ('-' im argv → Codex liest den Prompt von stdin)
     input_format: text                # text | stream_json
     oneshot: true                     # stdin nach Eingabe schließen (Single-Turn-CLI)
-    models: [gpt-5.5]
-    default_model: gpt-5.5            # am Live-System verifiziert (config.toml); gpt-5-codex ist veraltet
+    models: [gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5]
+    default_model: gpt-5.6-sol        # GPT-5.6 Sol ist der leistungsstarke Default; Terra/Luna sind günstigere Varianten
     capabilities: [usage, resume, multi_turn, abc]
 
   # PROJ-57: OpenCode-Harness über den generischen Treiber (adapter: opencode).

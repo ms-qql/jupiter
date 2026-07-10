@@ -127,6 +127,12 @@ def _project_label(row: dict) -> str:
 
 def _model_label(model: str | None) -> str:
     m = (model or "").lower()
+    if m in {"gpt-5.6", "gpt-5.6-sol"}:
+        return "GPT 5.6 Sol"
+    if m == "gpt-5.6-terra":
+        return "GPT 5.6 Terra"
+    if m == "gpt-5.6-luna":
+        return "GPT 5.6 Luna"
     if "haiku" in m:
         return "Haiku"
     if "sonnet" in m:

@@ -80,6 +80,22 @@ def test_summary_groups_and_costs() -> None:
     assert s["by_model"][0]["tokens"] == 1500
 
 
+def test_summary_labels_gpt_56_codex_models() -> None:
+    rows = [
+        _row(engine="codex", model="gpt-5.6-sol", tokens_used=100),
+        _row(engine="codex", model="gpt-5.6-terra", tokens_used=300),
+        _row(engine="codex", model="gpt-5.6-luna", tokens_used=200),
+        _row(engine="codex", model="gpt-5.6", tokens_used=50),
+    ]
+    s = aggregate_summary(rows, "all", NOW)
+    assert [g["label"] for g in s["by_model"]] == [
+        "GPT 5.6 Terra",
+        "GPT 5.6 Luna",
+        "GPT 5.6 Sol",
+    ]
+    assert s["cost_status"] == "none"
+
+
 def test_cost_status_none_and_partial() -> None:
     none = aggregate_summary([_row(engine="openrouter", tokens_used=100)], "all", NOW)
     assert none["cost_status"] == "none"
