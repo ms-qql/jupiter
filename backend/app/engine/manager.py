@@ -589,6 +589,10 @@ class SessionRuntime:
                 model = event.raw.get("model")
                 if model:
                     self.state.model = model
+            elif event.subtype == "waiting":
+                # Leerer Chat-Start bei Engines, die ohne Nachricht keinen Prozess
+                # anlegen können (aktuell OpenCode): bereit für die erste Eingabe.
+                self.state.status = WAITING
             elif event.subtype == "error":
                 self.state.status = ERROR
                 self.state.error = event.raw.get("message")

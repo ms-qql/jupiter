@@ -103,6 +103,11 @@ class GenericCliDriver(EngineDriver):
         # der alleinige Prozess-Zugriffspfad, exakt wie vor PROJ-63.
         self._transport_mode = "direct"
         self._transport_obj: TmuxTransport | None = None
+        # OpenCode lehnt einen Prozessstart ohne Nachricht ab. Im freien Chat-Modus
+        # darf Jupiter aber bewusst ohne Initial-Prompt starten (PROJ-34). Dann wird
+        # der erste CLI-Prozess bis zur ersten echten Nutzereingabe aufgeschoben.
+        # Codex bleibt unverändert: dessen CLI akzeptiert den bisherigen Leerstart.
+        self._awaiting_first_input = False
 
     @property
     def is_alive(self) -> bool:
@@ -154,6 +159,10 @@ class GenericCliDriver(EngineDriver):
         await self._emit(
             StreamEvent("system", "init", {"session_id": spec.session_id, "model": spec.model})
         )
+        if self.profile.adapter == "opencode" and not spec.initial_prompt.strip():
+            self._awaiting_first_input = True
+            await self._emit(StreamEvent("system", "waiting", {"reason": "initial_prompt_empty"}))
+            return
         # Initial-Prompt: per stdin (Default) — außer das Template trägt ihn schon als Arg.
         prompt = spec.initial_prompt if (spec.initial_prompt and self.profile.prompt_via == "stdin") else None
         await self._spawn(build_generic_argv(self.profile, spec), spec.project_path, prompt=prompt)
@@ -223,6 +232,21 @@ class GenericCliDriver(EngineDriver):
     async def send_input(self, text: str) -> None:
         if self._paused:
             raise RuntimeError("Session ist pausiert — keine Eingaben möglich.")
+        if self._awaiting_first_input and self._spec is not None:
+            # Noch keine OpenCode-Session vorhanden → erster echter Turn ist ein
+            # Frischstart, kein Resume. Erst dessen Stream liefert die resume_id.
+            self._awaiting_first_input = False
+            spec = LaunchSpec(
+                session_id=self._spec.session_id,
+                project_path=self._spec.project_path,
+                model=self._spec.model,
+                permission_mode=self._spec.permission_mode,
+                initial_prompt=text,
+                transport=self._spec.transport,
+            )
+            prompt = text if self.profile.prompt_via == "stdin" else None
+            await self._spawn(build_generic_argv(self.profile, spec), spec.project_path, prompt=prompt)
+            return
         # Lebt der Prozess noch UND stdin ist noch offen → direkt schreiben (z. B.
         # langlebiger Treiber wie Claude, oder ein oneshot-Prozess vor dem ersten Write).
         if (
