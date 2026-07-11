@@ -79,8 +79,12 @@ def build_resolution_prompt(row: dict) -> str:
     if len(report) > 12000:
         report = report[:12000].rstrip() + "\n\n[Report gekürzt: vollständiger Report im Peppermint Dashboard.]"
     return (
-        "Löse dieses analysierte Peppermint-Ticket oder erarbeite den nächsten konkret "
-        "umsetzbaren Schritt. Beziehe dich ausdrücklich auf die Ticketnummer aus dem "
+        "/abc-backoffice\n\n"
+        "Löse dieses analysierte Peppermint-Ticket mit dem abc-backoffice-Workflow: setze auf dem "
+        "beigefügten Frontdesk-Report auf, bestimme die Ursache an der genauen Stelle, baue den "
+        "kleinsten korrekten Fix, verifiziere ihn (Reproduktion-dann-grün) und halte die Erkenntnis "
+        "im Hal-Knowledge-Vault fest — oder erarbeite den nächsten konkret umsetzbaren Schritt, falls "
+        "sich kein sicherer Fix ergibt. Beziehe dich ausdrücklich auf die Ticketnummer aus dem "
         "Analyse-Report.\n\n"
         f"Peppermint-Ticket-ID: {row.get('peppermint_ticket_id')}\n"
         f"Jupiter-Ticket-Datensatz: {row.get('id')}\n"
