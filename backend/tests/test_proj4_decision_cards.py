@@ -296,6 +296,42 @@ async def test_claude_question_marker_opens_question_card():
 
 
 @pytest.mark.asyncio
+async def test_replayed_question_marker_does_not_duplicate_card():
+    """Regression: Claude läuft als langlebige tmux-Session und baut sein Transkript
+    nach jedem ``--resume``/Backend-Neustart auf, indem die (per ``>>`` angehängte)
+    ``out.log`` ERNEUT ab Offset 0 gelesen wird — dabei durchlaufen alle vergangenen
+    ``assistant``-Events noch einmal ``handle_event``. Früher erzeugte jeder Resume so
+    eine weitere IDENTISCHE Fragekarte (Belegfall: bis zu 6 gleiche „Wie weiter?"-
+    Karten). Ein wiederholter, inhaltsgleicher Marker darf keine zweite offene Karte
+    öffnen."""
+    from app.engine.events import StreamEvent
+
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku", engine="claude")
+
+    marker = (
+        "Kontext:\n"
+        "```jupiter-question\n"
+        '{"questions":[{"question":"Wie weiter?","header":"Nächster Schritt",'
+        '"options":[{"label":"Architektur"},{"label":"Specs anpassen"}]}]}\n'
+        "```"
+    )
+    event = StreamEvent("assistant", None, {"message": {"content": [{"type": "text", "text": marker}]}})
+
+    # Erst-Emission → genau eine Karte.
+    await rt.handle_event(event)
+    assert len(rt.pending) == 1 and rt.state.status == AWAITING_APPROVAL
+
+    # Zwei weitere Resumes re-lesen dieselbe Historie → derselbe Marker erneut.
+    await rt.handle_event(event)
+    await rt.handle_event(event)
+
+    # Idempotent: immer noch genau eine offene Fragekarte, kein Zuwachs.
+    question_cards = [c for c in rt.pending.values() if c.tool_name == "AskUserQuestion"]
+    assert len(question_cards) == 1
+
+
+@pytest.mark.asyncio
 async def test_multiple_cards_resolved_independently():
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")

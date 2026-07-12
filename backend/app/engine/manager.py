@@ -945,7 +945,26 @@ class SessionRuntime:
         return await fut
 
     def _open_user_question(self, tool_input: dict) -> None:
-        """Generic CLI/Codex question marker → existing AskUserQuestion card UI."""
+        """Generic CLI/Codex question marker → existing AskUserQuestion card UI.
+
+        Idempotent gegen ein WIEDERHOLTES assistant-Event mit gleichem Inhalt: Claude
+        läuft als langlebige tmux-Session und baut sein Transkript nach jedem
+        ``--resume``/Backend-Neustart auf, indem die (per ``>>`` angehängte) ``out.log``
+        ERNEUT ab Offset 0 gelesen wird (Claude-Transkript wird NICHT aus der DB
+        rehydriert, siehe ``_persist``/``rehydrate``). Dabei durchlaufen alle vergangenen
+        ``assistant``-Events noch einmal ``handle_event`` → ohne diese Sperre erzeugte
+        jeder Resume eine weitere IDENTISCHE Fragekarte (Belegfall: bis zu 6 gleiche
+        „Wie weiter?"-Karten; Codex/OpenCode sind oneshot und treffen den Re-Read nicht).
+        Existiert bereits eine offene Fragekarte mit demselben Inhalt, ist der erneute
+        Marker ein Replay → kein zweites Öffnen.
+        """
+        for existing in self.pending.values():
+            if (
+                existing.tool_name == "AskUserQuestion"
+                and existing.state == OPEN
+                and existing.tool_input == tool_input
+            ):
+                return
         first = (tool_input.get("questions") or [{}])[0]
         question = str(first.get("question") or "Frage an den Nutzer").strip()
         decision_id = f"question-{uuid.uuid4()}"
