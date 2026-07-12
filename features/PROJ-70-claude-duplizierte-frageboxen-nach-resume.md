@@ -1,8 +1,9 @@
 # PROJ-70: Bugfix: Claude-Engine dupliziert Fragekarten nach jedem Resume (bis zu 6 gleiche Frageboxen)
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-07-12
 **Last Updated:** 2026-07-12
+**Deployed:** 2026-07-12 · Version 0.27.28 · https://jupiter.auxevo.tech
 
 ## Problem / Motivation
 Nutzer meldete: bei der **Claude**-Engine wächst nach mehreren Runden die Anzahl **identischer** Decision-Cards/Frageboxen (`jupiter-question`) immer weiter an — bis zu 6 gleiche „Wie weiter?"-Karten übereinander. Bei **Codex** tritt das Problem nicht auf. Belegscreenshot: zwei bitgleiche „Claude fragt dich – Wie weiter?"-Karten (`crypto_mts_ui`, 21 Turns).
