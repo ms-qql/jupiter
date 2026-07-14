@@ -106,6 +106,30 @@ def test_codegraph_health_distinguishes_binary_mcp_and_index(tmp_path, monkeypat
     assert "MCP" in health["detail"]
 
 
+def test_skill_health_finds_versioned_native_plugin_cache(tmp_path, monkeypatch):
+    skill = (
+        tmp_path
+        / ".codex"
+        / "plugins"
+        / "cache"
+        / "ponytail"
+        / "ponytail"
+        / "4.8.4"
+        / "skills"
+        / "ponytail"
+        / "SKILL.md"
+    )
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# Ponytail", encoding="utf-8")
+    monkeypatch.setattr(savings.Path, "home", lambda: tmp_path)
+
+    health = SavingsHealthService().module_health("ponytail", "codex")
+
+    assert health["installed"] is True
+    assert health["healthy"] is True
+    assert health["detail"] == str(skill)
+
+
 @pytest.fixture()
 def configured_savings(tmp_path, monkeypatch):
     path = tmp_path / "token_savings.yaml"

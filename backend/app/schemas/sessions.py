@@ -47,6 +47,10 @@ class SessionCreate(BaseModel):
         default="standard",
         description="PROJ-73: globalen Standard verwenden oder für diese Session überschreiben.",
     )
+    savings_pilot_task: Literal["code_search", "debugging", "tests", "review", "free_chat"] | None = Field(
+        default=None,
+        description="PROJ-73: Kennung einer kontrollierten Golden-Task für A/B-Pilotmessung.",
+    )
 
     @model_validator(mode="after")
     def _validate_claude_model(self) -> "SessionCreate":
@@ -167,6 +171,9 @@ class SessionRead(BaseModel):
     savings_modules: list[dict] = Field(default_factory=list)
     savings_degraded: list[str] = Field(default_factory=list)
     savings_provenance: list[dict] = Field(default_factory=list)
+    savings_pilot_task: str | None = None
+    savings_latency_ms: float | None = None
+    savings_pilot_safe: bool | None = None
 
 
 class PermissionHookRequest(BaseModel):

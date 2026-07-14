@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from ..engine.usage import BudgetRefreshRateLimited, ProviderBudgetService, UsageService
 from ..schemas.usage import (
     ProviderBudgetSnapshot,
+    SavingsMetrics,
     UsageDrilldown,
     UsageRange,
     UsageSummary,
@@ -47,6 +48,15 @@ async def usage_drilldown(
     """Session-Drilldown (nach Tokens absteigend), optional nach Modell/Projekt gefiltert."""
     rows = await _svc(request).drilldown(range_, model=model, project=project)
     return {"range": range_, "rows": rows}
+
+
+@router.get("/token-savings", response_model=SavingsMetrics)
+async def token_savings_metrics(
+    request: Request,
+    range_: UsageRange = Query("30d", alias="range"),
+) -> dict:
+    """Savings-Messung getrennt von nativen Provider-Tokenwerten."""
+    return await _svc(request).savings_metrics(range_)
 
 
 @router.get("/provider-budgets", response_model=ProviderBudgetSnapshot)

@@ -78,6 +78,9 @@ COLUMNS: tuple[str, ...] = (
     "savings_modules",
     "savings_degraded",
     "savings_provenance",
+    "savings_pilot_task",
+    "savings_latency_ms",
+    "savings_pilot_safe",
 )
 
 SCHEMA_SQL = """
@@ -118,7 +121,10 @@ CREATE TABLE IF NOT EXISTS session_index (
     savings_profile_version TEXT,
     savings_modules       TEXT DEFAULT '[]',
     savings_degraded      TEXT DEFAULT '[]',
-    savings_provenance    TEXT DEFAULT '[]'
+    savings_provenance    TEXT DEFAULT '[]',
+    savings_pilot_task    TEXT,
+    savings_latency_ms    REAL,
+    savings_pilot_safe    INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 
@@ -168,6 +174,9 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("savings_modules", "TEXT DEFAULT '[]'"),
     ("savings_degraded", "TEXT DEFAULT '[]'"),
     ("savings_provenance", "TEXT DEFAULT '[]'"),
+    ("savings_pilot_task", "TEXT"),
+    ("savings_latency_ms", "REAL"),
+    ("savings_pilot_safe", "INTEGER"),
 )
 
 

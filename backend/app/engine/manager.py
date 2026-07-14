@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import signal
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -374,6 +375,10 @@ class SessionState:
     savings_modules: list[dict] = field(default_factory=list)
     savings_degraded: list[str] = field(default_factory=list)
     savings_provenance: list[dict] = field(default_factory=list)
+    savings_pilot_task: str | None = None
+    savings_latency_ms: float | None = None
+    # Ausschließlich der kontrollierte Golden-Runner darf diesen QA-Befund setzen.
+    savings_pilot_safe: bool | None = None
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -436,6 +441,9 @@ class SessionState:
             "savings_modules": list(self.savings_modules),
             "savings_degraded": list(self.savings_degraded),
             "savings_provenance": list(self.savings_provenance),
+            "savings_pilot_task": self.savings_pilot_task,
+            "savings_latency_ms": self.savings_latency_ms,
+            "savings_pilot_safe": self.savings_pilot_safe,
         }
 
 
@@ -482,6 +490,7 @@ class SessionRuntime:
         # nur für die Live-Anzeige. Wird bei Session-Ende (terminal/„tot") geleert.
         self.last_activity: dict | None = None
         self._activity_ring: list[dict] = []
+        self._savings_turn_started_at: float | None = time.monotonic() if state.savings_pilot_task else None
 
     def derive_liveness(self, timeout: float | None = None) -> str:
         """PROJ-27: verifizierter Liveness-Zustand — frisch aus vorhandenen Signalen.
@@ -603,6 +612,8 @@ class SessionRuntime:
                 model = event.raw.get("model")
                 if model:
                     self.state.model = model
+                if self.state.savings_pilot_task:
+                    self._savings_turn_started_at = time.monotonic()
             elif event.subtype == "waiting":
                 # Leerer Chat-Start bei Engines, die ohne Nachricht keinen Prozess
                 # anlegen können (aktuell OpenCode): bereit für die erste Eingabe.
@@ -682,6 +693,10 @@ class SessionRuntime:
 
         elif event.type == "result":
             self._apply_usage(event)
+            if event.raw.get("final", True) and self._savings_turn_started_at is not None:
+                self.state.savings_latency_ms = round(
+                    (time.monotonic() - self._savings_turn_started_at) * 1000, 1
+                )
             self.state.num_turns = int(event.raw.get("num_turns", self.state.num_turns) or 0)
             if is_error_result(event):
                 self.state.status = ERROR
@@ -1309,6 +1324,9 @@ class SessionManager:
             "savings_modules": json.dumps(s.savings_modules),
             "savings_degraded": json.dumps(s.savings_degraded),
             "savings_provenance": json.dumps(s.savings_provenance),
+            "savings_pilot_task": s.savings_pilot_task,
+            "savings_latency_ms": s.savings_latency_ms,
+            "savings_pilot_safe": 1 if s.savings_pilot_safe else 0 if s.savings_pilot_safe is not None else None,
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -1549,6 +1567,9 @@ class SessionManager:
             savings_modules=_json_list(row.get("savings_modules")),
             savings_degraded=_json_list(row.get("savings_degraded")),
             savings_provenance=_json_list(row.get("savings_provenance")),
+            savings_pilot_task=row.get("savings_pilot_task"),
+            savings_latency_ms=row.get("savings_latency_ms"),
+            savings_pilot_safe=(bool(row["savings_pilot_safe"]) if row.get("savings_pilot_safe") is not None else None),
         )
 
     async def create(
@@ -1568,6 +1589,8 @@ class SessionManager:
         ticket_id: str | None = None,
         contract_pointer: str | None = None,
         token_savings: SavingsChoice = "standard",
+        savings_pilot_task: str | None = None,
+        savings_pilot_safe: bool | None = None,
     ) -> SessionRuntime:
         # PROJ-18: Engine-Profil auflösen (Default = eingebaute Claude-Engine). iFrame/
         # Launch-Einträge sind KEINE steuerbaren Sessions → klar ablehnen.
@@ -1642,6 +1665,8 @@ class SessionManager:
             savings_modules=list(savings.modules),
             savings_degraded=list(savings.degraded),
             savings_provenance=list(savings.provenance),
+            savings_pilot_task=savings_pilot_task,
+            savings_pilot_safe=savings_pilot_safe,
         )
         # PROJ-50: abc-Workflow auf Engines OHNE Claude-PreToolUse-Skill-Signal
         # (generic_cli/Codex). Codex liefert kein Skill-Stream-Event (Spike), daher:

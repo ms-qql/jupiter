@@ -5,11 +5,12 @@ import { CheckCircle2Icon, CircleAlertIcon, CircleXIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ApiError, getTokenSavings, setTokenSavings } from "@/lib/api";
+import { ApiError, getSavingsMetrics, getTokenSavings, setTokenSavings } from "@/lib/api";
 import type {
   SavingsModuleHealth,
   TokenSavingsConfig,
   TokenSavingsSetting,
+  SavingsMetrics,
 } from "@/lib/types";
 
 const MODULE_LABELS: Record<string, string> = {
@@ -24,6 +25,7 @@ export function TokenSavingsControl() {
   const [engine, setEngine] = useState("claude");
   const [saving, setSaving] = useState(false);
   const [offline, setOffline] = useState(false);
+  const [metrics, setMetrics] = useState<SavingsMetrics | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -38,6 +40,12 @@ export function TokenSavingsControl() {
       .catch(() => setOffline(true));
     return () => ac.abort();
   }, [engine]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    getSavingsMetrics(ac.signal).then(setMetrics).catch(() => setMetrics(null));
+    return () => ac.abort();
+  }, []);
 
   async function handleSave() {
     if (!form || saving) return;
@@ -131,6 +139,19 @@ export function TokenSavingsControl() {
         Session-Start ausgelassen und als eingeschränkt gemeldet. Es gibt keine garantierte
         Einsparquote.
       </p>
+
+      {metrics && (
+        <div className="rounded-md border border-border p-3 text-xs">
+          <p className="font-medium">Pilot-Messung (30 Tage)</p>
+          <p className="mt-1 text-muted-foreground">
+            Einsparung: {metrics.estimated_tokens_avoided ?? "nicht messbar"} · Zusatzlatenz: {metrics.additional_latency_ms ?? "nicht messbar"} · Fallbacks: {metrics.fallback_count}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            Savings-Samples: {metrics.sample_size} · Kontroll-Samples: {metrics.control_sample_size}
+            {metrics.small_sample ? " · kleine Stichprobe" : ""} · Pilot: {metrics.pilot_status === "not_ready" ? "noch nicht freigabefähig" : metrics.pilot_status}
+          </p>
+        </div>
+      )}
 
       <div>
         <Button size="sm" onClick={handleSave} disabled={saving}>

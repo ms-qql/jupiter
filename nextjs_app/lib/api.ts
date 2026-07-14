@@ -58,6 +58,7 @@ import type {
   TokenSavingsConfig,
   TokenSavingsPreview,
   TokenSavingsSetting,
+  SavingsMetrics,
   ScoutRequest,
   ScoutResult,
   VaultRagPreview,
@@ -385,6 +386,10 @@ export function previewTokenSavings(
 ): Promise<TokenSavingsPreview> {
   const params = new URLSearchParams({ engine, project_path: projectPath, choice });
   return request<TokenSavingsPreview>(`/settings/token-savings/preview?${params}`, { signal });
+}
+
+export function getSavingsMetrics(signal?: AbortSignal): Promise<SavingsMetrics> {
+  return request<SavingsMetrics>("/usage/token-savings?range=30d", { signal });
 }
 
 // --- PROJ-19 (#28/#27): Token-/Kosten-Dashboard ----------------------------

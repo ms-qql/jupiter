@@ -463,8 +463,55 @@ Der Session-Snapshot speichert Modulname und erkannte Version, prüft diese Vers
 - Next.js-Produktions-Build inklusive TypeScript und statischer Seitengenerierung: bestanden.
 
 ### Noch offen
-- Die externen Caveman-/Ponytail-Skilldateien sind weiterhin nicht installiert; die UI zeigt dies ausdrücklich als `nicht installiert`.
 - Visueller Browser-Smoke und vollständige Acceptance-Criteria-Prüfung folgen mit `/abc-qa` bzw. `/abc-qa-e2e`.
+
+## Implementation Notes (Backoffice — QA-73-01, 2026-07-14)
+
+### Fix
+- Caveman ist global für Claude Code (User-Plugin und Skill), Codex (globaler Skill) und OpenCode (nativer Plugin-Adapter plus Skill) installiert.
+- Ponytail ist global für Claude Code und Codex als User-Plugin installiert; für OpenCode ist das native Plugin global konfiguriert. Der globale Ponytail-Skill steht über die vorhandene Claude/OpenCode-Skill-Verknüpfung auch OpenCode zur Verfügung.
+- Die Health-Discovery erkennt jetzt zusätzlich die versionsierten nativen Plugin-Caches von Claude und Codex. Dadurch gilt eine tatsächlich installierte Native-Integration nicht mehr fälschlich als `nicht installiert`.
+
+### Verifikation
+- Live-Matrix: Caveman und Ponytail melden für Claude, Codex und OpenCode jeweils `installed=true`, `healthy=true`, `integration=native`.
+- Backend: `tests/test_proj73_token_savings.py` — **8 bestanden** (inklusive Regressionstest für den versionsierten Codex-Plugin-Cache).
+- QA-73-01 ist für Caveman/Ponytail behoben. Der unabhängige CodeGraph-Teil sowie QA-73-02 bis QA-73-05 bleiben offen; der Projektstatus bleibt daher `In Review`.
+
+## QA Recheck — 2026-07-14
+
+**Ergebnis:** Nicht freigegeben · Status bleibt `In Review`.
+
+- Automatisiert: gezielte Backend-Suiten **19 bestanden**; ESLint bestanden; Next.js-Produktionsbuild kompiliert und typprüft erfolgreich.
+- Security: Keine neue externe Schreib- oder Installationsschnittstelle im Metrics-Pfad gefunden. Die Metrics-Route ist read-only.
+
+#### HIGH — QA-73-06: Golden-Pilot-Metriken sind nicht in den Laufzeitpfad verdrahtet
+
+Die neue SQLite-Struktur und `evaluate_golden_pilot()` erwarten `savings_pilot_task` und `savings_latency_ms`. `SessionManager._row()` schreibt beide Felder jedoch nicht, `SessionManager._state_from_row()` liest sie nicht, `SessionCreate` akzeptiert keine Golden-Task-Kennung und `SessionRuntime` misst keine Start-bis-Result-Latenz. Daher enthält jede echte Zeile `NULL`; die API kann keine A/B-Paare bilden und das Pilot-Gate bleibt dauerhaft `not_ready`.
+
+**Reproduktion:** Eine Session starten und den persistierten `session_index` prüfen: die beiden neuen Spalten bleiben leer; Suche nach den Feldnamen zeigt keine Messung im Event-/Result-Pfad.
+
+**Betroffen:** F2–F6, insbesondere die zugesagte automatische Pilot-Freigabe. **Empfehlung:** Golden-Task-ID als streng validiertes Session-/Runner-Feld übertragen, monotone Startzeit am Turn-Beginn erfassen, am finalen Result persistieren und Golden-Suite-Runs über einen kontrollierten Runner ausführen. Erst dann A/B-Schätzung und Gate bewerten.
+
+## Implementation Notes (Backoffice — QA-73-06, 2026-07-14)
+
+- `savings_pilot_task` ist als erlaubte Golden-Task-ID (`code_search`, `debugging`, `tests`, `review`, `free_chat`) im Session-API-Vertrag validiert und wird bis zum `SessionState` durchgereicht.
+- Golden-Sessions starten eine monotone Uhr bei der Engine-Initialisierung; beim finalen Result wird `savings_latency_ms` gemessen.
+- Beide Felder werden im SQLite-Live-Index geschrieben, bei Rehydrierung gelesen und in der Session-Response sichtbar gemacht. Damit kann die A/B-Auswertung echte, gepaarte Golden-Task-Runs auswerten.
+
+## QA Recheck — 2026-07-14 (Golden-Pilotpfad)
+
+**Ergebnis:** Nicht freigegeben · Status bleibt `In Review`.
+
+- Automatisiert: gezielte Backend-Suiten **19 bestanden**; ESLint und Next.js-Produktionsbuild bestanden.
+- QA-73-06 ist im Datenpfad behoben: Task-ID und Latenz werden von der Session bis SQLite geführt.
+
+#### HIGH — QA-73-07: Pilot-Gate aggregiert Engines und Aufgabenklassen unzulässig
+
+`evaluate_golden_pilot()` prüft nur insgesamt mindestens fünf Savings- und fünf Kontrollläufe. Es gruppiert weder nach `engine` noch verlangt es für beide Varianten alle fünf Golden-Tasks. Fünf Claude-Code-Suche-Läufe und fünf Codex-Review-Läufe könnten daher gemeinsam `stable` ergeben, obwohl für keine Engine ein vollständiger A/B-Vergleich existiert. Eine Sicherheitsregression wird ebenfalls nicht als Gate-Eingang persistiert oder geprüft.
+
+**Reproduktion:** `evaluate_golden_pilot()` mit fünf Savings-Zeilen für eine Engine/Task und fünf Kontroll-Zeilen für eine andere Engine/Task aufrufen; die Mindestmenge ist erfüllt, obwohl kein gültiges Paar existiert.
+
+**Betroffen:** F3–F5 und die vereinbarte Schnell-Pilot-Regel. **Empfehlung:** Ergebnisse pro Engine und Golden-Task bündeln, je Zelle mindestens fünf An-/Ausläufe fordern und Sicherheit/Qualität als explizite Gate-Felder aufnehmen. Der Gesamtstatus darf nur `stable` sein, wenn jede geprüfte Engine die vollständige Suite besteht.
 
 ## Deployment
 _To be added by /abc-deploy_

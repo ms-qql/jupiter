@@ -662,6 +662,18 @@ export interface TokenSavingsPreview {
   provenance: SavingsProvenance[];
 }
 
+export interface SavingsMetrics {
+  range: "today" | "7d" | "30d" | "all";
+  sample_size: number;
+  control_sample_size: number;
+  estimated_tokens_avoided: number | null;
+  additional_latency_ms: number | null;
+  fallback_count: number;
+  measurement_status: "available" | "unavailable";
+  pilot_status: "not_ready" | "eligible" | "stable";
+  small_sample: boolean;
+}
+
 // --- PROJ-18: Weitere Engines + iFrame/Launch ------------------------------
 
 /** Integrations-Tiefe eines Registry-Eintrags: steuerbare Session, eingebettete

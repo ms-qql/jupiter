@@ -115,7 +115,25 @@ def _skill_path(name: str, engine: str) -> Path | None:
             home / ".config" / "opencode" / "plugins" / name / "SKILL.md",
         ],
     }
-    return _first_existing(candidates.get(engine, []))
+    direct = _first_existing(candidates.get(engine, []))
+    if direct:
+        return direct
+
+    # Claude and Codex install native plugins in versioned cache directories;
+    # these paths are the authoritative runtime source, not a copied skill.
+    cache_root = home / f".{engine}" / "plugins" / "cache" / name
+    cached = sorted(cache_root.glob(f"**/skills/{name}/SKILL.md"), reverse=True)
+    return _first_existing(cached)
+
+
+def _opencode_plugin_configured(name: str) -> bool:
+    if name != "ponytail":
+        return False
+    config = Path.home() / ".config" / "opencode" / "opencode.json"
+    try:
+        return "@dietrichgebert/ponytail" in config.read_text(encoding="utf-8")
+    except OSError:
+        return False
 
 
 def _codegraph_binary() -> Path | None:
@@ -179,16 +197,24 @@ class SavingsHealthService:
             raise ValueError(f"Unbekannte Engine '{engine}'.")
         if name in ("caveman", "ponytail"):
             path = _skill_path(name, engine)
+            plugin_configured = engine == "opencode" and _opencode_plugin_configured(name)
+            installed = path is not None or plugin_configured
             return {
                 "name": name,
                 "stability": "pilot",
-                "installed": path is not None,
-                "healthy": path is not None,
+                "installed": installed,
+                "healthy": installed,
                 "version": None,
-                "integration": "native" if path else "unavailable",
+                "integration": "native" if installed else "unavailable",
                 "supported_engines": list(ENGINES),
                 "detail": (
-                    str(path) if path else f"Skill für {engine} nicht installiert."
+                    str(path)
+                    if path
+                    else (
+                        "Native OpenCode-Plugin konfiguriert."
+                        if plugin_configured
+                        else f"Skill für {engine} nicht installiert."
+                    )
                 ),
                 "binary_found": None,
                 "mcp_configured": None,

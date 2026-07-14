@@ -61,6 +61,18 @@ class UsageDrilldown(BaseModel):
     rows: list[UsageDrilldownRow]
 
 
+class SavingsMetrics(BaseModel):
+    range: UsageRange
+    sample_size: int
+    control_sample_size: int
+    estimated_tokens_avoided: int | None = None
+    additional_latency_ms: float | None = None
+    fallback_count: int
+    measurement_status: Literal["available", "unavailable"]
+    pilot_status: Literal["not_ready", "eligible", "stable"]
+    small_sample: bool
+
+
 class ProviderBudgetWindow(BaseModel):
     window: BudgetWindow
     label: str
