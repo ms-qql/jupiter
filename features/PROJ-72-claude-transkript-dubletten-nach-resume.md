@@ -1,10 +1,11 @@
 # PROJ-72: Bugfix: Claude-Engine dupliziert Nachrichten (und Fragekarten) nach jedem Resume/Restart
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-14
 **Last Updated:** 2026-07-14
 **Deployed:** 2026-07-14 · Version 0.27.30 · https://jupiter.auxevo.tech
 **Reopened:** 2026-07-14 · Produktions-Gegenbeleg nach Deploy (Session `90a13f65`)
+**Redeployed:** 2026-07-14 · Version 0.27.31 · https://jupiter.auxevo.tech
 
 ## Problem / Motivation
 Nutzer meldete: In **Claude**-Terminal-Sessions ("Cloud") werden, je länger die Session läuft, **Assistenten-Nachrichten doppelt und dreifach** ins Transkript geschrieben (Belegscreenshot: `crypto_mts_ui`, Laufzeit 13 h 38 m, dieselben ASSISTANT-Blöcke 2×/3× untereinander). Zusätzlich: **Fragekarten kommen immer wieder**, nachdem eine Session unterbrochen und wieder gestartet wurde. Bei **Codex** und **OpenCode** tritt beides nicht auf.
