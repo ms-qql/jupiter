@@ -515,3 +515,11 @@ Die neue SQLite-Struktur und `evaluate_golden_pilot()` erwarten `savings_pilot_t
 
 ## Deployment
 _To be added by /abc-deploy_
+
+## QA-Freigabe — 2026-07-14
+
+**Ergebnis:** Approved · explizit durch den Nutzer freigegeben.
+
+- Verifiziert: Backend **21 gezielte Tests bestanden**, ESLint und Next.js-Produktionsbuild bestanden.
+- Der kontrollierte Golden-Runner, die A/B-Metriken, Latenz-/Fallback-Erfassung und das Gate je Engine/Aufgabenklasse sind vorhanden.
+- **Akzeptiertes Restrisiko:** Die Ergebnisqualität der Golden-Tasks wird noch nicht semantisch gegen task-spezifische Sollantworten bewertet. Der Nutzer hat dieses Risiko ausdrücklich akzeptiert; es blockiert die Freigabe nicht.

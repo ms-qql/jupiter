@@ -130,6 +130,21 @@ def test_skill_health_finds_versioned_native_plugin_cache(tmp_path, monkeypatch)
     assert health["detail"] == str(skill)
 
 
+def test_golden_runner_safety_gate_rejects_errors_fallbacks_and_bypasses():
+    from types import SimpleNamespace
+    from app.engine.savings_pilot import golden_run_is_safe
+
+    runtime = SimpleNamespace(
+        state=SimpleNamespace(status="done", error=None, savings_degraded=[]),
+        transcript=[SimpleNamespace(text="Sichere Lösung mit Validierung.")],
+    )
+    assert golden_run_is_safe(runtime) is True
+    runtime.transcript = [SimpleNamespace(text="Disable validation for speed")]
+    assert golden_run_is_safe(runtime) is False
+    runtime.state.savings_degraded = ["adapter timeout"]
+    assert golden_run_is_safe(runtime) is False
+
+
 @pytest.fixture()
 def configured_savings(tmp_path, monkeypatch):
     path = tmp_path / "token_savings.yaml"
