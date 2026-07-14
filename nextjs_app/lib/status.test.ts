@@ -176,6 +176,12 @@ describe("modelLabel — auch aufgelöste IDs (Backend liefert volle ID nach Sta
     expect(modelLabel("fable")).toBe("Fable 5 (temporär)");
     expect(modelLabel("claude-fable-5")).toBe("Fable 5 (temporär)");
   });
+  it("benennt GPT-5.6 Sol/Terra/Luna lesbar", () => {
+    expect(modelLabel("gpt-5.6")).toBe("GPT 5.6 Sol");
+    expect(modelLabel("gpt-5.6-sol")).toBe("GPT 5.6 Sol");
+    expect(modelLabel("gpt-5.6-terra")).toBe("GPT 5.6 Terra");
+    expect(modelLabel("gpt-5.6-luna")).toBe("GPT 5.6 Luna");
+  });
   it("unbekanntes Modell unverändert", () => {
     expect(modelLabel("gpt-foo")).toBe("gpt-foo");
   });

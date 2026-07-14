@@ -311,6 +311,84 @@ def _kinds(events) -> list[tuple[str, str | None]]:
 
 
 @pytest.mark.asyncio
+async def test_empty_chat_start_waits_until_first_input(tmp_path):
+    """PROJ-34: OpenCode darf nicht ohne Nachricht gestartet werden; die erste echte
+    Chat-Eingabe ist ein Frischstart und liefert erst dann die Resume-ID."""
+    prof = _fake_profile(tmp_path, resumable=True)
+    drv = GenericCliDriver(prof)
+    events, on = _collector()
+    spec = LaunchSpec(
+        session_id="s-empty", project_path=str(tmp_path), model="opencode-go/minimax-m3",
+        permission_mode="default", initial_prompt="",
+    )
+
+    await drv.start(spec, on)
+
+    assert _kinds(events) == [("system", "init"), ("system", "waiting")]
+    assert drv.is_alive is False
+    assert drv._reader_task is None
+    assert drv._resume_id is None
+
+    await drv.send_input("erste echte Frage")
+    await drv._reader_task
+
+    assert "hi:erste echte Frage" in _texts(events)
+    assert drv._resume_id == "ses_NEW"
+    assert ("result", "success") in _kinds(events)
+
+
+@pytest.mark.asyncio
+async def test_empty_chat_start_manager_state_is_waiting(tmp_path):
+    from app.engine.manager import RUNNING, WAITING, SessionRuntime, SessionState
+
+    prof = _fake_profile(tmp_path, resumable=True)
+    drv = GenericCliDriver(prof)
+    state = SessionState(
+        session_id="s-empty-state", owner="dev", project_path=str(tmp_path),
+        model="opencode-go/minimax-m3", permission_mode="default", engine="opencode",
+    )
+    runtime = SessionRuntime(state, drv)
+    spec = LaunchSpec(
+        session_id=state.session_id, project_path=str(tmp_path), model=state.model,
+        permission_mode="default", initial_prompt="",
+    )
+
+    await drv.start(spec, runtime.handle_event)
+    assert state.status == WAITING
+
+    await drv.send_input("erste")
+    state.status = RUNNING  # entspricht SessionManager.send_input nach erfolgreichem Spawn
+    await drv._reader_task
+    assert state.status == WAITING
+
+
+@pytest.mark.asyncio
+async def test_empty_chat_start_over_tmux_creates_prompt_only_on_first_input(tmp_path, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "tmux_data_dir", str(tmp_path / "tmuxdata"))
+    prof = _fake_profile(tmp_path, resumable=True)
+    drv = GenericCliDriver(prof)
+    events, on = _collector()
+    spec = LaunchSpec(
+        session_id="s-empty-tmux", project_path=str(tmp_path), model="opencode-go/minimax-m3",
+        permission_mode="default", initial_prompt="", transport="tmux",
+    )
+    try:
+        await drv.start(spec, on)
+        assert drv._transport_obj is None
+
+        await drv.send_input("tmux erste Frage")
+        await drv._reader_task
+
+        assert "hi:tmux erste Frage" in _texts(events)
+        assert drv._transport_obj is not None
+        assert list(drv._transport_obj._dir.glob("prompt-*.txt"))
+    finally:
+        await drv.stop()
+
+
+@pytest.mark.asyncio
 async def test_opencode_multi_turn_resume_keeps_context(tmp_path):
     prof = _fake_profile(tmp_path, resumable=True)
     drv = GenericCliDriver(prof)

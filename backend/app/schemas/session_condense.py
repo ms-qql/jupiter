@@ -9,10 +9,6 @@ QueueStatus = Literal["pending", "running", "done", "error"]
 Outcome = Literal["condensed", "trivial"]
 WorkerStatus = Literal["idle", "draining", "running"]
 
-# Erlaubte Kondensier-Modelle (Kurz-Aliase der Claude-CLI). Server-Whitelist gegen
-# ungültige Slugs (PROJ-18-Slug-Falle).
-VALID_MODELS: tuple[str, ...] = ("haiku", "sonnet", "opus")
-
 
 class QueueItemRead(BaseModel):
     """Ein Warteschlangen-Eintrag (eine Zeile je alter Session)."""
@@ -70,6 +66,7 @@ class SettingsRead(BaseModel):
     age_days: int
     retention_days: int
     min_chars: int
+    engine: str
     model: str
 
 
@@ -80,4 +77,5 @@ class SettingsPatch(BaseModel):
     age_days: int | None = Field(default=None, ge=0, le=3650)
     retention_days: int | None = Field(default=None, ge=0, le=3650)
     min_chars: int | None = Field(default=None, ge=0, le=100_000)
+    engine: str | None = None
     model: str | None = None

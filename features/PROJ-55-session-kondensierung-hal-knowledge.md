@@ -2,7 +2,28 @@
 
 ## Status: Deployed
 **Created:** 2026-07-04
-**Last Updated:** 2026-07-07
+**Last Updated:** 2026-07-13
+
+## Erweiterung 2026-07-13 — Engine-/Modellauswahl (Default: OpenCode Minimax)
+Der Kondensier-Lauf ist nicht mehr an Claude gebunden. In den App-Einstellungen sind jetzt
+**Engine + Modell** frei wählbar (jede steuerbare Session-Engine aus `engines.yaml`, inkl.
+OpenCode-Slugs). **Neuer Default: `opencode` / `opencode-go/minimax-m3`** (günstig, für die
+Verdichtung ausreichend).
+- Persistenz: `session_condense_settings` erhält Spalte `engine` (Migration `ADD COLUMN` +
+  Ableitung für Bestandszeilen: Claude-Alias-Modell → `claude`, sonst `opencode`).
+  `backend/app/db/session_condense_queue.py`.
+- Worker übergibt `engine=` zusätzlich zu `model=` an `SessionManager.create`
+  (`backend/app/engine/session_condense.py`).
+- Validierung: PATCH `/session-condense/settings` prüft **Engine+Modell als Paar** gegen die
+  `engine_registry` statt der alten Claude-Only-Whitelist (`backend/app/routes/session_condense.py`,
+  `schemas/session_condense.py`).
+- UI: Einstellungs-Dialog bekommt Engine- + abhängiges Modell-Dropdown (Vorbild
+  `new-session-dialog.tsx`), gespeist aus `GET /engines`
+  (`nextjs_app/components/microapps/session_condense/session-condense-app.tsx`).
+- Config-Defaults: `session_condense_engine="opencode"`, `session_condense_model="opencode-go/minimax-m3"`
+  (`backend/app/config.py`).
+- Tests: `test_proj55_session_condense.py::test_api_settings_validation` auf Engine+Modell-Paar
+  umgestellt; Worker-Test-Helper defaultet Test-DB auf Claude (FakeDriver). 25/25 grün.
 
 ## Kurzbeschreibung
 Ein Skill (plus planbarer Wochen-Lauf), der periodisch über die in Hal abgelegten

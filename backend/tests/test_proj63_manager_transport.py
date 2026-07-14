@@ -1,6 +1,6 @@
-"""PROJ-63 — SessionManager löst den Transport nur für generic_cli-Engines auf
-(Codex/OpenCode-Rollout zuerst), Claude bleibt immer "direct". Verwendet FakeDriver
-(kein echter Subprozess) — reine Verdrahtungs-/Resolution-Tests, kein tmux nötig.
+"""PROJ-63 — SessionManager löst den Transport pro Engine auf (Rollout: erst
+generic_cli/Codex/OpenCode, jetzt auch Claude). Verwendet FakeDriver (kein echter
+Subprozess) — reine Verdrahtungs-/Resolution-Tests, kein tmux nötig.
 """
 from __future__ import annotations
 
@@ -78,10 +78,30 @@ async def test_generic_cli_engine_defaults_to_direct(use_generic_cli_engine, tra
 
 
 @pytest.mark.asyncio
-async def test_claude_never_resolves_tmux_even_if_global_default_is_tmux(transport_store_tmp):
-    """Claude bleibt bewusst außen vor (Rollout zuerst Codex/OpenCode) — selbst ein
-    globaler tmux-Default darf Claude-Sessions nicht umschalten."""
+async def test_claude_resolves_tmux_when_configured(transport_store_tmp):
+    """Rollout-Schritt 5 (PROJ-63): Claude ist jetzt aktiviert — ein Override
+    ``claude: tmux`` schaltet Claude-Sessions auf den long-lived-tmux-Transport."""
+    transport_store_tmp.save({"engine_overrides": {"claude": "tmux"}})
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="hi", model="haiku")
+    assert rt.state.engine == "claude"
+    assert rt.state.transport == "tmux"
+
+
+@pytest.mark.asyncio
+async def test_claude_resolves_tmux_from_global_default(transport_store_tmp):
+    """Claude folgt jetzt auch dem globalen tmux-Default (nicht mehr außen vor)."""
     transport_store_tmp.save({"default_transport": "tmux"})
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="hi", model="haiku")
+    assert rt.state.engine == "claude"
+    assert rt.state.transport == "tmux"
+
+
+@pytest.mark.asyncio
+async def test_claude_defaults_to_direct_without_override(transport_store_tmp):
+    """Ohne tmux-Konfiguration bleibt Claude auf ``direct`` (kein Zwangs-tmux)."""
+    transport_store_tmp.save({"default_transport": "direct"})
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="hi", model="haiku")
     assert rt.state.engine == "claude"

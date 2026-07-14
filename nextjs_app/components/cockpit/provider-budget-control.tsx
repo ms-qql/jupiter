@@ -56,7 +56,7 @@ const PROVIDERS: {
   {
     name: "OpenCode",
     windows: [
-      { label: "Guthaben", pctKey: "opencode_5h_pct", resetKey: "opencode_5h_reset_at" },
+      { label: "5h", pctKey: "opencode_5h_pct", resetKey: "opencode_5h_reset_at" },
       { label: "Wochen-Fenster", pctKey: "opencode_week_pct", resetKey: "opencode_week_reset_at" },
     ],
   },

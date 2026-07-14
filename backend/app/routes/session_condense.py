@@ -10,9 +10,9 @@ import re
 
 from fastapi import APIRouter, HTTPException, Request
 
+from ..engine.registry import engine_registry
 from ..engine.session_condense import SessionCondenseWorker
 from ..schemas.session_condense import (
-    VALID_MODELS,
     QueueRead,
     RunRead,
     SettingsPatch,
@@ -104,12 +104,33 @@ async def patch_settings_route(request: Request, payload: SettingsPatch) -> dict
         fields["retention_days"] = payload.retention_days
     if payload.min_chars is not None:
         fields["min_chars"] = payload.min_chars
-    if payload.model is not None:
-        model = payload.model.strip()
-        if model not in VALID_MODELS:
+    if payload.engine is not None or payload.model is not None:
+        # Engine + Modell werden als Paar validiert (gegen engines.yaml). So kann jede
+        # konfigurierte Session-Engine (Claude, OpenCode, …) samt gültigem Modell-Slug
+        # gewählt werden — statt einer harten Claude-Only-Whitelist.
+        current = await worker.get_settings()
+        engine_key = (
+            payload.engine if payload.engine is not None else current.get("engine")
+        )
+        engine_key = (engine_key or "").strip()
+        profile = engine_registry.get(engine_key or None)
+        if profile is None or not profile.is_session_engine:
             raise HTTPException(
                 status_code=400,
-                detail=f"Ungueltiges Modell. Erlaubt: {', '.join(VALID_MODELS)}.",
+                detail=f"Ungueltige Engine '{engine_key}'. Nur steuerbare Session-Engines erlaubt.",
             )
+        model = (
+            payload.model if payload.model is not None else current.get("model")
+        )
+        model = (model or "").strip() or (profile.default_model or "")
+        if not profile.valid_model(model):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Modell '{model}' ist fuer Engine '{profile.key}' nicht konfiguriert. "
+                    f"Erlaubt: {', '.join(profile.models) or '(beliebig)'}."
+                ),
+            )
+        fields["engine"] = profile.key
         fields["model"] = model
     return await worker.save_settings(fields)

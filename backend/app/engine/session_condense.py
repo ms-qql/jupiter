@@ -192,6 +192,7 @@ class SessionCondenseWorker:
         self._age_days = settings.session_condense_age_days
         self._retention_days = settings.session_condense_archive_retention_days
         self._min_chars = settings.session_condense_min_body_chars
+        self._engine = settings.session_condense_engine
         self._model = settings.session_condense_model
         self._next_scheduled_run: datetime | None = None
 
@@ -214,6 +215,7 @@ class SessionCondenseWorker:
         self._age_days = int(cfg.get("age_days") or self._age_days)
         self._retention_days = int(cfg.get("retention_days") or self._retention_days)
         self._min_chars = int(cfg.get("min_chars") or self._min_chars)
+        self._engine = (cfg.get("engine") or self._engine).strip()
         self._model = (cfg.get("model") or self._model).strip()
         self._recompute_schedule()
 
@@ -292,6 +294,7 @@ class SessionCondenseWorker:
             "age_days": self._age_days,
             "retention_days": self._retention_days,
             "min_chars": self._min_chars,
+            "engine": self._engine,
             "model": self._model,
         }
 
@@ -377,6 +380,7 @@ class SessionCondenseWorker:
                     info["abspath"], row.get("project") or "unbekannt",
                     row.get("session_id") or "",
                 ),
+                engine=self._engine,
                 model=self._model,
                 permission_mode=settings.session_condense_permission_mode,
                 owner=settings.default_owner,

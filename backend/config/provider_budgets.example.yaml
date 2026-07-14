@@ -11,7 +11,8 @@ codex_5h_pct: null
 codex_5h_reset_at: null
 codex_week_pct: null
 codex_week_reset_at: null
-# OpenCode/OpenRouter: live via API (Credit-Guthaben), manuelle Werte nur als Fallback.
+# OpenCode Go: automatisch aus lokalen Turn-Kosten gegen 12 USD/5h und 30 USD/Woche;
+# manuelle Werte bleiben als Fallback, falls Kosten in einer CLI-Version fehlen.
 opencode_5h_pct: null
 opencode_5h_reset_at: null
 opencode_week_pct: null

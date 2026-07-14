@@ -249,6 +249,89 @@ async def test_codex_question_marker_opens_question_card_and_answer_resumes():
 
 
 @pytest.mark.asyncio
+async def test_claude_gets_question_card_instruction_in_system_prompt():
+    """Feature-Paritaet: auch Claude bekommt den Fragekarten-Vertrag — anders als Codex
+    ueber den System-Prompt (--append-system-prompt), damit das Auswahl-Menue in JEDEM
+    Turn (nicht nur dem ersten) greift."""
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku", engine="claude")
+    spec = rt.driver._spec
+    assert "jupiter-question" in (spec.system_prompt_append or "")
+    # Der Vertrag darf NICHT in den ersten User-Turn geschrieben werden (das ist der Codex-Weg).
+    assert "jupiter-question" not in (spec.initial_prompt or "")
+
+
+@pytest.mark.asyncio
+async def test_claude_question_marker_opens_question_card():
+    """Der Marker im Claude-Assistenten-Text erzeugt dieselbe AskUserQuestion-Karte."""
+    from app.engine.events import StreamEvent
+
+    app = create_app(driver_factory=lambda: FakeDriver())
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        sid = (await ac.post(
+            "/sessions",
+            json={"project_path": PROJECT, "initial_prompt": "Hi", "model": "haiku", "engine": "claude"},
+        )).json()["session_id"]
+        rt = app.state.manager.get(sid)
+
+        marker = (
+            "Kurzer Kontext:\n"
+            "```jupiter-question\n"
+            '{"questions":[{"question":"Framework?","header":"Stack",'
+            '"options":[{"label":"Next.js"},{"label":"Flutter","description":"web-first"}]}]}\n'
+            "```"
+        )
+        await rt.handle_event(
+            StreamEvent("assistant", None, {"message": {"content": [{"type": "text", "text": marker}]}})
+        )
+        await rt.handle_event(StreamEvent("result", "success", {"is_error": False, "num_turns": 1}))
+
+        data = (await ac.get(f"/sessions/{sid}")).json()
+        assert data["status"] == AWAITING_APPROVAL
+        card = data["pending_decisions"][0]
+        assert card["tool_name"] == "AskUserQuestion"
+        assert card["context"]["engine"] == "claude"
+        assert card["tool_input"]["questions"][0]["options"][0]["label"] == "Next.js"
+        assert "jupiter-question" not in "\n".join(e.text for e in rt.transcript)
+
+
+@pytest.mark.asyncio
+async def test_replayed_question_marker_does_not_duplicate_card():
+    """Regression: Claude läuft als langlebige tmux-Session und baut sein Transkript
+    nach jedem ``--resume``/Backend-Neustart auf, indem die (per ``>>`` angehängte)
+    ``out.log`` ERNEUT ab Offset 0 gelesen wird — dabei durchlaufen alle vergangenen
+    ``assistant``-Events noch einmal ``handle_event``. Früher erzeugte jeder Resume so
+    eine weitere IDENTISCHE Fragekarte (Belegfall: bis zu 6 gleiche „Wie weiter?"-
+    Karten). Ein wiederholter, inhaltsgleicher Marker darf keine zweite offene Karte
+    öffnen."""
+    from app.engine.events import StreamEvent
+
+    mgr = _mgr()
+    rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku", engine="claude")
+
+    marker = (
+        "Kontext:\n"
+        "```jupiter-question\n"
+        '{"questions":[{"question":"Wie weiter?","header":"Nächster Schritt",'
+        '"options":[{"label":"Architektur"},{"label":"Specs anpassen"}]}]}\n'
+        "```"
+    )
+    event = StreamEvent("assistant", None, {"message": {"content": [{"type": "text", "text": marker}]}})
+
+    # Erst-Emission → genau eine Karte.
+    await rt.handle_event(event)
+    assert len(rt.pending) == 1 and rt.state.status == AWAITING_APPROVAL
+
+    # Zwei weitere Resumes re-lesen dieselbe Historie → derselbe Marker erneut.
+    await rt.handle_event(event)
+    await rt.handle_event(event)
+
+    # Idempotent: immer noch genau eine offene Fragekarte, kein Zuwachs.
+    question_cards = [c for c in rt.pending.values() if c.tool_name == "AskUserQuestion"]
+    assert len(question_cards) == 1
+
+
+@pytest.mark.asyncio
 async def test_multiple_cards_resolved_independently():
     mgr = _mgr()
     rt = await mgr.create(project_path=PROJECT, initial_prompt="Hi", model="haiku")

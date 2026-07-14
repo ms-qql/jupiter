@@ -2,3 +2,4 @@ default_transport: direct
 engine_overrides:
   codex: tmux
   opencode: tmux
+  claude: tmux

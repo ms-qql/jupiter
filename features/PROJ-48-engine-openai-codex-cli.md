@@ -242,3 +242,7 @@ Keine Critical/High-Bugs. Die drei Low/Info-Punkte sind Anzeige-/UX-Feinheiten i
 - **Host:** host-nativ auf Dev-VPS (systemd + Caddy + GitHub-Webhook auf `main`).
 - **Was geht live:** Codex-Engine (generic_cli + `codex`-Adapter, Multi-Turn via Resume, Usage-Mapping), Engine-Registry-Eintrag, Sandbox `workspace-write`.
 - **Smoke-Test (offen, auf Prod):** Codex-Session starten, Mehr-Turn-Konversation, Token-/Kontext-Anzeige.
+
+### Nachtrag 2026-07-09 · Version 0.27.23 · Tag v0.27.23-PROJ-48
+- **Feature-Parität Auswahl-Menü für Claude:** Die Fragekarten-Auswahlkarte (`AskUserQuestion`) gab es bisher nur für Codex, weil nur dort die Marker-Instruktion injiziert wurde. Claude bekommt den `jupiter-question`-Vertrag jetzt via `--append-system-prompt` (Erststart **und** Resume), sodass das Auswahl-Menü in **jedem** Turn greift — nicht nur im ersten. Parsing/Karten-Erzeugung/Rückkanal/Frontend waren bereits engine-neutral.
+- **Backend-only:** `manager.py` (`_QUESTION_CARD_INSTRUCTION` engine-neutral + Helper `_with_question_card_instruction`); kein Frontend-Change nötig. Tests: `test_claude_gets_question_card_instruction_in_system_prompt`, `test_claude_question_marker_opens_question_card` (Suite grün, 42 Tests).

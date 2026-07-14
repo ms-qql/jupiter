@@ -176,6 +176,12 @@ def _old_iso(days: int = 30) -> str:
 
 def _worker(tmp_path, monkeypatch, driver_factory=None) -> tuple[SessionCondenseWorker, VaultService]:
     monkeypatch.setattr(settings, "session_condense_project_path", PROJECT)
+    # Worker-Mechanik gegen den eingebauten Claude-FakeDriver testen (der injizierte
+    # driver_factory greift nur für die Claude-Engine). Frische Test-DB daher auf
+    # Claude defaulten — der Produktions-Default bleibt OpenCode/Minimax.
+    from app.db.session_condense_queue import _DEFAULT_SETTINGS
+    monkeypatch.setitem(_DEFAULT_SETTINGS, "engine", "claude")
+    monkeypatch.setitem(_DEFAULT_SETTINGS, "model", "sonnet")
     v = _vault(tmp_path)
     repo = SqliteSessionCondenseRepository(str(tmp_path / "scq.db"))
     mgr = SessionManager(driver_factory=driver_factory or (lambda: FakeDriver()))
@@ -318,10 +324,20 @@ def test_api_settings_validation(client):
     # Ungültiger Wochenplan → 400.
     assert client.patch("/session-condense/settings", json={"schedule": "10:00"}).status_code == 400
     assert client.patch("/session-condense/settings", json={"schedule": "FUN 03:00"}).status_code == 400
-    # Ungültiges Modell → 400.
+    # Modell, das die (Default-)Engine nicht kennt → 400.
     assert client.patch("/session-condense/settings", json={"model": "gpt-9"}).status_code == 400
-    # Gültig → 200 + persistiert.
-    r = client.patch("/session-condense/settings", json={"schedule": "MON 03:00", "model": "opus", "age_days": 14})
+    # Unbekannte Engine → 400.
+    assert client.patch("/session-condense/settings", json={"engine": "gibtsnicht"}).status_code == 400
+    # Gültiges Engine+Modell-Paar → 200 + persistiert.
+    r = client.patch(
+        "/session-condense/settings",
+        json={"schedule": "MON 03:00", "engine": "claude", "model": "opus", "age_days": 14},
+    )
     assert r.status_code == 200
     body = r.json()
-    assert body["schedule"] == "MON 03:00" and body["model"] == "opus" and body["age_days"] == 14
+    assert (
+        body["schedule"] == "MON 03:00"
+        and body["engine"] == "claude"
+        and body["model"] == "opus"
+        and body["age_days"] == 14
+    )

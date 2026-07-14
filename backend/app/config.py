@@ -218,9 +218,7 @@ class Settings(BaseSettings):
     # bisherige Fallback (geschätzt/manuell/n/v) — keine falsche Präzision.
     provider_budget_claude_cli_enabled: bool = True
     provider_budget_codex_rollout_enabled: bool = True
-    provider_budget_opencode_api_enabled: bool = True
     codex_sessions_dir: str = str(Path.home() / ".codex" / "sessions")
-    opencode_auth_path: str = str(Path.home() / ".local" / "share" / "opencode" / "auth.json")
     # Optionale Fallback-Quoten für lokale Schätzung. 0 = unbekannt → UI zeigt n/v
     # statt erfundener Prozentwerte. Live-Quelle ist provider_budgets.yaml (UI-editierbar);
     # diese env-Felder bleiben als letzter Fallback, wenn kein Store gesetzt ist (Tests).
@@ -228,8 +226,10 @@ class Settings(BaseSettings):
     provider_budget_claude_week_tokens: int = 0
     provider_budget_codex_5h_tokens: int = 0
     provider_budget_codex_week_tokens: int = 0
-    # OpenCode nutzt OpenRouter (pay-as-you-go) — keine Token-Quota, sondern USD-Credits.
-    # Fallback-Quoten bleiben 0; die Live-Probe liest die echte Credit-Bilanz via API.
+    # OpenCode Go: offizielle verbrauchsbasierte Abo-Limits in USD. Die OpenCode-CLI
+    # liefert je Turn `cost`; daraus berechnet Jupiter lokale 5h-/Wochen-Prozentwerte.
+    provider_budget_opencode_5h_usd: float = 12.0
+    provider_budget_opencode_week_usd: float = 30.0
     provider_budget_opencode_5h_tokens: int = 0
     provider_budget_opencode_week_tokens: int = 0
     # Datei mit den UI-editierbaren Schätz-Quoten (live, mtime-geprüft).
@@ -444,6 +444,10 @@ class Settings(BaseSettings):
     # auf einer nie erteilten Freigabe) — analog zu video_summary/book_nuggets/
     # session_condense.
     peppermint_analysis_permission_mode: str = "bypassPermissions"
+    # Gleicher Grund wie oben: die Lösungs-Session (Button "Ticket lösen" im
+    # Detail-Dialog) läuft ebenfalls headless — ohne bypassPermissions würde sie
+    # im Mode "default" auf einer nie erteilten Freigabe hängen.
+    peppermint_resolution_permission_mode: str = "bypassPermissions"
     peppermint_frontdesk_report_dir: str = "/home/dev/projects/immo-crm/docs/frontdesk-check"
 
     # --- Buch-Nuggets (PROJ-53) ------------------------------------------
@@ -477,9 +481,12 @@ class Settings(BaseSettings):
     # Poll-Frequenz des Hintergrund-Workers (Sek.) — niedrigfrequent, die Skill-Läufe
     # dauern Minuten; der Tick sammelt nur Zustandswechsel ein und rückt nach.
     session_condense_poll_interval_seconds: float = 10.0
-    # Modell + Permission-Mode der Kondensier-Sessions. bypassPermissions, weil headless
+    # Engine + Modell + Permission-Mode der Kondensier-Sessions. Default = OpenCode mit
+    # Minimax (günstig, ausreichend für die Verdichtung); über die App-Einstellungen frei
+    # wählbar (jede Session-Engine aus engines.yaml). bypassPermissions, weil headless
     # kein interaktives Decision-Card-Gate bedienen kann.
-    session_condense_model: str = "sonnet"
+    session_condense_engine: str = "opencode"
+    session_condense_model: str = "opencode-go/minimax-m3"
     session_condense_permission_mode: str = "bypassPermissions"
     # Arbeitsverzeichnis (cwd/Scope) der Kondensier-Sessions. Default = Hal-Vault, in dem
     # der Skill liest (Sessions/) und schreibt (Knowledge/). MUSS in allowed_roots liegen.

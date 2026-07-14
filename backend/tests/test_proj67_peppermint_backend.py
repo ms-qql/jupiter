@@ -7,10 +7,30 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.db.peppermint_queue import ANALYZED, SqlitePeppermintRepository
-from app.engine.peppermint import PeppermintClient, parse_frontdesk_result, save_frontdesk_report
+from app.engine.peppermint import (
+    PeppermintClient,
+    build_resolution_prompt,
+    build_triage_prompt,
+    parse_frontdesk_result,
+    save_frontdesk_report,
+)
 from app.main import _peppermint_loop_interval, create_app
 
 from .fakes import FakeDriver
+
+
+def test_resolution_prompt_invokes_abc_backoffice_skill():
+    row = {"peppermint_ticket_id": "42", "id": 7, "title": "Foo", "report_text": "Frontdesk-Report ..."}
+    prompt = build_resolution_prompt(row)
+    # Die Lösungssession muss über den abc-backoffice-Skill laufen (Root-Cause + Fix),
+    # analog zur Triage, die /abc-frontdesk-check aufruft.
+    assert prompt.lstrip().startswith("/abc-backoffice")
+    assert "/abc-frontdesk-check" not in prompt
+
+
+def test_triage_prompt_invokes_frontdesk_skill():
+    prompt = build_triage_prompt({"peppermint_ticket_id": "42"})
+    assert prompt.lstrip().startswith("/abc-frontdesk-check")
 
 
 def test_parse_frontdesk_result_reads_required_fields():

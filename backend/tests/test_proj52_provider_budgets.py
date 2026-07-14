@@ -74,6 +74,8 @@ class _Cfg:
     provider_budget_codex_week_tokens = 0
     provider_budget_opencode_5h_tokens = 0
     provider_budget_opencode_week_tokens = 0
+    provider_budget_opencode_5h_usd = 12.0
+    provider_budget_opencode_week_usd = 30.0
 
 
 class _FixedClockService(ProviderBudgetService):
@@ -117,7 +119,13 @@ async def test_configured_limits_estimate_per_provider_and_window() -> None:
     rows = [
         _row(session_id="c1", engine="claude", tokens_used=1000, created_at=NOW.isoformat()),
         _row(session_id="c2", engine="claude", tokens_used=500, created_at=(NOW - timedelta(hours=6)).isoformat()),
-        _row(session_id="x1", engine="codex", tokens_used=3000, created_at=NOW.isoformat()),
+        _row(
+            session_id="x1",
+            engine="codex",
+            model="gpt-5.6-terra",
+            tokens_used=3000,
+            created_at=NOW.isoformat(),
+        ),
     ]
     svc = _FixedClockService(
         _FakeRepo(rows),

@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS session_condense_settings (
     age_days          INTEGER NOT NULL DEFAULT 7,
     retention_days    INTEGER NOT NULL DEFAULT 30,
     min_chars         INTEGER NOT NULL DEFAULT 800,
-    model             TEXT NOT NULL DEFAULT 'sonnet'
+    engine            TEXT NOT NULL DEFAULT 'opencode',
+    model             TEXT NOT NULL DEFAULT 'opencode-go/minimax-m3'
 );
 
 CREATE TABLE IF NOT EXISTS session_condense_runs (
@@ -72,8 +73,14 @@ _DEFAULT_SETTINGS = {
     "age_days": 7,
     "retention_days": 30,
     "min_chars": 800,
-    "model": "sonnet",
+    "engine": "opencode",
+    "model": "opencode-go/minimax-m3",
 }
+
+# Claude-Kurz-Aliase — nötig, um beim Nachrüsten der `engine`-Spalte (Migration) für
+# eine bestehende Settings-Zeile die passende Engine abzuleiten (altes Verhalten war
+# immer Claude).
+_CLAUDE_ALIASES: frozenset[str] = frozenset({"haiku", "sonnet", "opus", "fable"})
 
 
 @runtime_checkable
@@ -126,15 +133,37 @@ class SqliteSessionCondenseRepository:
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
+            self._migrate_engine_column(conn)
             conn.execute(
                 "INSERT OR IGNORE INTO session_condense_settings "
-                "(id, schedule, age_days, retention_days, min_chars, model) "
-                "VALUES (1, ?, ?, ?, ?, ?)",
+                "(id, schedule, age_days, retention_days, min_chars, engine, model) "
+                "VALUES (1, ?, ?, ?, ?, ?, ?)",
                 (
                     _DEFAULT_SETTINGS["schedule"], _DEFAULT_SETTINGS["age_days"],
                     _DEFAULT_SETTINGS["retention_days"], _DEFAULT_SETTINGS["min_chars"],
-                    _DEFAULT_SETTINGS["model"],
+                    _DEFAULT_SETTINGS["engine"], _DEFAULT_SETTINGS["model"],
                 ),
+            )
+
+    @staticmethod
+    def _migrate_engine_column(conn: sqlite3.Connection) -> None:
+        """Bestandsdatenbanken (vor der Engine-Wahl) haben keine ``engine``-Spalte.
+        Nachrüsten + für die bestehende Zeile die Engine ableiten: ein Claude-Alias-
+        Modell → ``claude`` (altes Verhalten unverändert); alles andere → ``opencode``."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(session_condense_settings)")}
+        if "engine" in cols:
+            return
+        conn.execute(
+            "ALTER TABLE session_condense_settings ADD COLUMN engine "
+            "TEXT NOT NULL DEFAULT 'opencode'"
+        )
+        row = conn.execute(
+            "SELECT model FROM session_condense_settings WHERE id = 1"
+        ).fetchone()
+        if row is not None:
+            engine = "claude" if (row["model"] or "") in _CLAUDE_ALIASES else "opencode"
+            conn.execute(
+                "UPDATE session_condense_settings SET engine = ? WHERE id = 1", (engine,)
             )
 
     def _list_queue_sync(self) -> list[dict]:
@@ -196,7 +225,7 @@ class SqliteSessionCondenseRepository:
     def _get_settings_sync(self) -> dict:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT schedule, age_days, retention_days, min_chars, model "
+                "SELECT schedule, age_days, retention_days, min_chars, engine, model "
                 "FROM session_condense_settings WHERE id = 1"
             ).fetchone()
         return dict(row) if row else dict(_DEFAULT_SETTINGS)
@@ -207,14 +236,14 @@ class SqliteSessionCondenseRepository:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO session_condense_settings "
-                "(id, schedule, age_days, retention_days, min_chars, model) "
-                "VALUES (1, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                "(id, schedule, age_days, retention_days, min_chars, engine, model) "
+                "VALUES (1, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
                 "schedule = excluded.schedule, age_days = excluded.age_days, "
                 "retention_days = excluded.retention_days, min_chars = excluded.min_chars, "
-                "model = excluded.model",
+                "engine = excluded.engine, model = excluded.model",
                 (
                     merged["schedule"], int(merged["age_days"]), int(merged["retention_days"]),
-                    int(merged["min_chars"]), merged["model"],
+                    int(merged["min_chars"]), merged["engine"], merged["model"],
                 ),
             )
         return merged

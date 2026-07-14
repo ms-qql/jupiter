@@ -197,6 +197,9 @@ export function phaseLabel(phase: string | null | undefined): string | null {
  *  (z. B. „claude-haiku-4-5-20251001" → „Haiku"). */
 export function modelLabel(model: string): string {
   const m = model.toLowerCase();
+  if (m === "gpt-5.6" || m === "gpt-5.6-sol") return "GPT 5.6 Sol";
+  if (m === "gpt-5.6-terra") return "GPT 5.6 Terra";
+  if (m === "gpt-5.6-luna") return "GPT 5.6 Luna";
   if (m.includes("haiku")) return "Haiku";
   if (m.includes("sonnet")) return "Sonnet";
   if (m.includes("opus")) return "Opus";
@@ -210,7 +213,7 @@ export function contextLabel(pct: number, known: boolean): string {
 }
 
 /** PROJ-18/PROJ-57: Engines mit echter USD-Abrechnung. Claude (CLI meldet total_cost_usd)
- *  + OpenCode (OpenRouter liefert `cost` je Turn). Übrige Engines (Codex/Hermes/Swisscom)
+ *  + OpenCode (Provider liefert `cost` je Turn). Übrige Engines (Codex/Hermes/Swisscom)
  *  haben keine Kosten-Extraktion → die Anzeige degradiert sauber zu „n/v". */
 export function engineShowsCost(engine: string): boolean {
   return engine === "claude" || engine === "opencode";
