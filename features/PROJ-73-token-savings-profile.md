@@ -385,7 +385,31 @@ _To be added by /abc-qa_
 ### Bewusste Backend-Grenze
 - Caveman und Ponytail werden erkannt und konfliktfrei aufgelöst, aber nicht automatisch installiert. Fehlt ein Skill für eine Engine, bleibt er `degraded` und die Session startet ohne ihn.
 - `mcp_reachable` und `index_freshness` bleiben zunächst `unknown`, statt Konfigurationspräsenz als echte Laufzeitmessung auszugeben. Ein aktiver MCP-Handshake und Index-Diff gehören in den späteren Adapter-/QA-Schritt.
-- Frontend-Schalter, Session-Auswahl und visuelle Health-/Preview-Darstellung sind noch nicht gebaut.
+- Zum Backend-Handoff waren Frontend-Schalter, Session-Auswahl und Health-/Preview-Darstellung noch offen; sie sind inzwischen im folgenden Frontend-Abschnitt umgesetzt.
+
+## Implementation Notes (Frontend — /abc-frontend, 2026-07-14)
+
+**Branch:** `main`
+
+### Gebaut
+- Neue Settings-Sektion „Token Savings“ mit globalem Default-Schalter, Profil-Badge und unabhängigen Modulfreigaben.
+- Engine-Tabs für Claude, Codex und OpenCode; der Health-Status unterscheidet sichtbar `bereit`, `Konfiguration nötig` und `nicht installiert`.
+- CodeGraph-Detailanzeige für Binary, MCP, Projektindex und Index-Frische, ohne unbekannte Werte als Erfolg auszugeben.
+- Klarer Hinweis, dass der Schalter keine Tools installiert, fehlende Module fail-open ausgelassen werden und keine feste Einsparquote garantiert ist.
+- Neue-Session-Dialog mit `Globalen Standard verwenden / Für diese Session einschalten / ausschalten`.
+- Debouncte, nicht-blockierende Preview zeigt effektiven Zustand, Profilversion, aktive Module und Degraded-Gründe vor dem Start.
+- Session-Request überträgt den gewählten Override; laufende Sessions werden als Snapshot erklärt.
+- TypeScript-Verträge und API-Client für Settings, Speichern und Preview ergänzt.
+- API-Vertragstests für URL-Encoding, PUT-Payload und Session-Preview ergänzt.
+
+### Verifikation
+- Vitest: **21 Testdateien, 180 Tests bestanden**.
+- ESLint: bestanden.
+- Next.js-Produktions-Build inklusive TypeScript und statischer Seitengenerierung: bestanden.
+
+### Noch offen
+- Die externen Caveman-/Ponytail-Skilldateien sind weiterhin nicht installiert; die UI zeigt dies ausdrücklich als `nicht installiert`.
+- Visueller Browser-Smoke und vollständige Acceptance-Criteria-Prüfung folgen mit `/abc-qa` bzw. `/abc-qa-e2e`.
 
 ## Deployment
 _To be added by /abc-deploy_

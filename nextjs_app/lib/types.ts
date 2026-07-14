@@ -200,6 +200,13 @@ export interface Session {
   /** PROJ-63: "direct" (Default) oder "tmux" — bei generic_cli-Engines (Codex/OpenCode/
    *  Hermes) und Claude je "tmux" möglich (Claude aktiviert 2026-07-09). */
   transport: SessionTransport;
+  /** PROJ-73: beim Start eingefrorener Savings-Snapshot. */
+  savings_enabled: boolean;
+  savings_source: "global" | "override_on" | "override_off";
+  savings_profile_version: string | null;
+  savings_modules: SavingsEffectiveModule[];
+  savings_degraded: string[];
+  savings_provenance: SavingsProvenance[];
 }
 
 /** PROJ-63: Transport-Badge — spiegelt ``engine/manager.py: SessionState.transport``. */
@@ -599,6 +606,60 @@ export interface SessionCreate {
   project_name?: string | null;
   /** PROJ-18: Ziel-Engine (Default „claude", wenn weggelassen). */
   engine?: string;
+  /** PROJ-73: globalen Standard verwenden oder nur diese Session überschreiben. */
+  token_savings?: TokenSavingsChoice;
+}
+
+export type TokenSavingsChoice = "standard" | "on" | "off";
+
+export interface SavingsEffectiveModule {
+  name: string;
+  version: string | null;
+  integration: "native" | "mcp" | "instruction" | "unavailable" | string;
+}
+
+export interface SavingsProvenance {
+  source: string;
+  action: string;
+}
+
+export interface SavingsModuleHealth {
+  name: string;
+  stability: "stabil" | "pilot" | "experimentell" | string;
+  installed: boolean;
+  healthy: boolean;
+  version: string | null;
+  integration: string;
+  supported_engines: string[];
+  detail: string | null;
+  binary_found: boolean | null;
+  binary_path?: string | null;
+  mcp_configured: boolean | null;
+  mcp_reachable: boolean | null;
+  project_index_present: boolean | null;
+  index_freshness: string | null;
+}
+
+export interface TokenSavingsConfig {
+  enabled: boolean;
+  profile_id: "balanced-v1";
+  module_enabled: Record<string, boolean>;
+}
+
+export interface TokenSavingsSetting extends TokenSavingsConfig {
+  source: string;
+  warning: string | null;
+  modules: SavingsModuleHealth[];
+}
+
+export interface TokenSavingsPreview {
+  enabled: boolean;
+  source: "global" | "override_on" | "override_off";
+  profile_id: string;
+  profile_version: string;
+  modules: SavingsEffectiveModule[];
+  degraded: string[];
+  provenance: SavingsProvenance[];
 }
 
 // --- PROJ-18: Weitere Engines + iFrame/Launch ------------------------------

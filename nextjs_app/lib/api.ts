@@ -54,6 +54,10 @@ import type {
   ProviderBudgetSnapshotRead,
   ProviderBudgetLimits,
   ProviderBudgetSetting,
+  TokenSavingsChoice,
+  TokenSavingsConfig,
+  TokenSavingsPreview,
+  TokenSavingsSetting,
   ScoutRequest,
   ScoutResult,
   VaultRagPreview,
@@ -349,6 +353,38 @@ export function setEngineSettings(
     method: "PUT",
     body: JSON.stringify({ engines }),
   });
+}
+
+// --- PROJ-73: Token Savings -----------------------------------------------
+
+export function getTokenSavings(
+  engine = "claude",
+  projectPath?: string,
+  signal?: AbortSignal,
+): Promise<TokenSavingsSetting> {
+  const params = new URLSearchParams({ engine });
+  if (projectPath) params.set("project_path", projectPath);
+  return request<TokenSavingsSetting>(`/settings/token-savings?${params}`, { signal });
+}
+
+export function setTokenSavings(
+  config: TokenSavingsConfig,
+  engine = "claude",
+): Promise<TokenSavingsSetting> {
+  return request<TokenSavingsSetting>(
+    `/settings/token-savings?${new URLSearchParams({ engine })}`,
+    { method: "PUT", body: JSON.stringify(config) },
+  );
+}
+
+export function previewTokenSavings(
+  engine: string,
+  projectPath: string,
+  choice: TokenSavingsChoice,
+  signal?: AbortSignal,
+): Promise<TokenSavingsPreview> {
+  const params = new URLSearchParams({ engine, project_path: projectPath, choice });
+  return request<TokenSavingsPreview>(`/settings/token-savings/preview?${params}`, { signal });
 }
 
 // --- PROJ-19 (#28/#27): Token-/Kosten-Dashboard ----------------------------
