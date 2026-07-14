@@ -45,6 +45,11 @@ _DEFAULT_LIVENESS_PATH = str(Path(__file__).resolve().parent.parent / "config" /
 # Engine-Overrides). Live mtime-geprüft wie Policy/Watchdog/Liveness.
 _DEFAULT_TRANSPORT_PATH = str(Path(__file__).resolve().parent.parent / "config" / "transport.yaml")
 
+# PROJ-73: globaler Token-Savings-Default + administrative Modulfreigaben.
+_DEFAULT_TOKEN_SAVINGS_PATH = str(
+    Path(__file__).resolve().parent.parent / "config" / "token_savings.yaml"
+)
+
 # Standard-Wurzel der Marktplatz/Registry (PROJ-26): backend/registry/. Dort liegen die
 # installierten Rollen/Skills/Agenten (manifest.yaml + definition.md + versions/) und das
 # Import/Export-Staging. Datei-first, kein DB-Zwang — git-versionierbar, von Hand prüfbar.
@@ -249,6 +254,12 @@ class Settings(BaseSettings):
 
     # Verzeichnis der Knappheits-Konstitution (PROJ-6): global.md + roles/<rolle>.md.
     constitution_dir: str = _DEFAULT_CONSTITUTION_DIR
+
+    # PROJ-73: live editierbarer globaler Savings-Default. Fremdtools werden durch
+    # diesen Schalter nie installiert; ein expliziter CodeGraph-Pfad verhindert die
+    # Abhängigkeit von interaktiven NVM-Shellprofilen.
+    token_savings_config_path: str = _DEFAULT_TOKEN_SAVINGS_PATH
+    codegraph_bin: str = ""
 
     # Trust-Policy-Datei (PROJ-10): abgestufte Freigabe-Regeln + Phasen-Gate. Wird
     # bei JEDER Auswertung mtime-geprüft (live editierbar ohne Neustart). Fehlt/kaputt

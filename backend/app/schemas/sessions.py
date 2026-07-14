@@ -43,6 +43,10 @@ class SessionCreate(BaseModel):
         description="Sprechendes Projekt-Label für die Gantt-Zeile (PROJ-8); "
         "ohne Angabe wird der Verzeichnis-Basename genutzt.",
     )
+    token_savings: Literal["standard", "on", "off"] = Field(
+        default="standard",
+        description="PROJ-73: globalen Standard verwenden oder für diese Session überschreiben.",
+    )
 
     @model_validator(mode="after")
     def _validate_claude_model(self) -> "SessionCreate":
@@ -156,6 +160,13 @@ class SessionRead(BaseModel):
     # Schlüssel beim `response_model`-Serialisieren heraus, das Frontend bekam den Wert
     # nie zugestellt.
     transport: str = "direct"
+    # PROJ-73: unveränderlicher Savings-Snapshot der Session (keine Promptinhalte/Secrets).
+    savings_enabled: bool = False
+    savings_source: str = "global"
+    savings_profile_version: str | None = None
+    savings_modules: list[dict] = Field(default_factory=list)
+    savings_degraded: list[str] = Field(default_factory=list)
+    savings_provenance: list[dict] = Field(default_factory=list)
 
 
 class PermissionHookRequest(BaseModel):

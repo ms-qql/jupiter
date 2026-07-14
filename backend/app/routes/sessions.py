@@ -64,6 +64,7 @@ async def create_session(
             extra_system_prompt=payload.extra_system_prompt,
             project_name=payload.project_name,
             engine=payload.engine,
+            token_savings=payload.token_savings,
             owner=user.user_id,  # PROJ-25: Owner IMMER aus dem Token, nie aus dem Payload.
         )
     except SessionLimitError as exc:  # PROJ-14: Limit aktiver Sessions erreicht.

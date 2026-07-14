@@ -1,6 +1,6 @@
 # PROJ-73: Token Savings — globales, engine-übergreifendes Optimierungsprofil
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-07-14
 **Last Updated:** 2026-07-14
 
@@ -360,6 +360,32 @@ Für den bekannten Host wird ein explizit konfigurierbarer Binary-Pfad verwendet
 
 ## QA Test Results
 _To be added by /abc-qa_
+
+## Implementation Notes (Backend — /abc-backend, 2026-07-14)
+
+**Branch:** `main`
+
+### Gebaut
+- Dateibasierter, atomar speichernder Savings-Store mit konservativem Default `Aus`, Profil `balanced-v1` und unabhängigen Modulfreigaben.
+- Read-only Health-/Discovery-Service für Caveman, Ponytail und CodeGraph. CodeGraph trennt Binary, Version, MCP-Konfiguration, Projektindex und Index-Frische; NVM-Binaries werden auch ohne interaktiven Shell-PATH gefunden.
+- Profil-Resolver für `standard / on / off` mit Fail-open/Degraded-Verhalten.
+- Konfliktfreie Prompt-Komposition: Jupiter-Konstitution bleibt zuerst; Caveman verdichtet nur Darstellung, Ponytail ergänzt ausschließlich „kleinste vollständige Lösung“. Provenienz und Deduplizierungsentscheidung werden am Snapshot sichtbar.
+- Settings-API: Lesen/Speichern, Preview und Modul-Health. Kein Endpunkt installiert Pakete oder verändert Fremdkonfiguration.
+- Session-API und Manager: optionaler Savings-Override, effektiver Prompt vor Engine-Start, profilabhängiger Prompt-Cache-Key sowie unveränderliche Savings-Metadaten in allen Session-Responses.
+- SQLite-Session-Index: additive, idempotente Spalten für Enablement, Quelle, Profilversion, Module, Degraded-Hinweise und Provenienz; Alt-Sessions degradieren auf `Aus`.
+- Betriebsparameter für Savings-YAML und explizites CodeGraph-Binary in `.env.example` dokumentiert.
+
+### Verifikation
+- PROJ-73-Suite: **7 bestanden**.
+- Angrenzende Constitution-/Cache-/Context-/Transport-Suites zusammen: **58 bestanden**.
+- Gesamte Backend-Suite: **1.188 bestanden, 2 fehlgeschlagen**. Beide Fehler sind vorbestehend und PROJ-73-fremd: Drift/ungültiges generiertes Frontmatter in den lokalen Skills `abc-backoffice` und `abc-customer-journey` (`test_proj50_codex_abc.py`).
+- Python-Compile und `git diff --check`: grün.
+- `ruff` ist in der Dashboard-Umgebung nicht installiert. Die zwei neuen Dateien wurden mit dem vorhandenen Black formatiert; bestehende Dateien wurden nicht mechanisch umformatiert, um fremde Diffs zu vermeiden.
+
+### Bewusste Backend-Grenze
+- Caveman und Ponytail werden erkannt und konfliktfrei aufgelöst, aber nicht automatisch installiert. Fehlt ein Skill für eine Engine, bleibt er `degraded` und die Session startet ohne ihn.
+- `mcp_reachable` und `index_freshness` bleiben zunächst `unknown`, statt Konfigurationspräsenz als echte Laufzeitmessung auszugeben. Ein aktiver MCP-Handshake und Index-Diff gehören in den späteren Adapter-/QA-Schritt.
+- Frontend-Schalter, Session-Auswahl und visuelle Health-/Preview-Darstellung sind noch nicht gebaut.
 
 ## Deployment
 _To be added by /abc-deploy_

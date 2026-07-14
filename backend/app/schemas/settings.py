@@ -256,3 +256,45 @@ class TransportSettingRead(TransportSettingPut):
     source: str
     warning: str | None = None
     tmux_available: bool
+
+
+# --- PROJ-73: Token-Savings-Profil ----------------------------------------
+
+
+class SavingsModuleHealth(BaseModel):
+    name: str
+    stability: str
+    installed: bool
+    healthy: bool
+    version: str | None = None
+    integration: str
+    supported_engines: list[str] = Field(default_factory=list)
+    detail: str | None = None
+    binary_found: bool | None = None
+    binary_path: str | None = None
+    mcp_configured: bool | None = None
+    mcp_reachable: bool | None = None
+    project_index_present: bool | None = None
+    index_freshness: str | None = None
+
+
+class TokenSavingsPut(BaseModel):
+    enabled: bool = False
+    profile_id: Literal["balanced-v1"] = "balanced-v1"
+    module_enabled: dict[str, bool] = Field(default_factory=dict)
+
+
+class TokenSavingsRead(TokenSavingsPut):
+    source: str
+    warning: str | None = None
+    modules: list[SavingsModuleHealth] = Field(default_factory=list)
+
+
+class TokenSavingsPreview(BaseModel):
+    enabled: bool
+    source: str
+    profile_id: str
+    profile_version: str
+    modules: list[dict] = Field(default_factory=list)
+    degraded: list[str] = Field(default_factory=list)
+    provenance: list[dict] = Field(default_factory=list)
