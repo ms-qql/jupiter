@@ -153,6 +153,49 @@ async def test_long_lived_stop_kills_process_no_orphan(tmp_path):
         transport.cleanup_files()
 
 
+@pytest.mark.asyncio
+async def test_long_lived_seek_to_end_skips_preexisting_log(tmp_path):
+    """PROJ-71: Ein Resume-Respawn (``seek_to_end=True``) darf den bereits vorhandenen
+    out.log-Inhalt NICHT erneut lesen. Sonst schickt jeder Resume den gesamten bisherigen
+    Verlauf noch einmal durch ``handle_event`` → Transkript-Dubletten (2×/3× je Resume)
+    und wiederkehrende Fragekarten. Nur neu angehängte Ausgabe wird gelesen."""
+    argv = _write_script(tmp_path, "fake_long_lived.py", FAKE_LONG_LIVED)
+    transport = TmuxTransport("proj71-seek", data_dir=str(tmp_path / "data"))
+    # Bestehende Historie im out.log simulieren (wie nach vielen früheren Turns).
+    transport.out_path.parent.mkdir(parents=True, exist_ok=True)
+    transport.out_path.write_bytes(b'{"type":"result","text":"ECHO:ALT-HISTORIE"}\n')
+    try:
+        await transport.spawn(argv, cwd=str(tmp_path), long_lived=True, seek_to_end=True)
+        assert await transport.refresh_liveness() is True
+
+        await transport.write_line(b"neu\n")
+        line = await transport.readline()
+        # Nur die NEUE Ausgabe kommt an — die Alt-Historie wurde übersprungen.
+        assert b"ECHO:neu" in line
+        assert b"ALT-HISTORIE" not in line
+    finally:
+        await transport.kill()
+        transport.cleanup_files()
+
+
+@pytest.mark.asyncio
+async def test_long_lived_without_seek_replays_preexisting_log(tmp_path):
+    """Gegenprobe: OHNE ``seek_to_end`` wird der bestehende out.log-Inhalt ab Offset 0
+    gelesen — genau das Replay, das den PROJ-71-Bug auslöste. Belegt, dass der Seek (und
+    nicht ein Nebeneffekt) das Replay unterbindet."""
+    argv = _write_script(tmp_path, "fake_long_lived.py", FAKE_LONG_LIVED)
+    transport = TmuxTransport("proj71-noseek", data_dir=str(tmp_path / "data"))
+    transport.out_path.parent.mkdir(parents=True, exist_ok=True)
+    transport.out_path.write_bytes(b'{"type":"result","text":"ECHO:ALT-HISTORIE"}\n')
+    try:
+        await transport.spawn(argv, cwd=str(tmp_path), long_lived=True, seek_to_end=False)
+        line = await transport.readline()
+        assert b"ALT-HISTORIE" in line
+    finally:
+        await transport.kill()
+        transport.cleanup_files()
+
+
 # ===========================================================================
 # Oneshot: respawn über mehrere Turns
 # ===========================================================================
