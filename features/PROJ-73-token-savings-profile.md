@@ -514,7 +514,10 @@ Die neue SQLite-Struktur und `evaluate_golden_pilot()` erwarten `savings_pilot_t
 **Betroffen:** F3–F5 und die vereinbarte Schnell-Pilot-Regel. **Empfehlung:** Ergebnisse pro Engine und Golden-Task bündeln, je Zelle mindestens fünf An-/Ausläufe fordern und Sicherheit/Qualität als explizite Gate-Felder aufnehmen. Der Gesamtstatus darf nur `stable` sein, wenn jede geprüfte Engine die vollständige Suite besteht.
 
 ## Deployment
-_To be added by /abc-deploy_
+
+**Ausgelöst:** 2026-07-14 · **Version:** `0.27.32` · **Commit:** `7bcf17c` · **Tag:** `v0.27.32-PROJ-73`
+
+`main` und der Release-Tag wurden nach `origin` gepusht; der konfigurierte VPS-Auto-Deploy baut den Stand automatisch. Die Host-seitige Build-/Smoke-Bestätigung bleibt außerhalb dieser Session zu prüfen.
 
 ## QA-Freigabe — 2026-07-14
 
