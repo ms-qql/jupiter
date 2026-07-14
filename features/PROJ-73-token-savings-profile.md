@@ -1,6 +1,6 @@
 # PROJ-73: Token Savings — globales, engine-übergreifendes Optimierungsprofil
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-07-14
 **Last Updated:** 2026-07-14
 
@@ -359,7 +359,62 @@ Für den bekannten Host wird ein explizit konfigurierbarer Binary-Pfad verwendet
 6. Pilotmetriken; erst danach RTK und weitere Kompressionsmodule.
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Geprüft:** 2026-07-14 · **Ergebnis:** Nicht freigegeben, Status bleibt `In Review`
+
+### Zusammenfassung
+
+- Akzeptanzkriterien: **22 bestanden, 11 nicht erfüllt, 1 nicht anwendbar**.
+- Automatisiert: PROJ-73/angrenzende Backend-API **27/27**, Frontend **180/180**, ESLint und Production-Build bestanden.
+- Gesamtes Backend: **1.188 bestanden, 2 fehlgeschlagen**. Die beiden Fehler liegen außerhalb PROJ-73 und betreffen bekannten Drift/ungültiges YAML in den generierten Codex-Skills `abc-backoffice` und `abc-customer-journey`.
+- Security: keine Critical-Finding und keine neue Speicherung von Secrets oder vollständigen Tool-Ausgaben gefunden.
+- Ein visueller Browser-Smoke war in diesem QA-Lauf nicht Bestandteil; Build und Komponenten-/API-Tests waren grün.
+
+### Findings
+
+#### HIGH — QA-73-01: Kernadapter sind für die Ziel-Engines nicht betriebsbereit
+
+Caveman und Ponytail sind für Claude, Codex und OpenCode jeweils `nicht installiert`. CodeGraph ist als Binary/Index vorhanden, aber nur für Claude als MCP konfiguriert; Codex und OpenCode degradieren. Damit erfüllt das aktuelle Deployment nicht den zugesagten frühen Skill-Pilot und nicht die engine-übergreifende Toolabdeckung. Der Schalter und der Snapshot funktionieren, aktivieren in der Live-Matrix aber maximal CodeGraph für Claude.
+
+**Betroffen:** C5 sowie der abgestimmte Umfang „Skills früh“ und CodeGraph für alle Jupiter-Engines. **Empfehlung:** Caveman/Ponytail über die je Engine unterstützten Mechanismen installieren und die Adaptermatrix mit echten Starts verifizieren; CodeGraph-MCP für Codex/OpenCode explizit konfigurieren.
+
+#### HIGH — QA-73-02: Mess- und Qualitäts-Gate fehlt
+
+`estimated_tokens_avoided`, Zusatzlatenz, Fallback-Aggregate, Stichprobengröße, A/B-Piloten und die Kennzeichnung `nicht messbar` sind nicht implementiert. Damit kann Jupiter weder die behauptete Token-Wirkung prüfen noch Pilotmodule kontrolliert zu `stabil` hochstufen.
+
+**Betroffen:** F2–F6. **Empfehlung:** getrennte Adaptermetriken und Pilot-Auswertung ergänzen; Providerwerte unverändert lassen und fehlende Schätzbarkeit explizit ausweisen.
+
+#### MEDIUM — QA-73-03: CodeGraph wird ohne Reachability-Prüfung als „bereit“ gemeldet
+
+Für Claude liefert der Health-Service `healthy=true`, obwohl `mcp_reachable=null` und `index_freshness="unknown"` sind. Die UI bildet `healthy` direkt auf `bereit` ab. Konfigurationspräsenz und vorhandene DB beweisen jedoch weder einen erfolgreichen MCP-Handshake noch einen aktuellen Index.
+
+**Betroffen:** D1, E1. **Empfehlung:** begrenzten MCP-Handshake und echte Frischeprüfung in die Health-Entscheidung aufnehmen; bis dahin Status `Konfiguration nötig`/`unbekannt` statt `bereit`.
+
+#### MEDIUM — QA-73-04: Speichern verliert den projektbezogenen CodeGraph-Health-Kontext
+
+Die Settings-Seite lädt Health mit `/home/dev/projects/jupiter`, sendet beim `PUT` aber keinen `project_path`. Die PUT-Antwort prüft CodeGraph folglich ohne Projekt und ersetzt unmittelbar den UI-State; nach erfolgreichem Speichern kann ein zuvor erkannter Index fälschlich als fehlend erscheinen.
+
+**Betroffen:** A3, D3 (Darstellung nach Save). **Empfehlung:** `project_path` beim Speichern mitsenden und serverseitig wie in Preview/Health validieren oder nach dem PUT den projektbezogenen GET erneut laden.
+
+#### MEDIUM — QA-73-05: Snapshot pinnt die tatsächliche Adapter-Laufzeit nicht
+
+Der Session-Snapshot speichert Modulname und erkannte Version, prüft diese Version bei Resume/Folge-Turns aber nicht erneut. Ein extern aktualisiertes CodeGraph bzw. ein nativer Skill kann daher unter unveränderten Snapshot-Metadaten mit anderer Laufzeitversion arbeiten.
+
+**Betroffen:** Edge Case „Adapterversion ändert sich zwischen Turns“ und die Reproduzierbarkeitszusage aus B4. **Empfehlung:** gewünschte Version beim Wiederanlauf gegen die installierte Version prüfen; bei Abweichung sichtbar fail-open degradieren.
+
+### Acceptance-Criteria-Matrix
+
+| Bereich | Bestanden | Nicht erfüllt | N/A | Wesentliche Lücken |
+|---|---:|---:|---:|---|
+| A — Einstellungen | 4 | 1 | 0 | vollständige Adapterdetails/Health nach Save |
+| B — Session/Persistenz | 5 | 0 | 0 | Versionsdrift separat als Finding dokumentiert |
+| C — Engine-Abdeckung | 5 | 2 | 0 | RTK-Differenzierung; native/Instruktions-Einbindung der Skills |
+| D — CodeGraph | 4 | 1 | 0 | Reachability und Frische nicht tatsächlich geprüft |
+| E — Robustheit/Sicherheit | 3 | 2 | 1 | echter Runtime-Timeout/Fallback; RTK-Telemetrie mangels RTK |
+| F — Messung/Qualität | 1 | 5 | 0 | Adaptermetriken, Dashboard und Pilot-Gate fehlen |
+
+### Release-Entscheidung
+
+**Nicht freigegeben.** Wegen zweier High-Findings bleibt PROJ-73 `In Review`. Der Settings-/Session-Unterbau ist stabil, erfüllt aber den nutzerwirksamen engine-übergreifenden Savings-Vertrag und dessen Messbarkeit noch nicht.
 
 ## Implementation Notes (Backend — /abc-backend, 2026-07-14)
 
