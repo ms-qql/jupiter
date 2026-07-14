@@ -152,11 +152,13 @@ class ClaudeCodeDriver(EngineDriver):
         try:
             await self._transport_obj.spawn(
                 argv, cwd=spec.project_path, long_lived=True,
-                # PROJ-71: Beim Fortsetzen (`--resume`) NUR neu angehängte Ausgabe lesen.
-                # Der bestehende out.log-Inhalt ist bereits im Transkript (live bzw. beim
-                # Neustart aus der DB rehydriert) — ein Re-Read ab Offset 0 duplizierte
-                # sonst den gesamten Verlauf (Text UND Fragekarten) pro Resume.
-                seek_to_end=spec.resume,
+                # PROJ-72: Claude bindet sich stets ans Ende seiner session-skopierten
+                # Append-Log. Bei einem echten Erststart ist sie leer; existiert bereits
+                # Inhalt, ist er live/aus der DB im Transkript abgebildet und darf nie
+                # erneut durch handle_event laufen. Diese Transport-Invariante bewusst
+                # NICHT an `spec.resume` koppeln: Fehlt der Merker in nur einem Recovery-
+                # Pfad, entsteht sonst wieder ein vollständiger Text-/Fragekarten-Replay.
+                seek_to_end=True,
             )
         except TransportError as exc:
             await self._emit(StreamEvent(type="system", subtype="error", raw={"message": str(exc)}))
