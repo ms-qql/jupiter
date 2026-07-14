@@ -14,6 +14,7 @@ einer winzigen Fake-``claude``-CLI (echte tmux-Session, kein echter Claude-Aufru
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import sys
 
@@ -131,6 +132,85 @@ async def test_multi_turn_uses_same_long_lived_process(tmp_path, monkeypatch):
         assert _texts(events) == ["echo:erste", "echo:zweite"]
     finally:
         await drv.stop()
+
+
+@pytest.mark.asyncio
+async def test_existing_claude_log_is_never_replayed_when_driver_attaches(tmp_path, monkeypatch):
+    """PROJ-72: Die Transport-Invariante darf nicht vom ``LaunchSpec.resume``-Flag
+    abhängen. Bindet ein frischer Claude-Treiber an die session-skopierte Append-Log,
+    ist deren vorhandener Inhalt bereits persistierte Historie und darf nie erneut
+    durch ``handle_event`` laufen — auch wenn ein Recovery-Pfad das Flag nicht setzt.
+    """
+    from app.config import settings
+
+    data_dir = tmp_path / "tmuxdata"
+    monkeypatch.setattr(settings, "tmux_data_dir", str(data_dir))
+    monkeypatch.setattr(settings, "claude_bin", _fake_claude_bin(tmp_path))
+    session_id = "c-tmux-existing-log"
+    session_dir = data_dir / f"jupiter-{session_id}"
+    session_dir.mkdir(parents=True)
+    historical = {
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": "ALT-HISTORIE"}]},
+    }
+    (session_dir / "out.log").write_text(json.dumps(historical) + "\n", encoding="utf-8")
+
+    drv = ClaudeCodeDriver()
+    events, on = _collector()
+    # Absichtlich resume=False: genau dieser fehlende Merker ließ einen produktiven
+    # Attach-Pfad trotz bereits befüllter out.log ab Offset 0 lesen.
+    spec = LaunchSpec(
+        session_id=session_id, project_path=str(tmp_path), model="haiku",
+        permission_mode="default", initial_prompt="neu", transport="tmux", resume=False,
+    )
+    try:
+        await drv.start(spec, on)
+        assert await _wait_until(lambda: "echo:neu" in _texts(events))
+        assert _texts(events) == ["echo:neu"]
+    finally:
+        await drv.stop()
+
+
+@pytest.mark.asyncio
+async def test_multiple_claude_resume_attachments_only_emit_each_new_turn(tmp_path, monkeypatch):
+    """PROJ-72 QA: Mehrere echte tmux-Anbindungen an dieselbe Session-Log dürfen
+    weder die ursprüngliche Historie noch die Ausgabe des vorherigen Resume-Turns
+    erneut emittieren. Das bildet manuelle/automatische Manager-Resumes an ihrer
+    gemeinsamen produktiven Driver-/Transport-Grenze ab.
+    """
+    from app.config import settings
+
+    data_dir = tmp_path / "tmuxdata"
+    monkeypatch.setattr(settings, "tmux_data_dir", str(data_dir))
+    monkeypatch.setattr(settings, "claude_bin", _fake_claude_bin(tmp_path))
+    session_id = "c-tmux-two-resumes"
+    session_dir = data_dir / f"jupiter-{session_id}"
+    session_dir.mkdir(parents=True)
+    historical = {
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": "ALT-HISTORIE"}]},
+    }
+    # Bereits korrumpierten Bestand simulieren: auch vorhandene Dubletten dürfen
+    # durch neue Resumes nicht nochmals vervielfacht werden.
+    old_line = json.dumps(historical) + "\n"
+    (session_dir / "out.log").write_text(old_line + old_line, encoding="utf-8")
+
+    observed: list[list[str]] = []
+    for prompt in ("resume-eins", "resume-zwei"):
+        drv = ClaudeCodeDriver()
+        events, on = _collector()
+        spec = LaunchSpec(
+            session_id=session_id, project_path=str(tmp_path), model="haiku",
+            permission_mode="default", initial_prompt=prompt, transport="tmux", resume=True,
+        )
+        try:
+            await drv.start(spec, on)
+            assert await _wait_until(lambda: f"echo:{prompt}" in _texts(events))
+            observed.append(_texts(events))
+        finally:
+            await drv.stop()
+
+    assert observed == [["echo:resume-eins"], ["echo:resume-zwei"]]
 
 
 @pytest.mark.asyncio

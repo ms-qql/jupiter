@@ -56,6 +56,29 @@ def test_reconnect_yields_same_full_snapshot(client: TestClient):
     assert [e["text"] for e in first] == [e["text"] for e in second]
 
 
+def test_read_only_clients_do_not_mutate_session_or_trigger_resume(client: TestClient):
+    """PROJ-72: Ein zweiter Browser deckt serverseitige Dubletten nur auf, er darf
+    sie nicht erzeugen. Zwei reine WS-Verbindungen verändern weder Treiberidentität,
+    Status noch kanonisches Transkript der Session.
+    """
+    sid = _create(client).json()["session_id"]
+    manager = client.app.state.manager
+    runtime = manager.get(sid)
+    driver_before = runtime.driver
+    status_before = runtime.state.status
+    transcript_before = [vars(e).copy() for e in runtime.transcript]
+
+    with client.websocket_connect(f"/sessions/{sid}/stream") as ws1:
+        first = ws1.receive_json()
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws2:
+            second = ws2.receive_json()
+
+    assert first["transcript"] == second["transcript"] == transcript_before
+    assert runtime.driver is driver_before
+    assert runtime.state.status == status_before
+    assert [vars(e) for e in runtime.transcript] == transcript_before
+
+
 def test_live_state_broadcast_omits_transcript(client: TestClient):
     """Frontend-Invariante: NUR der Connect-Snapshot trägt `transcript`. Ein Live-
     `state`-Broadcast (hier: Schwellen-PATCH) darf KEIN `transcript` enthalten —

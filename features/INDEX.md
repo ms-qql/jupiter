@@ -84,7 +84,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-69 | Clipboard (native Micro-App: geräteübergreifender Datei-Clipboard mit HAL Inbox) | P1 | Approved | PROJ-40, PROJ-2, PROJ-11 | [Spec](PROJ-69-clipboard-microapp.md) |
 | PROJ-70 | Bugfix: Claude-Engine dupliziert Fragekarten nach jedem Resume (bis zu 6 gleiche Frageboxen) | P1 | Deployed | PROJ-48, PROJ-63, PROJ-27, PROJ-66 | [Spec](PROJ-70-claude-duplizierte-frageboxen-nach-resume.md) |
 | PROJ-71 | Effort-Level (Reasoning-Effort) im Neue-Session-Dialog | P1 | Architected | PROJ-1, PROJ-18, PROJ-48, PROJ-57, PROJ-56, PROJ-51 | [Spec](PROJ-71-effort-level-neue-session.md) |
-| PROJ-72 | Bugfix: Claude-Engine dupliziert Nachrichten (und Fragekarten) nach Resume/Restart — Replay eliminiert (Seek-to-End + DB-Transkript) | P1 | Deployed | PROJ-63, PROJ-66, PROJ-70, PROJ-27 | [Spec](PROJ-72-claude-transkript-dubletten-nach-resume.md) |
+| PROJ-72 | Bugfix: Claude-Engine dupliziert Nachrichten (und Fragekarten) nach Resume/Restart — Replay eliminieren (Seek-to-End + DB-Transkript) | P1 | Approved | PROJ-63, PROJ-66, PROJ-70, PROJ-27 | [Spec](PROJ-72-claude-transkript-dubletten-nach-resume.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
