@@ -162,7 +162,201 @@ Jupiter verwaltet ein versioniertes Profil `balanced-v1` und löst es beim Sessi
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-07-14 · **Stack:** Next.js/React + FastAPI Engine-Layer + SQLite Session-Index + dateibasierte Settings · **Branch:** main
+
+### Überblick / Kernaussage
+PROJ-73 wird als **Policy- und Kompositionsschicht vor dem bestehenden Engine-Start** gebaut. Der globale Schalter entscheidet nicht direkt über einzelne Fremdtools. Er wählt ein versioniertes Jupiter-Profil, das je Engine und Projekt in verfügbare Module aufgelöst wird. Das Ergebnis wird als unveränderlicher Snapshot an der Session gespeichert.
+
+Damit bleiben drei Zustände sauber getrennt:
+
+1. **Gewünscht:** globaler Standard plus Session-Ausnahme.
+2. **Verfügbar:** installierte, auffindbare und gesunde Skills/MCP-/CLI-Module.
+3. **Effektiv:** die konfliktfrei aufgelösten Module, mit denen diese konkrete Session gestartet wurde.
+
+Die bestehende Jupiter-Konstitution bleibt oberste Verhaltensquelle. Caveman und Ponytail werden nicht als ungeprüfte Volltexte angehängt, sondern als deklarierte Regelmodule komponiert. CodeGraph wird über einen festen Discovery-/Health-Vertrag eingebunden; ein fehlender PATH-Eintrag blockiert keine Session.
+
+### A) Komponenten-Struktur
+
+```text
+SettingsPage
+└── TokenSavingsControl
+    ├── GlobalSwitch (Default für neue Sessions)
+    ├── ProfileBadge (balanced-v1)
+    ├── ModuleStatusList
+    │   ├── CavemanStatus
+    │   ├── PonytailStatus
+    │   ├── CodeGraphStatus
+    │   └── spätere Module: RTK / Context Mode / Headroom
+    └── HealthDetails (Version · Engine-Abdeckung · Warnung)
+
+NewSessionDialog
+└── TokenSavingsOverride
+    ├── Standard verwenden
+    ├── Ein
+    ├── Aus
+    └── EffectiveProfilePreview (welche Module wirklich starten)
+
+FastAPI
+├── SavingsSettingsStore       (globaler Wunsch + Profilversion)
+├── SavingsHealthService       (Discovery und Health je Modul/Engine)
+├── SavingsProfileResolver     (gewünscht + verfügbar → effektiv)
+├── PromptCompositionService   (Priorität + Deduplizierung + Provenienz)
+└── SessionManager             (Snapshot vor Engine-Start persistieren)
+
+Engine-Start
+├── ClaudeAdapter
+├── CodexAdapter
+└── OpenCodeAdapter
+    └── erhalten nur den bereits aufgelösten Snapshot
+```
+
+### B) Verantwortungsgrenzen
+
+- **Savings Settings Store:** hält nur den globalen Ein/Aus-Wert, die aktive Profilversion und administrative Modulfreigaben. Wie andere Jupiter-Settings bleibt er dateibasiert, atomar speicherbar und ohne Secrets.
+- **Health Service:** beantwortet ausschließlich, ob ein Modul installiert, auffindbar, erreichbar und für die gewählte Engine geeignet ist. Er installiert oder repariert nichts selbst.
+- **Profile Resolver:** verbindet globalen Wert, Session-Ausnahme, Engine, Projekttyp und Health zu einer effektiven Modulliste. Er ist die einzige Stelle, die `balanced-v1` interpretiert.
+- **Prompt Composition:** führt Jupiter-Konstitution, Rolle, abc-Vorgaben, Caveman und Ponytail nach einer festen Priorität zusammen. Überlappende Kürzeregeln erscheinen genau einmal; der Resolver liefert zusätzlich einen für Nutzer und Tests lesbaren Provenienzbericht.
+- **Engine-Adapter:** übersetzen den fertigen Snapshot in die jeweils unterstützte Integrationsform. Sie entscheiden nicht selbst, welche Policy gelten soll.
+- **Session Manager:** speichert den Snapshot vor Prozessstart und verwendet ihn unverändert bei Folge-Turns, Reanimierung und Resume.
+
+### C) Datenmodell in Klartext
+
+#### Globale Savings-Einstellung
+- Ein/Aus-Standard für neue Sessions.
+- Aktive Profil-ID und Profilversion, zunächst `balanced-v1`.
+- Administrative Freigabe pro Modul, damit ein problematischer Adapter unabhängig abgeschaltet werden kann.
+- Herkunft und letzte erfolgreiche Aktualisierung sowie eine lesbare Warnung bei ungültiger Konfiguration.
+
+Gespeichert in einer eigenen dateibasierten Jupiter-Konfiguration. Keine Datenbank und kein MinIO nötig.
+
+#### Session-Snapshot
+Jede Session erhält zusätzlich:
+
+- Gewünschter Zustand: an oder aus.
+- Quelle: globaler Standard, explizit an oder explizit aus.
+- Profil-ID und Version.
+- Effektive Module mit Modulversion, Integrationsart und Health zum Startzeitpunkt.
+- Prompt-Provenienz: welche Regelquelle aktiv war und welche Überschneidungen entfernt wurden.
+- Degraded-Hinweise, wenn ein gewünschtes Modul nicht verfügbar war.
+
+Der Snapshot liegt im bestehenden SQLite-Session-Index, analog zu Engine, Modell und Transport. Er enthält keine vollständigen Prompts, Tool-Ausgaben oder Secrets.
+
+#### Laufzeit-Metriken
+- Native Provider-Tokens bleiben die primäre Messung.
+- Pro Modul: geschätzte vermiedene Tokens, Zusatzlatenz, Fallback-Zähler und Messbarkeit.
+- Qualitäts-/Pilotdaten werden getrennt von Session-Inhalten aggregiert.
+
+### D) API-Shape
+
+- `GET /settings/token-savings` → globalen Standard, Profilversion und Modul-Health lesen.
+- `PUT /settings/token-savings` → globalen Standard und administrative Modulfreigaben speichern; keine Installation auslösen.
+- `GET /settings/token-savings/preview` → effektives Profil für Engine und Projekt vor einem Session-Start anzeigen.
+- `GET /settings/token-savings/modules/{module}/health` → Detaildiagnose eines Moduls, insbesondere CodeGraph-Discovery.
+- `POST /sessions` → optionaler Session-Wert `standard`, `on` oder `off`; ohne Wert gilt `standard`.
+- Bestehende Session-Leseendpunkte → liefern Savings-Snapshot und Degraded-Hinweise als Metadaten mit aus.
+- Bestehende Metrics-/Usage-Sicht → ergänzt getrennte Savings-Schätzwerte und Fallbacks, ohne native Tokenwerte umzudeuten.
+
+Alle Settings-Endpunkte bleiben hinter Jupiters bestehendem Auth-Gate. Es entsteht kein Installations- oder Update-Endpunkt im MVP.
+
+### E) Prompt-Komposition und Konfliktpriorität
+
+Der effektive Prompt folgt einer festen Rangfolge:
+
+1. Sicherheits-, Permission-, Trust-, Watchdog- und Decision-Card-Verträge.
+2. Expliziter Nutzerauftrag, Feature-Spec und abc-Akzeptanzkriterien.
+3. Jupiter-Konstitution und aktive Rollenregeln.
+4. Ponytail-Regeln für kleinsten vollständigen Code-Scope.
+5. Caveman-Regeln für knappe Darstellung.
+
+Caveman darf nur Darstellungsregeln verdichten. Ponytail darf unnötigen Umfang verhindern, aber keine geforderte Funktion entfernen. Der Composer arbeitet mit Regelkategorien statt bloßer Textähnlichkeit; dadurch ist die Deduplizierung deterministisch und testbar. Der bestehende stabile Prompt-Cache bekommt den Hash des effektiven Snapshots, damit verschiedene Savings-Profile nicht denselben Cache-Eintrag teilen.
+
+### F) Engine-Strategie
+
+| Engine | Caveman/Ponytail | CodeGraph | Architekturentscheidung |
+|---|---|---|---|
+| Claude | Native Skill-/Hook-Fähigkeiten, aber Regeln durch Jupiter komponiert | MCP plus Projektindex | Tiefste Integration; Jupiter behält System-Prompt und Permission-Settings als Quelle |
+| Codex | Instruktions-/Skill-Fallback, in Session-Snapshot sichtbar | MCP bzw. Codex-Konfiguration | Keine Hook-Gleichwertigkeit vortäuschen; Resume erhält denselben Snapshot |
+| OpenCode | Native Plugin-/Skill-Möglichkeiten, aber zentrale Jupiter-Policy | MCP plus vorhandener Index | Engine-Plugin darf Prompt-Priorität und Session-Lifecycle nicht übernehmen |
+
+Die Engine-Adapter erhalten ausschließlich die vom Resolver freigegebenen Module. Eine globale Installation allein aktiviert nichts außerhalb des Session-Snapshots.
+
+### G) CodeGraph Discovery
+
+CodeGraph erhält vier unabhängige Prüfbereiche:
+
+1. **Binary:** expliziter absoluter Pfad, danach kontrollierter Jupiter-Service-PATH.
+2. **MCP:** Konfiguration vorhanden und Server erreichbar.
+3. **Projekt:** `.codegraph` und Datenbank vorhanden.
+4. **Frische:** Index passt ausreichend zum Projektstand.
+
+Für den bekannten Host wird ein explizit konfigurierbarer Binary-Pfad verwendet, statt die NVM-Initialisierung einer interaktiven Shell nachzubauen. Dadurch funktionieren Direct- und tmux-Starts gleich. Health darf Hinweise zur Behebung liefern, verändert aber weder Shell-Profile noch MCP-Dateien oder den Index automatisch.
+
+### H) Persistenz und Lebenszyklus
+
+- Der globale Schalter wirkt nur beim Auflösen einer neuen Session.
+- Der vollständige Snapshot wird vor dem Engine-Prozess gespeichert.
+- Folge-Turns lesen ausschließlich den Session-Snapshot, nicht die inzwischen geänderten globalen Settings.
+- Reanimierung und Backend-Neustart rekonstruieren denselben Snapshot aus dem Session-Index.
+- Alte Sessions ohne Felder werden als Savings `Aus` behandelt.
+- Wird eine gespeicherte Modulversion nicht mehr gefunden, entsteht ein auditierbarer Degraded-Fallback; die Session bleibt bedienbar.
+
+### I) Fehler- und Sicherheitsmodell
+
+- Alle optionalen Module sind Fail-open mit kurzem, modulbezogenem Timeout.
+- Health-Checks verwenden keine Nutzerprompts und lesen keine Repository-Inhalte über das für Status/Indexprüfung Nötige hinaus.
+- Keine Remote-One-Liner, Paketinstallation oder Konfigurationsmutation beim Umschalten.
+- Fremdskills können keine höheren Prioritäten als Jupiter-Governance erhalten.
+- Für RTK bleibt Telemetrie bei späterer Jupiter-Verwaltung standardmäßig aus.
+- Vollständige Rohfehler bleiben bei gefilterten Tool-Ausgaben erreichbar; sicherheitskritische Ausgaben werden nicht verlustbehaftet komprimiert.
+
+### J) Tech-Entscheidungen (Warum)
+
+- **Eigenes Profil statt tokless als Runtime:** Jupiter braucht reproduzierbare Sessions, Health, Rollback und engine-spezifische Ehrlichkeit. Ein externer Installer kann diese Produktverträge nicht garantieren.
+- **Dateibasierte globale Settings:** passt zu Policy, Watchdog, Transport und Engine-Registry; leicht prüfbar und atomar aktualisierbar.
+- **Session-Snapshot in SQLite:** Resume darf sich nicht ändern, nur weil globale Settings oder installierte Skillversionen wechseln.
+- **Zentraler Composer statt mehrere System-Prompts:** verhindert Doppelregeln und macht Prioritäten sowie Golden-Prompt-Tests möglich.
+- **Expliziter CodeGraph-Pfad statt Shell-Magie:** Jupiter läuft als Dienst; interaktive NVM-Pfade sind dort nicht zuverlässig.
+- **Preview vor Start:** Der Nutzer sieht Teilabdeckung, bevor Tokens verbraucht werden, und kann pro Session gezielt abschalten.
+- **Keine automatische Installation im MVP:** trennt reversible Nutzung von sicherheitsrelevanten Systemänderungen.
+
+### K) Abhängigkeiten / Pakete
+
+- **Backend:** keine zwingenden neuen Python-Pakete. Vorhandene Pydantic-, YAML-/Datei-Store-, Session-Index- und Prozessdiagnose-Muster reichen.
+- **Frontend:** keine neuen Pakete. Bestehende Switch-, Select-, Badge-, Tooltip- und Card-Komponenten reichen.
+- **Externe Laufzeitmodule:** Caveman, Ponytail und das bereits installierte CodeGraph; Versionen werden erkannt und später explizit gepinnt.
+- **Datenbank:** keine neue Datenbank; additive Felder im bestehenden SQLite-Session-Index.
+- **MinIO/Neon:** nicht betroffen.
+
+### L) Test- und Rollout-Strategie
+
+1. **Composer-Vertrag:** Golden-Prompt-Tests für jede Konfliktklasse; keine doppelte Kürzeregel, keine verlorene Governance oder Acceptance Criteria.
+2. **CodeGraph-Discovery:** absoluter Pfad, fehlender Service-PATH, MCP-Ausfall, veralteter/fehlender Index und tmux/direct werden getrennt getestet.
+3. **Session-Invarianz:** globaler Wechsel nach Start, Resume, Reanimierung, Backend-Neustart und Alt-Session.
+4. **Engine-Matrix:** Claude, Codex und OpenCode jeweils `standard/on/off`, inklusive ehrlicher Teilabdeckung.
+5. **Früher Pilot:** Caveman und Ponytail zunächst mit kleinem Golden-Task-Set und sichtbarem Degraded-Fallback.
+6. **CodeGraph-Pilot:** vorhandenen Jupiter-Index nutzen; Tool-Schema-Overhead, Navigationstreffer und breite Datei-Lesevorgänge vergleichen.
+7. **Spätere Module:** RTK, Context Mode und Headroom jeweils einzeln gegen dieselbe Baseline, bevor Kombinationen zugelassen werden.
+
+### M) Auswirkungen auf bestehende Features
+
+| Feature | Auswirkung |
+|---|---|
+| PROJ-6 | Konstitution bleibt führend; Composer ersetzt überlappende Kürzezeilen bei aktivem Caveman, statt sie zusätzlich anzuhängen. |
+| PROJ-9 | Neue Session erhält Override und effektive Profilvorschau. |
+| PROJ-19 | Prompt-Cache-Key berücksichtigt Savings-Snapshot; spätere Effizienzmodule laufen über denselben Resolver. |
+| PROJ-48/50/57 | Engine-spezifische Skill-/MCP-Integration, aber ein gemeinsamer Jupiter-Vertrag. |
+| PROJ-51 | Settings-Seite bekommt eine eigene Sektion, ohne Engine-Registry mit Toolzuständen zu vermischen. |
+| PROJ-52 | Native Providerwerte bleiben getrennt von Savings-Schätzungen. |
+| PROJ-56/63 | Snapshot wird über Resume und beide Transportarten unverändert wiederverwendet. |
+
+### N) Empfohlene Bau-Reihenfolge
+
+1. Backend-Verträge: Settings Store, Health-Modell, Profil-Resolver, Composer und Session-Snapshot.
+2. Caveman-/Ponytail-Adapter plus Golden-Prompt-Tests.
+3. CodeGraph-Discovery mit explizitem Binary-Pfad und MCP-/Index-Health.
+4. Settings-Sektion und Session-Override mit Preview.
+5. Persistenz-/Resume- und vollständige Engine-Matrix-Tests.
+6. Pilotmetriken; erst danach RTK und weitere Kompressionsmodule.
 
 ## QA Test Results
 _To be added by /abc-qa_
