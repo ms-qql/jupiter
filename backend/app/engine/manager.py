@@ -1376,18 +1376,22 @@ class SessionManager:
                 on_persist=self._persist,
             )
             runtime._last_persisted_status = state.status
-            # PROJ-66: UI-Transkript zurückspielen — nur für Nicht-Claude-Engines (Oneshot-
-            # CLIs/direkte Provider). Claude bewahrt seinen Verlauf selbst über den echten
-            # `--resume`-Ersatzlauf, der beim späteren Fortsetzen die Events erneut streamt;
-            # ein zusätzliches Vorbefüllen hier würde zu doppelten Transkript-Einträgen führen.
-            profile = engine_registry.get(state.engine)
-            if profile is not None and not profile.is_claude:
-                try:
-                    raw = await self._repo.load_transcript(sid)
-                    if raw:
-                        runtime.transcript = [TranscriptEntry(**d) for d in json.loads(raw)]
-                except Exception as exc:  # noqa: BLE001 — best-effort, In-Memory bleibt führend.
-                    logger.warning("Transkript konnte nicht rehydriert werden (%s): %s", sid, exc)
+            # PROJ-66/PROJ-71: UI-Transkript aus der DB zurückspielen — für JEDE Engine,
+            # auch Claude. Früher war Claude ausgenommen, weil sein `--resume`-Ersatzlauf die
+            # (per `>>` angehängte) out.log ab Offset 0 neu las und den Verlauf so SELBST
+            # rekonstruierte; ein zusätzliches DB-Vorbefüllen hätte damals dupliziert. Seit
+            # PROJ-71 seekt der Resume-Respawn ans out.log-Ende (kein Replay mehr, siehe
+            # claude_driver._spawn_tmux) — damit ist die DB die ALLEINIGE Rebuild-Quelle, und
+            # Claude MUSS hier geladen werden, sonst bliebe das Transkript nach einem Neustart
+            # leer. Trade-off: ein bei einem ungeordneten Absturz mitten im Turn noch nicht
+            # persistierter Ausgabe-Rest fehlt in der UI (der Konversations-Kontext selbst
+            # bleibt über `--resume` erhalten) — akzeptabel gegenüber dem alten 2×/3×-Replay.
+            try:
+                raw = await self._repo.load_transcript(sid)
+                if raw:
+                    runtime.transcript = [TranscriptEntry(**d) for d in json.loads(raw)]
+            except Exception as exc:  # noqa: BLE001 — best-effort, In-Memory bleibt führend.
+                logger.warning("Transkript konnte nicht rehydriert werden (%s): %s", sid, exc)
             if row.get("status") in ACTIVE_STATES:
                 state.status = ERROR
                 if state.drained_at:

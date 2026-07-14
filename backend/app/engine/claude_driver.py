@@ -151,7 +151,12 @@ class ClaudeCodeDriver(EngineDriver):
         self._transport_obj = TmuxTransport(spec.session_id)
         try:
             await self._transport_obj.spawn(
-                argv, cwd=spec.project_path, long_lived=True
+                argv, cwd=spec.project_path, long_lived=True,
+                # PROJ-71: Beim Fortsetzen (`--resume`) NUR neu angehängte Ausgabe lesen.
+                # Der bestehende out.log-Inhalt ist bereits im Transkript (live bzw. beim
+                # Neustart aus der DB rehydriert) — ein Re-Read ab Offset 0 duplizierte
+                # sonst den gesamten Verlauf (Text UND Fragekarten) pro Resume.
+                seek_to_end=spec.resume,
             )
         except TransportError as exc:
             await self._emit(StreamEvent(type="system", subtype="error", raw={"message": str(exc)}))

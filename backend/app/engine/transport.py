@@ -104,8 +104,14 @@ class Transport(ABC):
         cwd: str,
         long_lived: bool,
         stdin_file: str | None = None,
+        seek_to_end: bool = False,
     ) -> None:
         """Startet (oder — bei Oneshot-Engines — erneuert) den Prozess.
+
+        ``seek_to_end=True`` (nur für langlebige, über ``>>`` angehängte stdout-Logs
+        relevant): das Lese-Handle wird ans aktuelle Datei-Ende gesetzt, sodass NUR neu
+        angehängte Ausgabe gelesen wird. Für Resume-Respawns, deren bisheriger
+        Log-Inhalt bereits im Transkript abgebildet ist (PROJ-71).
 
         ``long_lived=True``: der Prozess bleibt über mehrere ``write_line``-Aufrufe
         am Leben (Claude-artig). ``long_lived=False``: ein Turn = ein Prozess; ``
@@ -165,6 +171,7 @@ class DirectTransport(Transport):
         cwd: str,
         long_lived: bool = True,
         stdin_file: str | None = None,
+        seek_to_end: bool = False,  # PROJ-71: für DirectTransport ohne out.log ohne Wirkung.
     ) -> None:
         stdin_src: int | object
         if stdin_file is not None:
@@ -337,6 +344,7 @@ class TmuxTransport(Transport):
         cwd: str,
         long_lived: bool = True,
         stdin_file: str | None = None,
+        seek_to_end: bool = False,
     ) -> None:
         if not tmux_available(self._tmux_bin):
             raise TransportError(
@@ -396,6 +404,17 @@ class TmuxTransport(Transport):
         self._alive_cache = (time.monotonic(), True)
         if self._out_fh is None:
             self._out_fh = open(self.out_path, "rb")  # noqa: SIM115 - über Turns hinweg offen
+            if seek_to_end:
+                # PROJ-71: Resume-Respawn liest NUR neu angehängte Ausgabe. Der bestehende
+                # out.log-Inhalt ist bereits im Transkript abgebildet (live in der RAM-
+                # Runtime bzw. beim Neustart aus der DB rehydriert). Ein Re-Read ab Offset 0
+                # schickte sonst JEDES vergangene assistant-Event erneut durch handle_event
+                # → Transkript-Dubletten, wiederkehrende Fragekarten, doppelte Usage-Zählung
+                # (der eigentliche PROJ-71-Fehler; PROJ-70 entprellte nur die Fragekarten).
+                # Seek-to-End macht das out.log-Replay überflüssig — der Verlauf kommt jetzt
+                # aus der DB (siehe manager.rehydrate), nicht mehr aus dem Log.
+                with contextlib.suppress(OSError):
+                    self._out_fh.seek(0, os.SEEK_END)
         # Echte OS-PID des Pane-Prozesses cachen -> synchron ueber `.pid` abrufbar (fuer
         # EngineDriver.pid / pid_alive()-Liveness, dieselbe Signal-0-Pruefung wie direct).
         # PROJ-64: rein diagnostisch (nur fuer `.pid`/Liveness) — ein Timeout hier darf

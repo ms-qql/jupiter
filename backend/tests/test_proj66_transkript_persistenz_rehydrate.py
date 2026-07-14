@@ -184,11 +184,13 @@ async def test_rehydrate_laedt_transkript_fuer_codex(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_rehydrate_laedt_transkript_nicht_fuer_claude(tmp_path, monkeypatch):
-    """Regression: Claude bewahrt seinen Verlauf über den nativen --resume-Ersatzlauf.
-    Ein zusätzliches Vorbefüllen hier würde zu doppelten Einträgen führen, sobald die
-    Session später fortgesetzt wird und die Events erneut streamen — deshalb bewusst
-    NICHT geladen, Verhalten bleibt exakt wie vor PROJ-66."""
+async def test_rehydrate_laedt_transkript_auch_fuer_claude(tmp_path, monkeypatch):
+    """PROJ-71 (kehrt das alte PROJ-66-Verhalten um): Claude wird beim Rehydrate JETZT
+    aus der DB vorbefüllt. Früher war es ausgenommen, weil der `--resume`-Ersatzlauf die
+    out.log ab Offset 0 neu las und den Verlauf selbst rekonstruierte (DB-Load hätte
+    dupliziert). Seit PROJ-71 seekt der Resume-Respawn ans out.log-Ende (kein Replay),
+    also ist die DB die alleinige Rebuild-Quelle — ohne Load bliebe das Transkript nach
+    einem Neustart leer."""
     repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
     await repo.init()
     await repo.upsert({
@@ -199,6 +201,7 @@ async def test_rehydrate_laedt_transkript_nicht_fuer_claude(tmp_path, monkeypatc
     })
     await repo.save_transcript("old", json.dumps([
         {"role": "user", "kind": "text", "text": "hi", "ts": "t1"},
+        {"role": "assistant", "kind": "text", "text": "hallo", "ts": "t2"},
     ]))
     mgr = SessionManager(repo=repo)
     monkeypatch.setattr(mgr_module.engine_registry, "get", lambda key: _Profile("claude", is_claude=True))
@@ -208,7 +211,34 @@ async def test_rehydrate_laedt_transkript_nicht_fuer_claude(tmp_path, monkeypatc
 
     rt = mgr.get("old")
     assert rt is not None
-    assert rt.transcript == []
+    assert [e.text for e in rt.transcript] == ["hi", "hallo"]
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_mehrfacher_neustart_keine_dopplung_claude(tmp_path, monkeypatch):
+    """PROJ-71-Kern: Mehrere Backend-Neustarts einer Claude-Session dürfen das
+    Transkript NICHT vervielfachen (der gemeldete 2×/3×-Fehler). Da das out.log-Replay
+    seit PROJ-71 entfällt, ist jeder Rehydrate ein sauberer Load desselben DB-Blobs —
+    exakt das Codex-Verhalten, jetzt auch für Claude."""
+    repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
+    await repo.init()
+    await repo.upsert({
+        "session_id": "old", "status": "waiting", "owner": "dev",
+        "project_path": PROJECT, "model": "claude-opus-4-8", "permission_mode": "default",
+        "engine": "claude", "created_at": "2026-07-07T10:00:00+00:00",
+        "last_activity": "2026-07-07T10:00:00+00:00",
+    })
+    await repo.save_transcript("old", json.dumps([
+        {"role": "assistant", "kind": "text", "text": "Erledigt.", "ts": "t1"},
+    ]))
+    monkeypatch.setattr(mgr_module.engine_registry, "get", lambda key: _Profile("claude", is_claude=True))
+
+    for _ in range(3):
+        mgr = SessionManager(repo=repo)
+        await mgr.rehydrate()
+        await _flush(mgr)
+        rt = mgr.get("old")
+        assert [e.text for e in rt.transcript] == ["Erledigt."]
 
 
 @pytest.mark.asyncio
@@ -352,9 +382,10 @@ async def test_route_get_session_returns_full_transcript_for_opencode(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_route_get_session_unchanged_for_claude(tmp_path, monkeypatch):
-    """Gegenprobe zur Route: Claude-Session bleibt nach Neustart wie vor PROJ-66 —
-    Transkript leer (verwaist), kein Regress durch die neue Rehydrierung."""
+async def test_route_get_session_transcript_restored_for_claude(tmp_path, monkeypatch):
+    """PROJ-71: Auch eine Claude-Session liefert nach einem Neustart ihr Transkript über
+    die Route zurück (aus der DB rehydriert). Vor PROJ-71 war es hier leer, weil man sich
+    auf das out.log-Replay verließ — das seit PROJ-71 entfällt (Seek-to-End statt Offset 0)."""
     repo = SqliteSessionIndexRepository(str(tmp_path / "idx.db"))
     await repo.init()
     row = _seed_row("claude")
@@ -370,7 +401,7 @@ async def test_route_get_session_unchanged_for_claude(tmp_path, monkeypatch):
         resp = client.get("/sessions/peppermint")
 
     assert resp.status_code == 200
-    assert resp.json()["transcript"] == []
+    assert [e["text"] for e in resp.json()["transcript"]] == ["hi"]
 
 
 # ===========================================================================
