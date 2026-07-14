@@ -1541,7 +1541,9 @@ export interface SessionCondenseSettings {
   age_days: number;
   retention_days: number;
   min_chars: number;
-  /** Kondensier-Modell (haiku | sonnet | opus). */
+  /** Engine-Key aus engines.yaml (z. B. „claude" | „opencode"). */
+  engine: string;
+  /** Kondensier-Modell — gültiger Slug der gewählten Engine (z. B. „opencode-go/minimax-m3"). */
   model: string;
 }
 

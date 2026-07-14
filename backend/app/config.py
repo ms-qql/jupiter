@@ -481,9 +481,12 @@ class Settings(BaseSettings):
     # Poll-Frequenz des Hintergrund-Workers (Sek.) — niedrigfrequent, die Skill-Läufe
     # dauern Minuten; der Tick sammelt nur Zustandswechsel ein und rückt nach.
     session_condense_poll_interval_seconds: float = 10.0
-    # Modell + Permission-Mode der Kondensier-Sessions. bypassPermissions, weil headless
+    # Engine + Modell + Permission-Mode der Kondensier-Sessions. Default = OpenCode mit
+    # Minimax (günstig, ausreichend für die Verdichtung); über die App-Einstellungen frei
+    # wählbar (jede Session-Engine aus engines.yaml). bypassPermissions, weil headless
     # kein interaktives Decision-Card-Gate bedienen kann.
-    session_condense_model: str = "sonnet"
+    session_condense_engine: str = "opencode"
+    session_condense_model: str = "opencode-go/minimax-m3"
     session_condense_permission_mode: str = "bypassPermissions"
     # Arbeitsverzeichnis (cwd/Scope) der Kondensier-Sessions. Default = Hal-Vault, in dem
     # der Skill liest (Sessions/) und schreibt (Knowledge/). MUSS in allowed_roots liegen.

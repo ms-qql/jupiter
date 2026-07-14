@@ -43,6 +43,7 @@ import {
 import {
   ApiError,
   deleteSessionCondenseItem,
+  getEngines,
   getSessionCondenseQueue,
   getSessionCondenseRuns,
   getSessionCondenseSettings,
@@ -52,7 +53,9 @@ import {
   runSessionCondense,
   scanSessionCondense,
 } from "@/lib/api";
+import { modelLabel } from "@/lib/status";
 import type {
+  EngineRead,
   SessionCondenseItem,
   SessionCondenseQueue,
   SessionCondenseRun,
@@ -61,12 +64,14 @@ import type {
   SessionCondenseWorkerState,
 } from "@/lib/types";
 
-// Kondensier-Modelle (Backend-Whitelist: haiku/sonnet/opus).
-const MODEL_CHOICES: { value: string; label: string }[] = [
-  { value: "haiku", label: "Haiku (schnell & günstig)" },
-  { value: "sonnet", label: "Sonnet (ausgewogen, Standard)" },
-  { value: "opus", label: "Opus (höchste Qualität)" },
-];
+/** Lesbares Label für einen Modell-Slug. Claude-Aliase über `modelLabel`; Fremd-Slugs
+ *  (z. B. „opencode-go/minimax-m3") auf den Teil nach dem „/" gekürzt + entkebabt. */
+function condenseModelLabel(model: string): string {
+  const base = modelLabel(model);
+  if (base !== model) return base;
+  const tail = model.includes("/") ? (model.split("/").pop() ?? model) : model;
+  return tail.replace(/-/g, " ");
+}
 
 // Wochentage für den Zeitplan (DOW HH:MM).
 const DOW_CHOICES: { value: string; label: string }[] = [
@@ -445,8 +450,24 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
   const [ageDays, setAgeDays] = useState("7");
   const [retentionDays, setRetentionDays] = useState("30");
   const [minChars, setMinChars] = useState("800");
-  const [model, setModel] = useState("sonnet");
+  const [engine, setEngine] = useState("opencode");
+  const [model, setModel] = useState("opencode-go/minimax-m3");
+  const [engines, setEngines] = useState<EngineRead[]>([]);
   const loaded = useRef(false);
+
+  // Nur steuerbare Session-Engines (kind=engine) — keine iFrames/Launch-Einträge.
+  const sessionEngines = engines.filter((e) => e.kind === "engine");
+  const selectedEngine = sessionEngines.find((e) => e.key === engine);
+  const modelOptions = selectedEngine?.models ?? (model ? [model] : []);
+
+  /** Engine wechseln → Modell auf den (ersten gültigen) Wert der neuen Engine setzen. */
+  function handleEngineChange(nextKey: string) {
+    setEngine(nextKey);
+    const eng = sessionEngines.find((e) => e.key === nextKey);
+    if (eng && !eng.models.includes(model)) {
+      setModel(eng.default_model ?? eng.models[0] ?? "");
+    }
+  }
 
   function applySchedule(schedule: string) {
     const m = /^(MON|TUE|WED|THU|FRI|SAT|SUN)\s+(\d{1,2}:\d{2})$/i.exec(schedule.trim());
@@ -464,11 +485,16 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
     if (!next || loaded.current) return;
     setLoading(true);
     try {
-      const s = await getSessionCondenseSettings();
+      const [s, eng] = await Promise.all([
+        getSessionCondenseSettings(),
+        getEngines().catch(() => null),
+      ]);
+      if (eng) setEngines(eng.engines);
       applySchedule(s.schedule);
       setAgeDays(String(s.age_days));
       setRetentionDays(String(s.retention_days));
       setMinChars(String(s.min_chars));
+      setEngine(s.engine);
       setModel(s.model);
       loaded.current = true;
     } catch (err) {
@@ -489,6 +515,7 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
         age_days: Math.max(0, Number(ageDays) || 0),
         retention_days: Math.max(0, Number(retentionDays) || 0),
         min_chars: Math.max(0, Number(minChars) || 0),
+        engine,
         model,
       };
       const s = await patchSessionCondenseSettings(patch);
@@ -496,6 +523,7 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
       setAgeDays(String(s.age_days));
       setRetentionDays(String(s.retention_days));
       setMinChars(String(s.min_chars));
+      setEngine(s.engine);
       setModel(s.model);
       toast.success("Einstellungen gespeichert");
       onSaved();
@@ -521,7 +549,7 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
         <DialogHeader>
           <DialogTitle>Session-Kondensierung — Einstellungen</DialogTitle>
           <DialogDescription>
-            Wochenplan + Schwellen. Gilt serverseitig für den Sweep.
+            Wochenplan, Schwellen sowie Engine + Modell. Gilt serverseitig für den Sweep.
           </DialogDescription>
         </DialogHeader>
 
@@ -607,21 +635,47 @@ function SettingsDialog({ onSaved }: { onSaved: () => void }) {
                 Kürzere Logs ohne Erkenntnis-Marker werden nur archiviert (kein Skill-Lauf).
               </p>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="sc_model">Kondensier-Modell</Label>
-              <Select value={model} onValueChange={(v) => setModel(v ?? "sonnet")}>
-                <SelectTrigger id="sc_model" aria-label="Kondensier-Modell">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {MODEL_CHOICES.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>
-                      {m.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2">
+                <Label htmlFor="sc_engine">Engine</Label>
+                <Select value={engine} onValueChange={(v) => v && handleEngineChange(v)}>
+                  <SelectTrigger id="sc_engine" aria-label="Engine">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sessionEngines.length === 0 && (
+                      <SelectItem value={engine}>{engine}</SelectItem>
+                    )}
+                    {sessionEngines.map((e) => (
+                      <SelectItem key={e.key} value={e.key} disabled={!e.available}>
+                        {e.label}
+                        {!e.available && " — nicht verfügbar"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="sc_model">Modell</Label>
+                <Select value={model} onValueChange={(v) => v && setModel(v)}>
+                  <SelectTrigger id="sc_model" aria-label="Kondensier-Modell">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelOptions.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {condenseModelLabel(m)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+            {selectedEngine && !selectedEngine.available && selectedEngine.unavailable_reason && (
+              <p className="-mt-2 text-xs text-amber-500">
+                {selectedEngine.unavailable_reason}
+              </p>
+            )}
           </div>
         )}
 
