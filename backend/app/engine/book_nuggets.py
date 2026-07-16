@@ -53,6 +53,13 @@ PRICE_PER_MTOK: dict[str, float] = {"haiku": 1.0, "sonnet": 6.0, "opus": 18.0}
 
 # Maschinenlesbarer Abschluss-Marker, den der Prompt von der Session anfordert.
 _RESULT_MARKER = "JUPITER_BOOK_RESULT"
+# ponytail: Safety ceiling for pathological "still waiting" loops; configure only if real runs hit it.
+_MAX_CONTINUATIONS = 12
+_CONTINUE_PROMPT = (
+    "Setze die Buchzusammenfassung jetzt fort. Warte nicht nur auf Sub-Agenten: "
+    "Bearbeite fehlende Chunks bei Bedarf selbst. Erstelle die Markdown-Notiz und PDF "
+    "und gib erst danach den vollständigen JUPITER_BOOK_RESULT-Block aus."
+)
 _NOTE_RE = re.compile(r"^\s*note:\s*(.+?)\s*$", re.MULTILINE)
 _PDF_RE = re.compile(r"^\s*pdf:\s*(.+?)\s*$", re.MULTILINE)
 _DIR_RE = re.compile(r"^\s*dir:\s*(.+?)\s*$", re.MULTILINE)
@@ -259,6 +266,14 @@ def parse_result_paths(text: str) -> dict:
     return out
 
 
+def result_is_complete(text: str, result: dict) -> bool:
+    """Ein Nugget zählt erst mit Abschlussmarker und beiden Artefakten als fertig."""
+    return (
+        _RESULT_MARKER in text
+        and all(result.get(key) and Path(result[key]).is_file() for key in ("note", "pdf"))
+    )
+
+
 def parse_phase(text: str) -> str | None:
     """Letzte gemeldete Verarbeitungs-Phase aus dem Transcript (best-effort)."""
     if not text:
@@ -288,6 +303,8 @@ class BookNuggetsWorker:
         self._draining = False
         self._current_id: int | None = None
         self._current_session_id: str | None = None
+        self._continuations = 0
+        self._last_incomplete_output: str | None = None
 
     # --- Lifecycle ---------------------------------------------------------
 
@@ -295,6 +312,17 @@ class BookNuggetsWorker:
         """Idempotenter Start: Schema anlegen, verwaiste ``running`` → ``pending``."""
         await self._repo.init()
         await self._repo.reset_running()
+        rows = await self._repo.list_queue()
+        for row in rows:
+            if row["status"] == DONE and not all(
+                row.get(key) and Path(row[key]).is_file()
+                for key in ("result_note_path", "result_pdf_path")
+            ):
+                await self._repo.update(
+                    row["id"], status=ERROR,
+                    error_message="Historischer Eintrag ohne vollständige Markdown-/PDF-Artefakte.",
+                )
+        self._draining = any(row["status"] == PENDING for row in rows)
 
     # --- Öffentliche Steuerung (von den Routen aufgerufen) -----------------
 
@@ -515,6 +543,8 @@ class BookNuggetsWorker:
             return
         self._current_id = item_id
         self._current_session_id = runtime.state.session_id
+        self._continuations = 0
+        self._last_incomplete_output = None
         await self._repo.update(
             item_id, status=RUNNING, phase="parsing",
             session_id=runtime.state.session_id, started_at=_now().isoformat(),
@@ -532,7 +562,35 @@ class BookNuggetsWorker:
         status = runtime.state.status
         if status in (SESSION_WAITING, SESSION_DONE):
             res = parse_result_paths(text)
-            await self._finish(success=True, result=res)
+            if result_is_complete(text, res):
+                await self._finish(success=True, result=res)
+            else:
+                latest_output = next(
+                    (
+                        e.text for e in reversed(runtime.transcript)
+                        if e.role == "assistant" and e.kind == "text"
+                    ),
+                    "",
+                )
+                if (
+                    self._continuations < _MAX_CONTINUATIONS
+                    and latest_output != self._last_incomplete_output
+                ):
+                    self._last_incomplete_output = latest_output
+                    self._continuations += 1
+                    try:
+                        await self._manager.send_input(self._current_session_id, _CONTINUE_PROMPT)
+                    except Exception as exc:  # noqa: BLE001 — Abschlussfehler nur für dieses Buch.
+                        await self._finish(success=False, error=f"Fortsetzung fehlgeschlagen: {exc}")
+                else:
+                    await self._finish(
+                        success=False,
+                        error=(
+                            "Verarbeitung ohne neuen Fortschritt oder nach "
+                            f"{_MAX_CONTINUATIONS} Fortsetzungen ohne vollständiges Ergebnis "
+                            "beendet (Markdown/PDF fehlen)."
+                        ),
+                    )
         elif status == SESSION_ERROR:
             await self._finish(
                 success=False, error=runtime.state.error or "Verarbeitung fehlgeschlagen."
@@ -570,6 +628,8 @@ class BookNuggetsWorker:
         await self._stop_current_session()
         self._current_id = None
         self._current_session_id = None
+        self._continuations = 0
+        self._last_incomplete_output = None
 
     async def _stop_current_session(self) -> None:
         if not self._current_session_id:

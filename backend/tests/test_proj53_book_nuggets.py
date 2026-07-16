@@ -12,6 +12,7 @@ Deckt die backend-seitigen Akzeptanzkriterien ab:
 """
 from __future__ import annotations
 
+import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
@@ -28,6 +29,7 @@ from app.engine.book_nuggets import (
     is_valid_url,
     parse_phase,
     parse_result_paths,
+    result_is_complete,
     validate_source,
 )
 from app.main import create_app
@@ -164,19 +166,29 @@ def _worker(tmp_path, monkeypatch) -> BookNuggetsWorker:
 async def _drain(worker: BookNuggetsWorker, max_ticks: int = 50) -> None:
     for _ in range(max_ticks):
         await worker.tick()
+        await asyncio.sleep(0)
         if worker.state()["status"] == "idle" and not worker._draining:
             return
 
 
 async def test_add_source_auto_drains_and_completes(tmp_path, monkeypatch):
-    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "book_nuggets_project_path", PROJECT)
+
+    class IncompleteDriver(FakeDriver):
+        async def send_input(self, text):
+            self.sent.append(text)
+            asyncio.create_task(self._respond("Noch nicht fertig"))
+
+    repo = SqliteBookNuggetsRepository(str(tmp_path / "bnq.db"))
+    worker = BookNuggetsWorker(SessionManager(driver_factory=lambda: IncompleteDriver()), repo)
     await worker.startup()
     res = await worker.add_source("url", "https://x.com/b.pdf", "staged", "sonnet", "opus")
     assert res["item"]["status"] == "pending"
     assert worker._draining is True  # Auto-Drain
     await _drain(worker)
     row = (await worker.list_queue())[0]
-    assert row["status"] == "done"
+    assert row["status"] == "error"
+    assert "Markdown/PDF fehlen" in row["error_message"]
     assert worker.state()["status"] == "idle"
 
 
@@ -240,6 +252,25 @@ async def test_running_reset_to_pending_on_restart(tmp_path, monkeypatch):
     await worker2.startup()
     q = await worker2.list_queue()
     assert q[0]["status"] == "pending" and q[0]["session_id"] is None and q[0]["phase"] is None
+    assert worker2.state()["draining"] is True
+
+
+async def test_startup_marks_legacy_done_without_artifacts_as_error(tmp_path):
+    repo = SqliteBookNuggetsRepository(str(tmp_path / "bnq.db"))
+    await repo.init()
+    row = await repo.add({
+        "owner": "dev", "source_type": "url", "source_ref": "https://x.com/b.pdf",
+        "model_mode": "staged", "model_extract": "sonnet", "model_consolidate": "opus",
+        "created_at": "2026-06-28T00:00:00",
+    })
+    await repo.update(row["id"], status="done")
+
+    worker = BookNuggetsWorker(SessionManager(driver_factory=lambda: FakeDriver()), repo)
+    await worker.startup()
+
+    migrated = (await worker.list_queue())[0]
+    assert migrated["status"] == "error"
+    assert "ohne vollständige" in migrated["error_message"]
 
 
 async def test_retry_resets_error_to_pending(tmp_path, monkeypatch):
@@ -263,13 +294,17 @@ async def test_marker_driver_records_result(tmp_path, monkeypatch):
             self._spec = spec
             from app.engine.events import StreamEvent
 
+            note = tmp_path / "n.md"
+            pdf = tmp_path / "n.pdf"
+            note.write_text("# Nugget")
+            pdf.write_bytes(b"%PDF")
             await on_event(StreamEvent("system", "init", {"session_id": spec.session_id}))
             await self._respond(
                 "JUPITER_BOOK_RESULT\n"
                 "title: Mein Buch\nauthor: Autor X\n"
-                "dir: /home/dev/tools/Hal/04 Resources/Buch_Nuggets/Autor X-Mein Buch\n"
-                "note: /home/dev/tools/Hal/04 Resources/Buch_Nuggets/Autor X-Mein Buch/n.md\n"
-                "pdf: /home/dev/tools/Hal/04 Resources/Buch_Nuggets/Autor X-Mein Buch/n.pdf\n"
+                f"dir: {tmp_path}\n"
+                f"note: {note}\n"
+                f"pdf: {pdf}\n"
             )
 
     repo = SqliteBookNuggetsRepository(str(tmp_path / "bnq.db"))
@@ -281,8 +316,109 @@ async def test_marker_driver_records_result(tmp_path, monkeypatch):
     row = (await worker.list_queue())[0]
     assert row["status"] == "done"
     assert row["title"] == "Mein Buch" and row["author"] == "Autor X"
-    assert row["result_note_path"].endswith("n.md")
-    assert row["result_pdf_path"].endswith("n.pdf")
+    assert row["result_note_path"] == str(tmp_path / "n.md")
+    assert row["result_pdf_path"] == str(tmp_path / "n.pdf")
+
+
+async def test_incomplete_result_gets_one_continuation(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "book_nuggets_project_path", PROJECT)
+    drivers = []
+
+    class ContinuationDriver(FakeDriver):
+        async def start(self, spec, on_event):
+            self._on = on_event
+            self._spec = spec
+            from app.engine.events import StreamEvent
+
+            await on_event(StreamEvent("system", "init", {"session_id": spec.session_id}))
+            await self._respond("Zwischenstand")
+
+        async def send_input(self, text):
+            self.sent.append(text)
+            note = tmp_path / "n.md"
+            pdf = tmp_path / "n.pdf"
+            note.write_text("# Nugget")
+            pdf.write_bytes(b"%PDF")
+
+            async def finish():
+                await self._respond(
+                    "JUPITER_BOOK_RESULT\n"
+                    f"dir: {tmp_path}\nnote: {note}\npdf: {pdf}\n"
+                )
+
+            asyncio.create_task(finish())
+
+    def driver_factory():
+        driver = ContinuationDriver()
+        drivers.append(driver)
+        return driver
+
+    repo = SqliteBookNuggetsRepository(str(tmp_path / "bnq.db"))
+    worker = BookNuggetsWorker(SessionManager(driver_factory=driver_factory), repo)
+    await worker.startup()
+    await worker.add_source("url", "https://x.com/b.pdf", "staged", "sonnet", "opus")
+    await _drain(worker)
+    row = (await worker.list_queue())[0]
+    assert row["status"] == "done"
+    assert len(drivers[0].sent) == 1
+    assert "Bearbeite fehlende Chunks bei Bedarf selbst" in drivers[0].sent[0]
+
+
+async def test_incomplete_result_continues_while_transcript_progresses(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "book_nuggets_project_path", PROJECT)
+    drivers = []
+
+    class ProgressDriver(FakeDriver):
+        async def start(self, spec, on_event):
+            self._on = on_event
+            self._spec = spec
+            from app.engine.events import StreamEvent
+
+            await on_event(StreamEvent("system", "init", {"session_id": spec.session_id}))
+            await self._respond("8/10 Chunks fertig")
+
+        async def send_input(self, text):
+            self.sent.append(text)
+
+            async def respond():
+                if len(self.sent) == 1:
+                    await self._respond("9/10 Chunks fertig")
+                    return
+                note = tmp_path / "n.md"
+                pdf = tmp_path / "n.pdf"
+                note.write_text("# Nugget")
+                pdf.write_bytes(b"%PDF")
+                await self._respond(
+                    "JUPITER_BOOK_RESULT\n"
+                    f"dir: {tmp_path}\nnote: {note}\npdf: {pdf}\n"
+                )
+
+            asyncio.create_task(respond())
+
+    def driver_factory():
+        driver = ProgressDriver()
+        drivers.append(driver)
+        return driver
+
+    repo = SqliteBookNuggetsRepository(str(tmp_path / "bnq.db"))
+    worker = BookNuggetsWorker(SessionManager(driver_factory=driver_factory), repo)
+    await worker.startup()
+    await worker.add_source("url", "https://x.com/b.pdf", "staged", "sonnet", "opus")
+    await _drain(worker)
+
+    row = (await worker.list_queue())[0]
+    assert row["status"] == "done"
+    assert len(drivers[0].sent) == 2
+
+
+def test_result_requires_marker_and_existing_artifacts(tmp_path):
+    note = tmp_path / "n.md"
+    pdf = tmp_path / "n.pdf"
+    note.write_text("# Nugget")
+    pdf.write_bytes(b"%PDF")
+    result = {"note": str(note), "pdf": str(pdf)}
+    assert not result_is_complete("fertig", result)
+    assert result_is_complete("JUPITER_BOOK_RESULT", result)
 
 
 async def test_library_scan(tmp_path, monkeypatch):
