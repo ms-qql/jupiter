@@ -41,7 +41,14 @@ logger = logging.getLogger(__name__)
 
 # Erlaubte Umwandlungs-Modelle (Kurz-Aliase der Claude-CLI). Server-Whitelist
 # gegen ungültige Slugs (PROJ-18-Slug-Falle).
-VALID_MODELS: tuple[str, ...] = ("haiku", "sonnet", "opus")
+VALID_MODELS: tuple[str, ...] = (
+    "haiku", "sonnet", "opus",
+    "opencode-go/glm-5.2", "opencode-go/qwen3.7-max",
+    "opencode-go/kimi-k2.7-code", "opencode-go/minimax-m3",
+    "opencode-go/mimo-v2.5-pro", "opencode-go/deepseek-v4-pro",
+    "opencode-go/qwen3.7-plus", "opencode-go/mimo-v2.5",
+    "opencode-go/deepseek-v4-flash",
+)
 VALID_MODES: tuple[str, ...] = ("staged", "single")
 
 # Im MVP unterstützte Dateiformate (D-Entscheidung: mobi = Fast-Follow/Phase 2).
@@ -49,7 +56,18 @@ MVP_EXTENSIONS: frozenset[str] = frozenset({"pdf", "epub", "txt", "docx"})
 
 # Grobe, gemittelte Preise pro 1 Mio. Tokens (USD) — NUR für die Best-effort-
 # Kostenschätzung, keine Abrechnung. Bücher sind fast nur Input.
-PRICE_PER_MTOK: dict[str, float] = {"haiku": 1.0, "sonnet": 6.0, "opus": 18.0}
+PRICE_PER_MTOK: dict[str, float] = {
+    "haiku": 1.0, "sonnet": 6.0, "opus": 18.0,
+    "opencode-go/deepseek-v4-flash": 0.3,
+    "opencode-go/deepseek-v4-pro": 5.0,
+    "opencode-go/minimax-m3": 2.0,
+    "opencode-go/qwen3.7-plus": 2.0,
+    "opencode-go/qwen3.7-max": 4.0,
+    "opencode-go/glm-5.2": 2.0,
+    "opencode-go/kimi-k2.7-code": 3.0,
+    "opencode-go/mimo-v2.5": 1.5,
+    "opencode-go/mimo-v2.5-pro": 5.0,
+}
 
 # Maschinenlesbarer Abschluss-Marker, den der Prompt von der Session anfordert.
 _RESULT_MARKER = "JUPITER_BOOK_RESULT"
@@ -163,8 +181,8 @@ def estimate_cost(
             cap_tokens = page_limit * 500  # ~500 Token/Seite
             est_tokens = min(est_tokens, cap_tokens)
             pages = min(pages, page_limit)
-        p_ext = PRICE_PER_MTOK.get(model_extract, PRICE_PER_MTOK["sonnet"])
-        p_con = PRICE_PER_MTOK.get(model_consolidate, PRICE_PER_MTOK["opus"])
+        p_ext = PRICE_PER_MTOK.get(model_extract, PRICE_PER_MTOK["opencode-go/deepseek-v4-flash"])
+        p_con = PRICE_PER_MTOK.get(model_consolidate, PRICE_PER_MTOK["opencode-go/deepseek-v4-flash"])
         if model_mode == "single":
             est_cost = est_tokens / 1_000_000 * p_con
         else:
@@ -288,6 +306,14 @@ def parse_phase(text: str) -> str | None:
 
 def _now() -> datetime:
     return datetime.now()
+
+
+def _engine_for_model(model: str) -> str | None:
+    """Bestimmt die Engine anhand des Modell-Präfix.
+    ``opencode-go/*`` → ``"opencode"``, sonst ``None`` (Claude)."""
+    if model.startswith("opencode-go/"):
+        return "opencode"
+    return None
 
 
 class BookNuggetsWorker:
@@ -515,6 +541,8 @@ class BookNuggetsWorker:
 
     async def _start(self, row: dict) -> None:
         item_id = row["id"]
+        model_consolidate = row.get("model_consolidate") or settings.book_nuggets_model
+        model_extract = row.get("model_extract") or "sonnet"
         try:
             runtime = await self._manager.create(
                 project_path=settings.book_nuggets_project_path,
@@ -522,11 +550,12 @@ class BookNuggetsWorker:
                     row["source_type"], row["source_ref"],
                     settings.book_nuggets_output_subdir,
                     row.get("model_mode") or "staged",
-                    row.get("model_extract") or "sonnet",
+                    model_extract,
                     row.get("page_limit"),
                     None,  # vault-seitige Versionierung erledigt der Skill bei Bedarf
                 ),
-                model=row.get("model_consolidate") or settings.book_nuggets_model,
+                model=model_consolidate,
+                engine=_engine_for_model(model_consolidate),
                 permission_mode=settings.book_nuggets_permission_mode,
                 owner=settings.default_owner,
                 project_name="Buch-Nuggets",

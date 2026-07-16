@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+import sqlite3
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -283,6 +284,30 @@ async def test_retry_resets_error_to_pending(tmp_path, monkeypatch):
     row = (await worker.list_queue())[0]
     assert row["status"] == "pending" and row["error_message"] is None
     assert worker._draining is True
+
+
+async def test_legacy_model_defaults_migrate_once(tmp_path):
+    db = str(tmp_path / "bnq.db")
+    repo = SqliteBookNuggetsRepository(db)
+    await repo.init()
+    await repo.save_settings({
+        "default_model_extract": "sonnet",
+        "default_model_consolidate": "opus",
+    })
+    with sqlite3.connect(db) as conn:
+        conn.execute("PRAGMA user_version = 0")
+
+    await SqliteBookNuggetsRepository(db).init()
+    migrated = await SqliteBookNuggetsRepository(db).get_settings()
+    assert migrated["default_model_extract"] == "opencode-go/deepseek-v4-flash"
+    assert migrated["default_model_consolidate"] == "opencode-go/deepseek-v4-flash"
+
+    await repo.save_settings({
+        "default_model_extract": "sonnet",
+        "default_model_consolidate": "opus",
+    })
+    await SqliteBookNuggetsRepository(db).init()
+    assert (await repo.get_settings())["default_model_consolidate"] == "opus"
 
 
 async def test_marker_driver_records_result(tmp_path, monkeypatch):

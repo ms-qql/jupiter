@@ -9,7 +9,14 @@ QueueStatus = Literal["pending", "running", "done", "error"]
 WorkerStatus = Literal["idle", "running"]
 SourceType = Literal["url", "upload"]
 ModelMode = Literal["staged", "single"]
-ModelName = Literal["haiku", "sonnet", "opus"]
+ModelName = Literal[
+    "haiku", "sonnet", "opus",
+    "opencode-go/glm-5.2", "opencode-go/qwen3.7-max",
+    "opencode-go/kimi-k2.7-code", "opencode-go/minimax-m3",
+    "opencode-go/mimo-v2.5-pro", "opencode-go/deepseek-v4-pro",
+    "opencode-go/qwen3.7-plus", "opencode-go/mimo-v2.5",
+    "opencode-go/deepseek-v4-flash",
+]
 OnDuplicate = Literal["overwrite", "new_version"]
 
 
@@ -59,8 +66,8 @@ class QueueAddRequest(BaseModel):
     source_type: SourceType
     source_ref: str = Field(..., min_length=1, description="URL oder Upload-Pfad.")
     model_mode: ModelMode = "staged"
-    model_extract: ModelName = "sonnet"
-    model_consolidate: ModelName = "opus"
+    model_extract: ModelName = "opencode-go/deepseek-v4-flash"
+    model_consolidate: ModelName = "opencode-go/deepseek-v4-flash"
     page_limit: int | None = Field(None, ge=1, le=5000)
     on_duplicate: OnDuplicate | None = Field(
         None, description="Bei erkanntem Duplikat (D9): overwrite | new_version."
@@ -76,8 +83,8 @@ class EstimateRequest(BaseModel):
     source_type: SourceType
     source_ref: str = Field(..., min_length=1)
     model_mode: ModelMode = "staged"
-    model_extract: ModelName = "sonnet"
-    model_consolidate: ModelName = "opus"
+    model_extract: ModelName = "opencode-go/deepseek-v4-flash"
+    model_consolidate: ModelName = "opencode-go/deepseek-v4-flash"
     page_limit: int | None = Field(None, ge=1, le=5000)
 
 
@@ -101,8 +108,8 @@ class DuplicateConflict(BaseModel):
 
 class BookNuggetsSettingsRead(BaseModel):
     default_model_mode: str = "staged"
-    default_model_extract: str = "sonnet"
-    default_model_consolidate: str = "opus"
+    default_model_extract: str = "opencode-go/deepseek-v4-flash"
+    default_model_consolidate: str = "opencode-go/deepseek-v4-flash"
     default_page_limit: int | None = None
 
 

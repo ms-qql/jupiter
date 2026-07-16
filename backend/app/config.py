@@ -473,7 +473,7 @@ class Settings(BaseSettings):
     book_nuggets_poll_interval_seconds: float = 5.0
     # Default-Hauptmodell (Konsolidierung) der Verarbeitungs-Session, falls am Eintrag
     # keins gesetzt ist. permission_mode = bypassPermissions (headless, kein Gate).
-    book_nuggets_model: str = "opus"
+    book_nuggets_model: str = "opencode-go/deepseek-v4-flash"
     book_nuggets_permission_mode: str = "bypassPermissions"
     # Arbeitsverzeichnis (cwd/Scope) der Sessions. Default = Hal-Vault. MUSS innerhalb
     # allowed_roots liegen + existieren.

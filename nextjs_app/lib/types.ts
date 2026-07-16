@@ -974,7 +974,13 @@ export type BookNuggetsWorkerStatus = "idle" | "running";
 
 /** Modell-Stufenlogik + erlaubte Modelle (Backend-Whitelist). */
 export type BookNuggetsModelMode = "staged" | "single";
-export type BookNuggetsModel = "haiku" | "sonnet" | "opus";
+export type BookNuggetsModel =
+  | "haiku" | "sonnet" | "opus"
+  | "opencode-go/glm-5.2" | "opencode-go/qwen3.7-max"
+  | "opencode-go/kimi-k2.7-code" | "opencode-go/minimax-m3"
+  | "opencode-go/mimo-v2.5-pro" | "opencode-go/deepseek-v4-pro"
+  | "opencode-go/qwen3.7-plus" | "opencode-go/mimo-v2.5"
+  | "opencode-go/deepseek-v4-flash";
 export type BookNuggetsSourceType = "url" | "upload";
 export type BookNuggetsOnDuplicate = "overwrite" | "new_version";
 
