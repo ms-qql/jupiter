@@ -48,8 +48,8 @@ Die Kernfunktion liefert in der geprüften Charge nur 3 von 14 belegte Ergebniss
 
 **Verifikation:** Reproduktionsfall rot → grün; `test_proj53_book_nuggets.py` + `test_proj53_qa.py`: 43 Tests grün; `git diff --check` grün. Die vollständige Backend-Suite hing in der Umgebung ohne Abschluss und wurde nach über 90 Sekunden abgebrochen. `ruff` war im Dashboard-Environment nicht installiert.
 
-**Tracking:** PROJ-53-Changelog aktualisiert; `features/INDEX.md` bleibt auf `Deployed`; kein Commit und kein Deploy.
+**Tracking:** Fix `f5d790f`, OpenCode-Support `b0627e5`, Release `ba057a5`; deployed als `v0.27.33-PROJ-53` nach `https://jupiter.auxevo.tech`. `features/INDEX.md` bleibt auf `Deployed`.
 
 **Knowledge:** `/home/dev/tools/Hal/Agentic OS/Jupiter/Knowledge/bug-geloest-jupiter-buch-nuggets-fortsetzung.md`
 
-**Rest-Risiko / Nächster Schritt:** Ein echter Live-Smoke mit dem Kaufman-Buch steht noch aus. Persistente Chunk-Checkpoints wären ein separates Robustheits-Feature, nicht Teil dieses minimalen Bugfixes.
+**Rest-Risiko / Nächster Schritt:** Health, Version, Queue-Korrektur und Modellmigration sind live geprüft. Ein kompletter erneuter Kaufman-Lauf bleibt wegen Laufzeit/Kosten ein manueller Smoke-Test. Persistente Chunk-Checkpoints wären ein separates Robustheits-Feature, nicht Teil dieses minimalen Bugfixes.

@@ -357,7 +357,8 @@ Keine Critical/High/Medium gefunden.
 
 ## Deployment
 - **Production URL:** https://jupiter.auxevo.tech (Route `/apps/book_nuggets`, Sidebar-Sektion „Micro-Apps")
-- **Deployed:** 2026-06-28 · **Version:** 0.26.0 · **Tag:** v0.26.0-PROJ-53
+- **Initial deploy:** 2026-06-28 · **Version:** 0.26.0 · **Tag:** v0.26.0-PROJ-53
+- **Follow-up deploy:** 2026-07-16 · **Version:** 0.27.33 · **Tag:** v0.27.33-PROJ-53 — vollständige Ergebnisprüfung, fortschrittsabhängige Fortsetzungen, historische Statuskorrektur und OpenCode-Modell-Support.
 - **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend` aus `/home/dev/projects/jupiter`, Caddy TLS), Auto-Deploy via GitHub-Webhook auf `main` (`jupiter-deploy/deploy.sh`: `git reset --hard origin/main` + `npm run build` + Service-Restart) ([[jupiter-deployment]]).
 - **Geshippt:** native Micro-App Buch-Nuggets — Backend (SQLite-Queue-Worker, Stufen-Modelllogik, Kostenschätzung, Duplikat-Logik, 8 Routen) + Frontend (Upload/URL, Modell-Steuerung, Queue mit Phase, Bibliothek, Duplikat-Dialog) + Host-Skill `hal-book-nuggets`. **Mit-promotet:** Chat-Modus-Fix (Initial-Prompt ausblenden) + Status-Docs PROJ-1/2/3/6.
 - **Hinweis:** Prod-`engines.yaml` (gitignored) trägt den `book_nuggets`-Eintrag bereits (überlebt `git reset --hard`).
