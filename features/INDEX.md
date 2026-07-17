@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-73
+**Next Available ID:** PROJ-76
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -84,7 +84,10 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-69 | Clipboard (native Micro-App: geräteübergreifender Datei-Clipboard mit HAL Inbox) | P1 | Approved | PROJ-40, PROJ-2, PROJ-11 | [Spec](PROJ-69-clipboard-microapp.md) |
 | PROJ-70 | Bugfix: Claude-Engine dupliziert Fragekarten nach jedem Resume (bis zu 6 gleiche Frageboxen) | P1 | Deployed | PROJ-48, PROJ-63, PROJ-27, PROJ-66 | [Spec](PROJ-70-claude-duplizierte-frageboxen-nach-resume.md) |
 | PROJ-71 | Effort-Level (Reasoning-Effort) im Neue-Session-Dialog | P1 | Architected | PROJ-1, PROJ-18, PROJ-48, PROJ-57, PROJ-56, PROJ-51 | [Spec](PROJ-71-effort-level-neue-session.md) |
-| PROJ-72 | Bugfix: Claude-Engine dupliziert Nachrichten (und Fragekarten) nach Resume/Restart — Replay eliminieren (Seek-to-End + DB-Transkript) | P1 | Approved | PROJ-63, PROJ-66, PROJ-70, PROJ-27 | [Spec](PROJ-72-claude-transkript-dubletten-nach-resume.md) |
+| PROJ-72 | Bugfix: Claude-Engine dupliziert Nachrichten (und Fragekarten) nach Resume/Restart — Replay eliminieren (Seek-to-End + DB-Transkript) | P1 | Deployed | PROJ-63, PROJ-66, PROJ-70, PROJ-27 | [Spec](PROJ-72-claude-transkript-dubletten-nach-resume.md) |
+| PROJ-73 | Token Savings — globales, engine-übergreifendes Optimierungsprofil | P1 | Deployed | PROJ-1, PROJ-9, PROJ-48, PROJ-51, PROJ-52, PROJ-56, PROJ-57 | [Spec](PROJ-73-token-savings-profile.md) |
+| PROJ-74 | Bugfix: Backend-Neustart orphaniert lebende tmux-Sessions unnötig (rehydrate() ignoriert echte Prozess-Liveness) | P1 | Architected | PROJ-63, PROJ-27, PROJ-33, PROJ-66 | [Spec](PROJ-74-rehydrate-tmux-liveness-haertung.md) |
+| PROJ-75 | Bugfix-Verifikation: PROJ-72-Transkript-Replay nach wiederholtem Resume in Produktion nicht restlos ausgeschlossen | P1 | Planned | PROJ-72, PROJ-63, PROJ-66, PROJ-70 | [Spec](PROJ-75-proj72-replay-produktionsverifikation.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
