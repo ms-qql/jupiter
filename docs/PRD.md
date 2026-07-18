@@ -82,7 +82,7 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-69 | Clipboard (native Micro-App: geräteübergreifender Datei-Clipboard mit HAL Inbox) | P1 | Micro-Apps / Arbeitsraum / Vault | In Progress |
 | PROJ-72 | Bugfix: Claude-Transkript und Fragekarten nach Resume ohne Voll-Replay | P1 | Engine-Layer / Persistenz / Resume | Deployed |
 | PROJ-73 | Token Savings — globales, engine-übergreifendes Optimierungsprofil | P1 | Engine-Layer / Settings / Effizienz | In Review |
-| PROJ-74 | Bugfix: Backend-Neustart orphaniert lebende tmux-Sessions unnötig (rehydrate() ignoriert echte Prozess-Liveness) | P1 | Engine-Layer / Persistenz / Resume | Approved |
+| PROJ-74 | Bugfix: Backend-Neustart orphaniert lebende tmux-Sessions unnötig (rehydrate() ignoriert echte Prozess-Liveness) | P1 | Engine-Layer / Persistenz / Resume | Deployed |
 | PROJ-75 | Bugfix-Verifikation: PROJ-72-Transkript-Replay nach wiederholtem Resume in Produktion nicht restlos ausgeschlossen | P1 | Engine-Layer / Persistenz / Resume | Planned |
 
 ---
