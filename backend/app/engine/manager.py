@@ -31,6 +31,7 @@ from .base import DeadDriver, EngineDriver, LaunchSpec
 from .claude_driver import ClaudeCodeDriver
 from .generic_cli_driver import GenericCliDriver
 from .openai_driver import OpenAIDriver
+from .transport import TmuxTransport
 from .registry import DRIVER_GENERIC_CLI, DRIVER_OPENAI, EngineProfile, engine_registry
 from .savings import SavingsChoice, savings_resolver
 from .cache_manager import CacheManager
@@ -1431,17 +1432,44 @@ class SessionManager:
             except Exception as exc:  # noqa: BLE001 — best-effort, In-Memory bleibt führend.
                 logger.warning("Transkript konnte nicht rehydriert werden (%s): %s", sid, exc)
             if row.get("status") in ACTIVE_STATES:
-                state.status = ERROR
                 if state.drained_at:
                     # PROJ-33: geordnet gedraint → Kandidat für Auto-Resume (drained_at bleibt
                     # gesetzt; auto_resume_drained() setzt anschließend fort).
+                    state.status = ERROR
                     state.error = "Nach geordnetem Neustart pausiert — wird automatisch fortgesetzt."
+                    logger.info("Rehydrate %s: gedraint → Auto-Resume-Kandidat.", sid)
+                elif state.transport == "tmux" and await TmuxTransport(sid).pane_alive_after_restart():
+                    # PROJ-74: ein harter Backend-Absturz setzt kein `drained_at`, aber die
+                    # tmux-Pane (PROJ-63) überlebt den Neustart des Backends unabhängig davon
+                    # — der Agent arbeitet unbeobachtet weiter. Bisher wurde das trotzdem
+                    # pauschal als ERROR/„verwaist" geführt (nur der Fehlertext berücksichtigte
+                    # `_pid_alive`, nicht die Status-Entscheidung selbst) und zählte damit auch
+                    # nicht mehr gegen das Session-Limit (`active_count()` zählt nur
+                    # `ACTIVE_STATES`), obwohl der Prozess real weiterläuft. Verifiziert lebendig
+                    # → Status NICHT auf ERROR herabstufen, sondern reconnect-/reanimierbar
+                    # lassen (Resume/`send_input` prüfen ohnehin `driver.is_alive`, nicht
+                    # `state.status`; siehe `_ensure_no_stale_session` für den Kill-vor-Respawn
+                    # beim eigentlichen Reconnect).
+                    state.error = (
+                        "Nach ungeordnetem Neustart nicht mehr direkt steuerbar — Prozess läuft "
+                        "weiter, bitte reanimieren, um wieder anzuknüpfen."
+                    )
+                    logger.info(
+                        "Rehydrate %s: tmux-Pane verifiziert lebendig → kein ERROR (Status bleibt %s).",
+                        sid, state.status,
+                    )
                 else:
+                    state.status = ERROR
                     alive = self._pid_alive(row.get("pid"))
                     note = "Prozess läuft evtl. noch, ist aber nicht steuerbar" if alive else "Prozess beendet"
                     state.error = f"Verwaist nach Backend-Neustart ({note})."
+                    logger.info("Rehydrate %s: verwaist (%s) → ERROR.", sid, note)
             self._sessions[sid] = runtime
-            if state.status != row.get("status"):  # verwaist → korrigierten Status spiegeln.
+            if row.get("status") in ACTIVE_STATES:
+                # PROJ-74: jeder Zweig oben setzt mindestens `state.error` neu (nicht mehr
+                # zwingend `state.status`, s. tmux-alive-Zweig) — daher unconditional statt
+                # nur bei Status-Änderung persistieren, sonst bliebe die aktualisierte
+                # Fehlermeldung nur im RAM und ginge beim nächsten Neustart verloren.
                 self._persist(runtime)
         if rows:
             logger.info("Live-Index rehydriert: %d Session(s).", len(rows))
