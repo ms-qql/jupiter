@@ -659,13 +659,42 @@ class TmuxTransport(Transport):
     async def _probe_alive(self) -> bool:
         if not self._spawned:
             return False
+        return await self._pane_has_live_process()
+
+    async def _pane_has_live_process(self) -> bool:
+        """Rohe tmux-Abfrage, ob die Pane einen nicht-toten Prozess führt.
+
+        Anders als ``_probe_alive`` OHNE das ``_spawned``-Gate — das Gate schützt nur
+        vor einer Abfrage, bevor DIESE Python-Instanz selbst gespawnt hat, sagt aber
+        nichts über die tmux-Session/Pane selbst aus. PROJ-74 braucht genau diese
+        rohe Abfrage: nach einem Backend-Neustart ist ``_spawned`` auf einer frisch
+        konstruierten Instanz immer ``False``, obwohl die zugrunde liegende tmux-Pane
+        (angelegt vor dem Neustart) durchaus noch lebt.
+        """
         rc, out, _err = await self._tmux(
             "list-panes", "-t", self.tmux_session, "-F", "#{pane_dead}",
             check=False, retries=settings.tmux_cmd_retries,
         )
         if rc != 0:
-            return False  # Session existiert nicht (mehr).
+            return False  # Session/Pane existiert nicht (mehr).
         return any(line.strip() == "0" for line in out.splitlines())
+
+    async def pane_alive_after_restart(self) -> bool:
+        """PROJ-74: Verifizierte Pane-Liveness für eine frisch konstruierte Instanz
+        (z. B. beim Rehydrieren nach einem Backend-Neustart, wo ``_spawned`` naturgemäß
+        ``False`` ist). Fail-safe: JEDER tmux-Fehler (Daemon down, Timeout, fehlendes
+        Binary — ``asyncio.create_subprocess_exec`` wirft dafür ``FileNotFoundError``,
+        keinen ``TransportError``) gilt als „nicht lebendig" — bewusst konservativ,
+        siehe ``_pane_has_live_process``/``_tmux``. QA-BUG-1 (PROJ-74): ein zu enges
+        ``except TransportError`` ließ genau diesen Fall durch und riss dadurch den
+        gesamten ``rehydrate()``-Durchlauf ab, statt nur diese eine Zeile konservativ
+        auf „tot" zu setzen — ``OSError`` (Basisklasse von ``FileNotFoundError``,
+        ``PermissionError`` usw.) deckt die reale Fehlerbreite eines Subprozess-Starts.
+        """
+        try:
+            return await self._pane_has_live_process()
+        except (TransportError, OSError):  # TmuxTimeoutError ⊂ TransportError.
+            return False
 
     @property
     def pid(self) -> int | None:
