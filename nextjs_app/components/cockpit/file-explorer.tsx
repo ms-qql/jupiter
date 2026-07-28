@@ -32,6 +32,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { FilePreview } from "@/components/cockpit/file-preview";
 import { ActiveSessionPanel } from "@/components/cockpit/active-session-panel";
+import { ResizableAside } from "@/components/cockpit/resizable-aside";
 import { BranchBadge } from "@/components/cockpit/branch-panel";
 import {
   ApiError,
@@ -252,9 +253,11 @@ export function FileExplorer() {
 
       <div className="flex min-h-0 flex-1">
         {/* Spalte 2: Datei-/Verzeichnis-Panel */}
-        <aside
+        <ResizableAside
+          storageKey="dateien:list-width"
+          defaultWidth={320}
           className={cn(
-            "w-full shrink-0 flex-col border-r border-border bg-card/40 md:flex md:w-80",
+            "w-full flex-col border-r border-border bg-card/40 md:flex",
             mobilePane === "list" ? "flex" : "hidden md:flex",
           )}
           onDrop={(e) => {
@@ -334,7 +337,9 @@ export function FileExplorer() {
                         onClick={() => openDir(entry.path)}
                       >
                         <Folder className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{entry.name}</span>
+                        <span className="truncate" title={entry.name}>
+                          {entry.name}
+                        </span>
                       </button>
                     ) : (
                       <button
@@ -342,7 +347,9 @@ export function FileExplorer() {
                         onClick={() => selectFile(entry)}
                       >
                         <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{entry.name}</span>
+                        <span className="truncate" title={entry.name}>
+                          {entry.name}
+                        </span>
                         <span className="shrink-0 text-xs text-muted-foreground">
                           {formatBytes(entry.size)}
                         </span>
@@ -372,7 +379,7 @@ export function FileExplorer() {
               </ul>
             )}
           </ScrollArea>
-        </aside>
+        </ResizableAside>
 
         {/* Spalte 3: Inhalts-Ansicht */}
         <main
