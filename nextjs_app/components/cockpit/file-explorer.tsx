@@ -14,6 +14,7 @@ import Link from "next/link";
 import {
   ArrowLeft,
   ArrowUp,
+  BrainCircuit,
   ClipboardPaste,
   Copy,
   Download,
@@ -49,6 +50,10 @@ import { cn } from "@/lib/utils";
 import type { DirListing, FileEntry, RootEntry } from "@/lib/types";
 import { useFileUpload } from "./use-file-upload";
 
+// Fixer Pfad des Hal-Vaults (settings.vault_root) — kein eigener Root, aber
+// per Sprungmarke wie Clipboard sofort erreichbar.
+const HAL_PATH = "/home/dev/tools/Hal";
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -67,6 +72,7 @@ export function FileExplorer() {
   const [listing, setListing] = useState<DirListing | null>(null);
   const [clipboardPath, setClipboardPath] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // PROJ-28: auf schmalen Breiten Panel ⇄ Ansicht umschalten (nie beide quetschen).
@@ -109,6 +115,7 @@ export function FileExplorer() {
   // Laden bei Pfadwechsel — setState nur in den Promise-Callbacks (kein sync setState im Effect).
   useEffect(() => {
     if (!path) return;
+    setSelected(new Set());
     let active = true;
     listDir(path)
       .then((d) => {
@@ -183,6 +190,21 @@ export function FileExplorer() {
       const res = await deleteFiles([entry.path]);
       if (res.failed.length) toast.error("Löschen fehlgeschlagen");
       if (selectedPath === entry.path) setSelectedPath(null); // Ansicht auf Empty-State
+      void refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Löschen fehlgeschlagen");
+    }
+  }
+
+  async function handleDeleteSelected() {
+    const paths = Array.from(selected);
+    if (!paths.length) return;
+    if (!window.confirm(`${paths.length} Element(e) wirklich löschen?`)) return;
+    try {
+      const res = await deleteFiles(paths);
+      if (res.failed.length) toast.error("Löschen fehlgeschlagen");
+      if (selectedPath && paths.includes(selectedPath)) setSelectedPath(null);
+      setSelected(new Set());
       void refresh();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Löschen fehlgeschlagen");
@@ -307,7 +329,45 @@ export function FileExplorer() {
                 <ClipboardPaste className="size-4" /> Clipboard
               </Button>
             )}
+            <Button
+              type="button"
+              size="sm"
+              variant={path === HAL_PATH ? "default" : "secondary"}
+              onClick={() => openDir(HAL_PATH)}
+              title={HAL_PATH}
+            >
+              <BrainCircuit className="size-4" /> HAL
+            </Button>
           </div>
+
+          {/* Mehrfachauswahl: alle markieren + gesammelt löschen. */}
+          {listing && listing.entries.length > 0 && (
+            <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs">
+              <label className="flex items-center gap-1.5 text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={selected.size === listing.entries.length}
+                  onChange={(e) =>
+                    setSelected(
+                      e.target.checked ? new Set(listing.entries.map((en) => en.path)) : new Set(),
+                    )
+                  }
+                />
+                Alle
+              </label>
+              {selected.size > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  className="ml-auto h-6 px-2"
+                  onClick={() => void handleDeleteSelected()}
+                >
+                  <Trash2 className="size-3.5" /> {selected.size} löschen
+                </Button>
+              )}
+            </div>
+          )}
 
           {/* Listing */}
           <ScrollArea
@@ -331,6 +391,18 @@ export function FileExplorer() {
                       entry.path === selectedPath && "bg-accent",
                     )}
                   >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(entry.path)}
+                      onChange={(e) =>
+                        setSelected((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(entry.path);
+                          else next.delete(entry.path);
+                          return next;
+                        })
+                      }
+                    />
                     {entry.kind === "dir" ? (
                       <button
                         className="flex flex-1 items-center gap-2 truncate text-left hover:text-primary"
