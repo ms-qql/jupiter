@@ -446,14 +446,20 @@ class ProviderBudgetService:
     _WINDOW_LABELS: dict[str, tuple[str, str]] = {}
     _DEFAULT_LABELS: tuple[str, str] = ("5h", "Woche")
 
+    # Codex kennt seit dem Provider-Wechsel kein 5h-Fenster mehr — nur Woche.
+    _WEEK_ONLY_PROVIDERS = ("codex",)
+
     def _windows(self, provider: str) -> list[_WindowSpec]:
         limit_5h, limit_week = self._limits_for(provider)
         label_5h, label_week = self._WINDOW_LABELS.get(
             provider, self._DEFAULT_LABELS
         )
+        week_spec = _WindowSpec("week", label_week, timedelta(days=7), limit_week)
+        if provider in self._WEEK_ONLY_PROVIDERS:
+            return [week_spec]
         return [
             _WindowSpec("5h", label_5h, timedelta(hours=5), limit_5h),
-            _WindowSpec("week", label_week, timedelta(days=7), limit_week),
+            week_spec,
         ]
 
     def _limits_for(self, provider: str) -> tuple[int, int]:
