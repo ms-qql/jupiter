@@ -39,6 +39,7 @@ import {
   ApiError,
   deleteFiles,
   downloadFile,
+  downloadZip,
   getClipboardDir,
   listDir,
   listFileRoots,
@@ -211,6 +212,17 @@ export function FileExplorer() {
     }
   }
 
+  async function handleDownloadSelected() {
+    const paths = Array.from(selected);
+    if (!paths.length) return;
+    try {
+      await downloadZip(paths);
+      setSelected(new Set());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Download fehlgeschlagen");
+    }
+  }
+
   async function copyPath(p: string) {
     const ok = await copyText(p);
     toast[ok ? "success" : "error"](ok ? "Pfad kopiert" : "Kopieren nicht möglich");
@@ -356,15 +368,26 @@ export function FileExplorer() {
                 Alle
               </label>
               {selected.size > 0 && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="destructive"
-                  className="ml-auto h-6 px-2"
-                  onClick={() => void handleDeleteSelected()}
-                >
-                  <Trash2 className="size-3.5" /> {selected.size} löschen
-                </Button>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2"
+                    onClick={() => void handleDownloadSelected()}
+                  >
+                    <Download className="size-3.5" /> {selected.size} herunterladen
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    className="h-6 px-2"
+                    onClick={() => void handleDeleteSelected()}
+                  >
+                    <Trash2 className="size-3.5" /> {selected.size} löschen
+                  </Button>
+                </div>
               )}
             </div>
           )}

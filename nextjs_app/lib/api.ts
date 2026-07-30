@@ -841,6 +841,39 @@ export async function downloadFile(path: string, filename: string): Promise<void
   URL.revokeObjectURL(url);
 }
 
+/** Mehrere Dateien/Ordner als ZIP authentifiziert herunterladen (Mehrfachauswahl). */
+export async function downloadZip(paths: string[], filename = "dateien.zip"): Promise<void> {
+  let resp: Response;
+  try {
+    resp = await rawFetch("/files/download-zip", {
+      method: "POST",
+      body: JSON.stringify({ paths }),
+    });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (resp.status === 401 && (await refreshAccessToken())) {
+    resp = await rawFetch("/files/download-zip", {
+      method: "POST",
+      body: JSON.stringify({ paths }),
+    });
+  }
+  if (resp.status === 401) {
+    handleAuthFailure();
+    throw new ApiError("Nicht angemeldet", 401);
+  }
+  if (!resp.ok) throw new ApiError(`Fehler ${resp.status}`, resp.status);
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /** Datei(en) hochladen — Default-Ziel = Clipboard-Ordner. Multipart, daher
  *  eigenes fetch (kein JSON-Content-Type wie bei `request`). */
 export async function uploadFiles(

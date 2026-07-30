@@ -61,6 +61,10 @@ class DeleteResult(BaseModel):
     failed: list[str]
 
 
+class ZipRequest(BaseModel):
+    paths: list[str] = Field(..., min_length=1, description="Absolute Pfade, die als ZIP gebündelt werden sollen.")
+
+
 class ClipboardDirRead(BaseModel):
     """Aktueller Clipboard-Ordner (absoluter Pfad, garantiert innerhalb der Roots)."""
 

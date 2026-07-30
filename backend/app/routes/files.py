@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from ..engine.files import FileService
 from ..schemas.files import (
@@ -24,6 +24,7 @@ from ..schemas.files import (
     RenameRequest,
     RootEntry,
     UploadResult,
+    ZipRequest,
 )
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -72,6 +73,19 @@ def download(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Datei nicht gefunden.") from exc
     return FileResponse(real, filename=os.path.basename(real))
+
+
+@router.post("/download-zip")
+def download_zip(request: Request, payload: ZipRequest) -> StreamingResponse:
+    try:
+        buf = _svc(request).build_zip(payload.paths)
+    except ValueError as exc:
+        raise _400(exc) from exc
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="dateien.zip"'},
+    )
 
 
 @router.post("/upload", response_model=UploadResult)
