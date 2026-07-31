@@ -392,10 +392,18 @@ class Settings(BaseSettings):
     # Standard ist self-hosted faster-whisper (lokal, kein API-Key, keine
     # laufenden Kosten). Modellgröße als Kompromiss aus Deutsch-Qualität und
     # CPU-Latenz/RAM auf dem GPU-losen Dev-VPS; via Env hoch-/runterschaltbar.
-    whisper_model: str = "small"
+    whisper_model: str = "base"
     # Transkriptions-Sprache; leer = auto-detect (mehrsprachig, empfohlen).
     # Explizit setzen (z.B. "de") nur wenn Spracherkennung zu ungenau.
     whisper_language: str = ""
+    # CPU-Threads für ctranslate2; 0 = alle Kerne des Hosts nutzen.
+    whisper_cpu_threads: int = 0
+    # Greedy-Decoding (1) statt Beam-Search (faster-whisper-Default 5) — bei
+    # Diktat-Kurzaufnahmen kaum Qualitätsverlust, aber deutlich weniger Latenz.
+    whisper_beam_size: int = 1
+    # Voice-Activity-Detection: schneidet Stille/Rauschen VOR dem Decoder weg.
+    # Verhindert die teuren Halluzinations-Schleifen in Pausen.
+    whisper_vad_filter: bool = True
     # Optionaler Groq-Cloud-Fallback (pay-per-use). Leerer Key = nicht verfügbar.
     # Secret NUR aus der .env (JUPITER_GROQ_API_KEY), nie im Repo.
     groq_api_key: str = ""

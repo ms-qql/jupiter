@@ -92,6 +92,14 @@ from .routes import (
 logger = logging.getLogger(__name__)
 
 
+async def _whisper_warmup(app: FastAPI) -> None:
+    """PROJ-20: Whisper-Modell einmalig vorladen (best-effort, blockiert nichts)."""
+    try:
+        await app.state.transcription.warmup()
+    except Exception:  # noqa: BLE001 — Warmup ist Komfort, kein Startkriterium.
+        logger.warning("Whisper-Warmup fehlgeschlagen.", exc_info=True)
+
+
 async def _liveness_loop(app: FastAPI) -> None:
     """PROJ-27: niedrigfrequenter Hintergrund-Poll für den verifizierten Liveness-Zustand.
 
@@ -284,6 +292,10 @@ def create_app(
             await app.state.metrics.startup()
         except Exception:  # noqa: BLE001 — Metriken sind best-effort, App startet trotzdem.
             pass
+        # PROJ-20: Whisper-Modell im Hintergrund vorladen, damit die erste
+        # Aufnahme nach einem Neustart nicht den Modell-Ladevorgang bezahlt.
+        # Bewusst nicht awaited — der Start soll nicht darauf warten.
+        whisper_warmup_task = asyncio.create_task(_whisper_warmup(app))
         # PROJ-27: Hintergrund-Auswerter starten (erkennt Hänger ohne Tool-Gate).
         liveness_task = asyncio.create_task(_liveness_loop(app))
         # PROJ-41: Video-Summary-Worker-Loop (sequenzielle Queue-Abarbeitung).
@@ -301,7 +313,7 @@ def create_app(
         try:
             yield
         finally:
-            for task in (liveness_task, video_summary_task, book_nuggets_task, session_condense_task, peppermint_task, metrics_task, coordinator_task):
+            for task in (whisper_warmup_task, liveness_task, video_summary_task, book_nuggets_task, session_condense_task, peppermint_task, metrics_task, coordinator_task):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
