@@ -257,9 +257,91 @@ class CodexRolloutProbe:
         return parse_codex_rate_limits(rate_limits, now)
 
 
+# ------------------------------------------------------------------------ OpenCode
+
+# "AI_APICallError: Weekly usage limit reached. Resets in 2 days. To continue ..."
+_OPENCODE_LIMIT_RE = re.compile(
+    r"usage limit reached\.\s*resets in\s*([\d.]+)\s*(day|days|hour|hours|minute|minutes)",
+    re.IGNORECASE,
+)
+_OPENCODE_TS_RE = re.compile(r"^timestamp=(\S+)")
+
+
+def _opencode_reset_delta(amount: float, unit: str) -> timedelta:
+    unit = unit.lower()
+    if unit.startswith("day"):
+        return timedelta(days=amount)
+    if unit.startswith("hour"):
+        return timedelta(hours=amount)
+    return timedelta(minutes=amount)
+
+
+def parse_opencode_log_limit(lines: list[str]) -> LiveWindow | None:
+    """Letzte „usage limit reached"-Zeile im OpenCode-Log → Live-Fenster.
+
+    ponytail: OpenCode meldet bislang ausschließlich das Wochenlimit (kein 5h-Fenster
+    beobachtet) → hart auf ``week`` gemappt. Taucht künftig ein Scope-Wort wie „Daily"/
+    „Hourly" im Fehlertext auf, hier um ein 5h-Mapping erweitern.
+    """
+    for line in reversed(lines):
+        m = _OPENCODE_LIMIT_RE.search(line)
+        if not m:
+            continue
+        ts_m = _OPENCODE_TS_RE.match(line)
+        if not ts_m:
+            continue
+        try:
+            event_time = datetime.fromisoformat(ts_m.group(1).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        delta = _opencode_reset_delta(float(m.group(1)), m.group(2))
+        return LiveWindow(
+            used_pct=100.0,
+            reset_at=event_time + delta,
+            source="cli_live:opencode_log",
+        )
+    return None
+
+
+class OpenCodeLogProbe:
+    """Liest read-only die letzte Kontingent-Fehlerzeile aus dem lokalen OpenCode-Log.
+
+    OpenCode Go hat keinen API-Endpunkt für den aktuellen Abo-Stand — die einzige
+    verlässliche Live-Quelle ist der Fehlertext, den die CLI beim Erreichen des
+    Limits selbst loggt (inkl. Reset-Countdown).
+    """
+
+    def __init__(self, *, cfg=settings) -> None:
+        self._cfg = cfg
+
+    async def __call__(self, now: datetime) -> dict[str, LiveWindow]:
+        if not getattr(self._cfg, "provider_budget_opencode_log_enabled", True):
+            return {}
+        path = self._cfg.opencode_log_path
+        return await asyncio.to_thread(self._read, path, now)
+
+    @staticmethod
+    def _read(path: str, now: datetime) -> dict[str, LiveWindow]:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except OSError as exc:
+            log.warning("OpenCode-Log %s nicht lesbar: %s", path, exc)
+            return {}
+        window = parse_opencode_log_limit(lines[-2000:])
+        if window is None:
+            return {}
+        # Reset schon vorbei → Fehlerzeile ist obsolet, sonst bliebe die Anzeige nach
+        # Kontingent-Reset für immer bei 100 %. Zurück auf die Kostenschätzung fallen lassen.
+        if window.reset_at is not None and window.reset_at <= now:
+            return {}
+        return {"week": window}
+
+
 def build_live_probes(cfg=settings) -> dict:
     """Echte Live-Probes für den ``ProviderBudgetService`` (Production-Wiring)."""
     return {
         "claude": ClaudeUsageProbe(cfg=cfg),
         "codex": CodexRolloutProbe(cfg=cfg),
+        "opencode": OpenCodeLogProbe(cfg=cfg),
     }

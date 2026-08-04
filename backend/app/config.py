@@ -224,6 +224,12 @@ class Settings(BaseSettings):
     provider_budget_claude_cli_enabled: bool = True
     provider_budget_codex_rollout_enabled: bool = True
     codex_sessions_dir: str = str(Path.home() / ".codex" / "sessions")
+    # OpenCode Go meldet sein Wochenlimit serverseitig nur als Fehlertext im CLI-Log
+    # ("Weekly usage limit reached. Resets in N days"), nicht als $-Kosten (die
+    # Zen/Go-Bundle-Modelle sind Abo-Kontingent, kein Per-Token-Preis) → die bisherige
+    # Kostenschätzung blieb bei laufendem Kontingent-Limit fälschlich niedrig.
+    provider_budget_opencode_log_enabled: bool = True
+    opencode_log_path: str = str(Path.home() / ".local" / "share" / "opencode" / "log" / "opencode.log")
     # Optionale Fallback-Quoten für lokale Schätzung. 0 = unbekannt → UI zeigt n/v
     # statt erfundener Prozentwerte. Live-Quelle ist provider_budgets.yaml (UI-editierbar);
     # diese env-Felder bleiben als letzter Fallback, wenn kein Store gesetzt ist (Tests).

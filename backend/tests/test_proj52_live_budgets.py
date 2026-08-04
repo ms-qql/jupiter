@@ -9,9 +9,11 @@ import pytest
 from app.engine.provider_budget_live import (
     CodexRolloutProbe,
     LiveWindow,
+    OpenCodeLogProbe,
     latest_rollout_file,
     parse_claude_usage,
     parse_codex_rate_limits,
+    parse_opencode_log_limit,
     read_codex_rate_limits,
 )
 from app.engine.usage import ProviderBudgetService
@@ -128,6 +130,70 @@ async def test_codex_probe_disabled_returns_empty(tmp_path) -> None:
         codex_sessions_dir = str(tmp_path)
 
     assert await CodexRolloutProbe(cfg=_Cfg())(NOW) == {}
+
+
+# -------------------------------------------------------------------- OpenCode-Parser
+
+OPENCODE_LOG_LINE = (
+    'timestamp=2026-07-31T09:48:12.741Z level=ERROR run=d1474ab2 message="stream error" '
+    'providerID=opencode-go modelID=deepseek-v4-pro '
+    'error.error="AI_APICallError: Weekly usage limit reached. Resets in 2 days. '
+    "To continue using this model now, enable usage from your available balance: "
+    'https://opencode.ai/workspace/wrk_x/go"'
+)
+
+
+def test_parse_opencode_log_limit_extracts_week_window() -> None:
+    window = parse_opencode_log_limit([OPENCODE_LOG_LINE])
+    assert window is not None
+    assert window.used_pct == 100.0
+    assert window.reset_at == datetime(2026, 8, 2, 9, 48, 12, 741000, tzinfo=timezone.utc)
+    assert window.source == "cli_live:opencode_log"
+
+
+def test_parse_opencode_log_limit_picks_last_match() -> None:
+    older = OPENCODE_LOG_LINE.replace("2026-07-31T09:48:12.741Z", "2026-07-30T00:00:00.000Z")
+    window = parse_opencode_log_limit([older, OPENCODE_LOG_LINE])
+    assert window.reset_at == datetime(2026, 8, 2, 9, 48, 12, 741000, tzinfo=timezone.utc)
+
+
+def test_parse_opencode_log_limit_none_on_garbage() -> None:
+    assert parse_opencode_log_limit(["irgendeine andere Zeile ohne Limit"]) is None
+
+
+@pytest.mark.asyncio
+async def test_opencode_log_probe_reads_last_limit_line(tmp_path) -> None:
+    f = tmp_path / "opencode.log"
+    f.write_text(OPENCODE_LOG_LINE + "\n", encoding="utf-8")
+
+    class _Cfg:
+        provider_budget_opencode_log_enabled = True
+        opencode_log_path = str(f)
+
+    out = await OpenCodeLogProbe(cfg=_Cfg())(NOW)
+    assert out["week"].used_pct == 100.0
+
+
+@pytest.mark.asyncio
+async def test_opencode_log_probe_falls_back_after_reset(tmp_path) -> None:
+    f = tmp_path / "opencode.log"
+    f.write_text(OPENCODE_LOG_LINE + "\n", encoding="utf-8")
+
+    class _Cfg:
+        provider_budget_opencode_log_enabled = True
+        opencode_log_path = str(f)
+
+    after_reset = datetime(2026, 8, 3, 0, 0, tzinfo=timezone.utc)
+    assert await OpenCodeLogProbe(cfg=_Cfg())(after_reset) == {}
+
+
+@pytest.mark.asyncio
+async def test_opencode_log_probe_disabled_returns_empty(tmp_path) -> None:
+    class _Cfg:
+        provider_budget_opencode_log_enabled = False
+        opencode_log_path = str(tmp_path / "missing.log")
+
+    assert await OpenCodeLogProbe(cfg=_Cfg())(NOW) == {}
 
 
 # ----------------------------------------------------------------- Service-Integration
