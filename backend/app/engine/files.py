@@ -25,15 +25,22 @@ from ..config import settings
 _CHUNK = 1024 * 1024  # 1 MB Streaming-Häppchen
 
 # PROJ-76: Text-Endungen, die serverseitig als editierbar gelten (Backend = Allowlist).
+# Deckungsgleich mit TEXT_EXT in nextjs_app/components/cockpit/file-preview.tsx.
 _TEXT_EXTENSIONS: frozenset[str] = frozenset({
     "md", "markdown", "txt", "text", "yaml", "yml", "json", "jsonc",
     "log", "csv", "tsv", "xml", "toml", "ini", "cfg", "conf", "env",
     "properties",
     # gängige Skript- und Quelltextdateien (wie in der Dateivorschau unterstützt)
-    "py", "js", "jsx", "ts", "tsx", "css", "scss", "html", "htm",
-    "sh", "bash", "zsh", "fish", "sql", "r", "rb", "go", "rs", "java",
-    "kt", "swift", "c", "cpp", "h", "hpp", "vue", "svelte", "astro",
-    "php", "pl", "pm", "lua", "dart", "gradle", "dockerfile",
+    "py", "js", "mjs", "cjs", "jsx", "ts", "tsx", "css", "scss", "sass",
+    "less", "html", "htm", "sh", "bash", "zsh", "fish", "sql", "r", "rb",
+    "go", "rs", "java", "kt", "swift", "c", "cpp", "cc", "h", "hpp", "vue",
+    "svelte", "astro", "php", "pl", "pm", "lua", "dart", "gradle",
+})
+
+# Dateinamen ohne bzw. mit führendem Punkt ohne echte Endung, die die Dateivorschau
+# ebenfalls als Text erkennt (``os.path.splitext`` liefert dafür keine Endung).
+_TEXT_BASENAMES: frozenset[str] = frozenset({
+    "dockerfile", "makefile", ".gitignore", ".editorconfig", ".npmrc",
 })
 
 # 2 MB Obergrenze für Text-Editierung.
@@ -151,6 +158,8 @@ class FileService:
 
     @staticmethod
     def _is_text_extension(name: str) -> bool:
+        if name.lower() in _TEXT_BASENAMES:
+            return True
         ext = os.path.splitext(name)[1].lower().lstrip(".")
         return ext in _TEXT_EXTENSIONS
 

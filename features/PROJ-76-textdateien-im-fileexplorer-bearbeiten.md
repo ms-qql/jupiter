@@ -1,6 +1,6 @@
 # PROJ-76: Textdateien im Fileexplorer bearbeiten
 
-## Status: Architected
+## Status: In Review
 **Created:** 2026-08-07
 **Last Updated:** 2026-08-07
 
@@ -182,7 +182,107 @@ Antwortregeln:
 **Umsetzungsreihenfolge:** Da der Editor den neuen sicheren Text-Endpunkt benötigt, wird nach der Frontend-Oberfläche `/abc-backend` ausgeführt; anschließend prüft `/abc-qa` beide Teile gemeinsam.
 
 ## QA Test Results
-_To be added by /qa_
+
+**Tested:** 2026-08-07
+**Backend:** FastAPI (Conda-Env `Dashboard`), `backend/tests/test_proj76_text_editor.py` (18 neue Tests, isoliert über `tmp_path`, kein JWT nötig — Jupiter-Override)
+**Frontend:** Next.js 16 (`nextjs_app/components/cockpit/text-file-editor.tsx`, `file-explorer.tsx`), Code-Review + `next build` + `tsc --noEmit` + `eslint`
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- [x] Stift zeigt „Bearbeiten“ nur bei `entry.editable && entry.kind === "file"` (`file-explorer.tsx:524`)
+- [x] Umbenennen bleibt eigenständig, eigenes `TextCursor`-Symbol, Tooltip „Umbenennen“ (`file-explorer.tsx:529`)
+- [x] Editor ersetzt Vorschau in der bestehenden rechten Spalte, kein Dialog/neue Seite (`file-explorer.tsx:561`)
+- [ ] **BUG-3:** Bearbeitbare Endungen weichen von den in der Dateivorschau unterstützten Typen ab (siehe unten) — Acceptance Criterion Zeile 30 nur teilweise erfüllt
+- [x] Binär/nicht-UTF-8/>2 MB bleiben reine Vorschau (`_is_editable`, `read_text`/`write_text` prüfen serverseitig; Tests `test_list_marks_binary_extension_not_editable`, `test_list_marks_oversized_text_file_not_editable`, `test_read_non_utf8_rejected_400`, `test_read_oversized_rejected_400`)
+- [x] Editor lädt exakt den gespeicherten Stand, auch Leerdateien (`test_read_empty_file_ok`)
+- [x] Eingabe sofort sichtbar; Markdown Bearbeiten/Vorschau-Umschaltung liest den aktuellen Entwurf (`text-file-editor.tsx:272-289`)
+- [x] „Ungespeichert“-Badge korrekt an `dirty = draft !== baseContent` gekoppelt; Speichern deaktiviert ohne Änderung (`text-file-editor.tsx:64`, `:262`)
+- [x] Strg/Cmd+Z: native Textarea-Undo, kein Custom-Handling nötig
+- [x] „Änderungen verwerfen“ setzt Entwurf auf `baseContent` zurück (`handleDiscard`)
+- [x] Speichern / Strg+Cmd+S schreiben vollständigen Entwurf, Badge verschwindet danach (`handleSave`, Keydown-Listener)
+- [x] Datei-/Ordnerwechsel, Editor schließen mit ungespeichertem Entwurf → Speichern/Verwerfen/Abbrechen-Dialog (`openDir`, `selectFile`, `editFile` + `UnsavedChangesDialog`)
+- [x] Externe Änderung → 409 + deutscher Konflikthinweis, Neu laden/Überschreiben (`write_text` Hash-Vergleich, `test_write_conflict_returns_409_when_externally_changed`, Konflikt-Dialog in `text-file-editor.tsx:293`)
+- [x] Lade-/Speicherfehler: Entwurf bleibt erhalten, deutsche Fehlermeldung (`toast.error`, `error`-State)
+- [ ] **BUG-1:** Dateigröße/Änderungszeit in der Dateiliste werden nach erfolgreichem Speichern NICHT aktualisiert
+- [x] Drei-Spalten-Layout, mobile Umschaltung, Rückkehr zu `ActiveSessionPanel` funktionieren weiter (`test build` grün, manuelle Codeprüfung)
+
+### Edge Cases Status
+
+- [x] Leere Datei bearbeitbar (`test_read_empty_file_ok`)
+- [x] Ungültiges YAML/JSON wird ohne Validierung als Rohtext gespeichert (kein serverseitiges Parsing)
+- [x] Nicht-UTF-8: Hinweis „Diese Datei kann nicht als UTF-8-Text bearbeitet werden.“ — Backend liefert „Datei ist nicht als UTF-8-Text lesbar.“, decken sich sinngemäß; kein Bearbeiten-Icon (`_is_editable` prüft nur Endung+Größe, **nicht** UTF-8 vorab — siehe BUG-3-Anmerkung unten)
+- [x] >2 MB: kein Editor, Vorschau/Download-Verhalten bleibt (`test_list_marks_oversized_text_file_not_editable`, `test_read_oversized_rejected_400`)
+- [x] Externe Änderung → Konflikthinweis statt stillem Überschreiben (`test_write_conflict_returns_409_when_externally_changed`)
+- [x] Externes Löschen/Umbenennen → Speichern schlägt mit 404 fehl, Entwurf bleibt im Browser (`test_write_missing_file_404`)
+- [x] Keine Schreibberechtigung → 403 „Keine Berechtigung zum Speichern dieser Datei.“ (`test_write_no_permission_returns_403`)
+- [x] Netzwerk-/Backendfehler: Entwurf bleibt im Browser, erneutes Speichern möglich (kein State-Reset bei Fehler in `handleSave`)
+- [ ] **BUG-2:** Datei-/Ordnerwechsel mit ungespeichertem Entwurf — Speichern-Button im Schutz-Dialog reagiert nicht sichtbar auf den Ladezustand (Doppelklick-Risiko)
+- [x] Mehrfaches Speichern ohne Änderung: Button bleibt deaktiviert (`disabled={!dirty || saving}`)
+- [ ] **BUG-4 (Low):** Mobile „Zurück zur Liste“-Button löst die Schutzabfrage bei ungespeicherten Änderungen NICHT aus (kein Datenverlust, da Editor nur per CSS versteckt wird statt zu unmounten — aber weicht vom Spec-Text ab)
+
+### Security Audit Results
+
+- [x] Pfad-Härtung: `/files/text` (GET+PUT) nutzt dieselbe `realpath` + `allowed_roots`-Prüfung wie die übrigen Endpunkte; Symlink-Escape blockiert (`test_write_symlink_escape_blocked`, `test_read_outside_roots_rejected_400`)
+- [x] Server ist die verbindliche Allowlist für Editierbarkeit (Endung + Größe + UTF-8 bei Lesen/Schreiben) — ein manipulierter Client kann keine binäre/zu große/nicht erlaubte Datei überschreiben (`test_write_oversized_content_rejected_400`, `test_read_disallowed_extension_rejected_400`)
+- [x] Atomares Schreiben (temp + `os.replace`) hinterlässt bei Fehlern keine Teil-Datei (`test_write_leaves_no_partial_file_on_failure`)
+- [x] Konflikterkennung per SHA-256-Hash, kein dauerhafter Server-Lock nötig
+- [x] Keine Schreibberechtigung → sauberes 403 statt 500 (`test_write_no_permission_returns_403`)
+- (Kein JWT/RLS im Jupiter-Backend — bewusste Projekt-Abweichung vom globalen Stack-Default, siehe Memory „Stack-Overrides“)
+
+### Bugs Found
+
+#### BUG-1: Dateiliste zeigt nach dem Speichern veraltete Größe/Änderungszeit — **FIXED**
+- **Severity:** High
+- **Steps to Reproduce:**
+  1. Editierbare Datei über den Stift öffnen, Inhalt ändern, Speichern klicken.
+  2. Erwartet (AC, Zeile 41 der Spec): Dateigröße und Änderungszeit in der Dateiliste aktualisieren sich, Datei bleibt ausgewählt.
+  3. Tatsächlich: `<TextFileEditor>` bekommt in `file-explorer.tsx:561-568` keine `onSaved`-Prop übergeben, obwohl die Komponente sie unterstützt und nach erfolgreichem Speichern aufruft (`text-file-editor.tsx:110`, `:156`). Die Dateiliste (`listing`) wird nie neu geladen — Größe/Zeitstempel bleiben auf dem Stand vor dem Speichern, bis der Nutzer manuell „Refresh“ klickt oder den Ordner wechselt.
+- **Priority:** Fix before deployment
+
+#### BUG-2: Speichern-Button im Ungespeichert-Dialog reagiert nicht auf den Ladezustand — **FIXED**
+- **Severity:** Medium
+- **Steps to Reproduce:**
+  1. Im Editor eine Änderung vornehmen, dann Datei/Ordner wechseln → Ungespeichert-Dialog erscheint.
+  2. „Speichern“ klicken.
+  3. Erwartet: Button wird sofort deaktiviert und zeigt „Speichert…“, bis der Request fertig ist (verhindert Doppel-Submit).
+  4. Tatsächlich: `disabled={savingRef.current}` und `{savingRef.current ? "Speichert…" : "Speichern"}` (`file-explorer.tsx:602`, `:615`) lesen einen `useRef`-Wert **während des Renders**. Da `savingRef.current = true` kein Re-Render auslöst, bleibt der Button während des laufenden Speicherns sichtbar aktiv und beschriftet mit „Speichern“ — ein zweiter Klick kann einen parallelen Save-Request auslösen. Von ESLint bestätigt: `react-hooks/refs` — „Cannot access ref value during render“ an beiden Stellen.
+- **Priority:** Fix before deployment
+
+#### BUG-3: Editierbare Endungen weichen von den in der Vorschau unterstützten Typen ab — **FIXED**
+- **Severity:** Medium
+- **Steps to Reproduce:**
+  1. `Dockerfile`, `Makefile`, `.gitignore`, `.editorconfig`, `.npmrc`, `a.mjs`, `a.cjs`, `a.sass`, `a.less` oder `a.cc` im Fileexplorer öffnen — alle werden laut `file-preview.tsx` `TEXT_EXT`/Sonderfall-Erkennung (`file-preview.tsx:22-29`, `extOf()`) als Text-Vorschau angezeigt.
+  2. Erwartet (Spec Zeile 30): „… sowie die bereits in der Dateivorschau unterstützten gängigen Skript- und Quelltextdateien“ sind bearbeitbar.
+  3. Tatsächlich: Kein Bearbeiten-Icon erscheint. `FileService._is_text_extension` (`backend/app/engine/files.py:153`) nutzt `os.path.splitext(name)[1].lstrip(".")`, was bei erweiterungslosen/Dotfile-Namen (`Dockerfile`, `Makefile`, `.gitignore`, `.editorconfig`, `.npmrc`) immer einen leeren String liefert — selbst `"dockerfile"` und `"gradle"` in der `_TEXT_EXTENSIONS`-Menge werden dadurch nie getroffen. Zusätzlich fehlen `mjs`, `cjs`, `sass`, `less`, `cc` komplett in der Backend-Allowlist, obwohl sie im Preview-Set stehen. Verifiziert per `python -c` (`_is_text_extension` liefert `False` für alle zehn Beispiele).
+- **Priority:** Fix before deployment (weicht direkt von einem explizit formulierten Acceptance Criterion ab)
+
+#### BUG-4: Mobile „Zurück zur Liste“ überspringt die Ungespeichert-Schutzabfrage
+- **Severity:** Low
+- **Steps to Reproduce:**
+  1. Auf Mobilbreite (< 768px) eine Datei bearbeiten, Änderung vornehmen (nicht speichern).
+  2. Auf „← Liste“ tippen (`file-explorer.tsx:552-559`).
+  3. Erwartet (Edge Case „Mobilansicht“): dieselbe Schutzabfrage wie beim Datei-/Ordnerwechsel.
+  4. Tatsächlich: `onClick={() => setMobilePane("list")}` prüft `dirtyRef.current` nicht — kein Dialog. Kein tatsächlicher Datenverlust (Editor bleibt im DOM, nur per CSS versteckt, `dirtyRef`/Entwurf bleiben erhalten), aber das Verhalten weicht vom Spec-Text ab und ist für den Nutzer überraschend (keine Rückmeldung, dass noch ein offener Entwurf existiert).
+- **Priority:** Nice to have
+
+### Regression Testing
+- `conda run -n Dashboard --no-capture-output python -m pytest -q`: **1234 passed, 2 failed** — beide Fehlschläge (`test_proj50_codex_abc.py::test_generator_check_passes_no_drift`, `::test_generator_short_description_nonempty_all_skills`) betreffen den Skill-Generator/YAML-Frontmatter-Drift und sind unabhängig von PROJ-76 (kein Bezug zu `files.py`/Fileexplorer). Keine Regression in bestehenden PROJ-11/12/28/37-Tests.
+- `npm run build` (Next.js/Turbopack): erfolgreich, keine neuen TypeScript-Fehler in den geänderten Dateien (bestehende `tsc --noEmit`-Fehler in `*.test.tsx`/`*.test.ts` sind unabhängig von PROJ-76 — fehlende `savings_enabled`-Property in Test-Fixtures).
+- `npx eslint text-file-editor.tsx file-explorer.tsx`: 4 Fehler, 2 Warnungen — 2 Fehler sind BUG-2 (`react-hooks/refs`), 1 Fehler (`react-hooks/set-state-in-effect` in `file-explorer.tsx:137`) ist vorbestehendes Repo-Muster (auch in `text-file-editor.tsx:73` und weiteren PROJ-11-Komponenten), 2 Warnungen sind toter Code (`useRef`-Import und `MAX_TEXT_CHARS`-Konstante in `text-file-editor.tsx` werden nie verwendet — kein funktionaler Bug, aber Aufräumen empfohlen).
+
+### Fix-Verifikation (2026-08-07, Nachtrag)
+- **BUG-1:** `onSaved={() => void refresh()}` an `<TextFileEditor>` übergeben (`file-explorer.tsx:568`) — Dateiliste lädt nach erfolgreichem Speichern neu.
+- **BUG-2:** `savingRef` (Ref) durch `const [savingUnsaved, setSavingUnsaved] = useState(false)` ersetzt (`file-explorer.tsx:97`, `:602-618`) — Button reagiert jetzt reaktiv; ESLint `react-hooks/refs` an beiden Stellen behoben (verifiziert: 0 verbleibende `react-hooks/refs`-Fehler).
+- **BUG-3:** `_TEXT_EXTENSIONS` um `mjs`, `cjs`, `sass`, `less`, `cc` ergänzt; neue `_TEXT_BASENAMES`-Menge (`dockerfile`, `makefile`, `.gitignore`, `.editorconfig`, `.npmrc`) deckt erweiterungslose/Dotfile-Namen ab, die `os.path.splitext` nicht erkennt (`backend/app/engine/files.py:27-42`, `:157-162`). Verifiziert per Direktaufruf — alle zehn zuvor fehlenden Typen liefern jetzt `True`.
+- Regression: `pytest tests/test_proj76_text_editor.py tests/test_proj11_files.py` → 52/52 grün. `npm run build` + `tsc --noEmit` → keine neuen Fehler. `eslint file-explorer.tsx text-file-editor.tsx` → `react-hooks/refs` weg, nur noch das vorbestehende `set-state-in-effect` (Zeile 137, außerhalb PROJ-76-Scope) und die zwei toten-Code-Warnungen (BUG-4/Cleanup nicht Teil dieses Fix-Batches).
+
+### Summary
+- **Acceptance Criteria:** 16/16 nach Fix vollständig bestanden
+- **Bugs Found:** 4 total (0 critical, 1 high, 2 medium, 1 low) — **BUG-1/2/3 gefixt und verifiziert, BUG-4 offen (Low, optional)**
+- **Security:** Pass — Pfad-Härtung, Allowlist, atomares Schreiben, Konflikterkennung, Berechtigungsfehler alle korrekt
+- **Production Ready:** JA, sofern BUG-4 akzeptiert wird oder ebenfalls behoben ist
+- **Recommendation:** Deploy möglich. BUG-4 (mobile Zurück-Button ohne Schutzabfrage) optional vorab noch mitnehmen.
 
 ## Deployment
 _To be added by /deploy_

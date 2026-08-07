@@ -94,7 +94,7 @@ export function FileExplorer() {
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const dirtyRef = useRef(false);
   const saveRef = useRef<(() => Promise<void>) | null>(null);
-  const savingRef = useRef(false);
+  const [savingUnsaved, setSavingUnsaved] = useState(false);
   // Ungespeichert-Dialog: pending-Aktion wird ausgeführt, sobald der Nutzer
   // Speichern/Verwerfen wählt; Abbrechen = null.
   const [unsavedAction, setUnsavedAction] = useState<(() => void) | null>(null);
@@ -565,6 +565,7 @@ export function FileExplorer() {
                 saveRef={saveRef}
                 onClose={() => setEditingPath(null)}
                 onDirtyChange={(d) => { dirtyRef.current = d; }}
+                onSaved={() => void refresh()}
               />
             ) : selectedEntry ? (
               <FilePreview key={selectedEntry.path} entry={selectedEntry} />
@@ -599,20 +600,23 @@ export function FileExplorer() {
               Verwerfen
             </Button>
             <Button
-              disabled={savingRef.current}
+              disabled={savingUnsaved}
               onClick={async () => {
-                savingRef.current = true;
+                setSavingUnsaved(true);
                 try {
                   await saveRef.current?.();
-                } catch { return; }
-                finally { savingRef.current = false; }
+                } catch {
+                  return;
+                } finally {
+                  setSavingUnsaved(false);
+                }
                 dirtyRef.current = false;
                 const fn = unsavedAction;
                 setUnsavedAction(null);
                 fn?.();
               }}
             >
-              {savingRef.current ? "Speichert…" : "Speichern"}
+              {savingUnsaved ? "Speichert…" : "Speichern"}
             </Button>
           </DialogFooter>
         </DialogContent>
