@@ -112,6 +112,8 @@ import type {
   CoordinatorPlan,
   CoordinatorPlanItem,
   CoordinatorFleet,
+  TextFileRead,
+  TextFileWrite,
 } from "./types";
 
 export const API_BASE =
@@ -1054,6 +1056,31 @@ export function setClipboardDir(path: string): Promise<ClipboardDir> {
   return request<ClipboardDir>("/settings/clipboard-dir", {
     method: "PATCH",
     body: JSON.stringify({ path }),
+  });
+}
+
+// --- PROJ-76: Textdateien im Fileexplorer bearbeiten -------------------------
+
+/** Textdatei-Inhalt laden (mit Hash für Konflikterkennung). */
+export function readFileText(
+  path: string,
+  signal?: AbortSignal,
+): Promise<TextFileRead> {
+  return request<TextFileRead>(
+    `/files/text?path=${encodeURIComponent(path)}`,
+    { signal },
+  );
+}
+
+/** Textdatei-Inhalt atomar speichern (mit Hash-Konflikterkennung). */
+export function writeFileText(
+  body: TextFileWrite,
+  signal?: AbortSignal,
+): Promise<TextFileRead> {
+  return request<TextFileRead>("/files/text", {
+    method: "PUT",
+    body: JSON.stringify(body),
+    signal,
   });
 }
 

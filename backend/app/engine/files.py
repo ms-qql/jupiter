@@ -12,6 +12,7 @@ in der Antwort speist „Pfad kopieren" bzw. das Einfügen ins Session-Eingabefe
 """
 from __future__ import annotations
 
+import hashlib
 import mimetypes
 import os
 import shutil
@@ -22,6 +23,21 @@ from datetime import datetime, timezone
 from ..config import settings
 
 _CHUNK = 1024 * 1024  # 1 MB Streaming-Häppchen
+
+# PROJ-76: Text-Endungen, die serverseitig als editierbar gelten (Backend = Allowlist).
+_TEXT_EXTENSIONS: frozenset[str] = frozenset({
+    "md", "markdown", "txt", "text", "yaml", "yml", "json", "jsonc",
+    "log", "csv", "tsv", "xml", "toml", "ini", "cfg", "conf", "env",
+    "properties",
+    # gängige Skript- und Quelltextdateien (wie in der Dateivorschau unterstützt)
+    "py", "js", "jsx", "ts", "tsx", "css", "scss", "html", "htm",
+    "sh", "bash", "zsh", "fish", "sql", "r", "rb", "go", "rs", "java",
+    "kt", "swift", "c", "cpp", "h", "hpp", "vue", "svelte", "astro",
+    "php", "pl", "pm", "lua", "dart", "gradle", "dockerfile",
+})
+
+# 2 MB Obergrenze für Text-Editierung.
+_MAX_TEXT_BYTES: int = 2 * 1024 * 1024
 
 
 def _allowed_roots() -> list[str]:
@@ -121,12 +137,103 @@ class FileService:
         real = os.path.realpath(path)
         st = os.stat(real)
         is_dir = os.path.isdir(real)
+        size = 0 if is_dir else st.st_size
         return {
             "name": os.path.basename(real),
             "kind": "dir" if is_dir else "file",
-            "size": 0 if is_dir else st.st_size,
+            "size": size,
             "mtime": _now_iso(st.st_mtime),
             "path": real,
+            "editable": self._is_editable(real, size),
+        }
+
+    # --- Text-Editierung (PROJ-76) -----------------------------------------
+
+    @staticmethod
+    def _is_text_extension(name: str) -> bool:
+        ext = os.path.splitext(name)[1].lower().lstrip(".")
+        return ext in _TEXT_EXTENSIONS
+
+    @staticmethod
+    def _is_editable(path: str, size: int) -> bool:
+        if size > _MAX_TEXT_BYTES:
+            return False
+        return FileService._is_text_extension(os.path.basename(path))
+
+    @staticmethod
+    def _hash_content(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    def read_text(self, path: str) -> dict:
+        real = os.path.realpath(path)
+        if not _in_allowed_roots(real):
+            raise ValueError("Pfad liegt außerhalb des erlaubten Bereichs.")
+        if not os.path.isfile(real):
+            raise FileNotFoundError(real)
+        st = os.stat(real)
+        if st.st_size > _MAX_TEXT_BYTES:
+            raise ValueError("Datei zu groß für den Texteditor (max 2 MB).")
+        if not self._is_text_extension(os.path.basename(real)):
+            raise ValueError("Dateityp wird nicht als Text unterstützt.")
+        try:
+            with open(real, "rb") as f:
+                raw = f.read()
+            content = raw.decode("utf-8")
+        except (UnicodeDecodeError, LookupError) as exc:
+            raise ValueError("Datei ist nicht als UTF-8-Text lesbar.") from exc
+        return {
+            "path": real,
+            "content": content,
+            "size": st.st_size,
+            "mtime": _now_iso(st.st_mtime),
+            "hash": self._hash_content(raw),
+        }
+
+    def write_text(self, path: str, content: str,
+                   known_hash: str, force: bool = False) -> dict:
+        real = os.path.realpath(path)
+        if not _in_allowed_roots(real):
+            raise ValueError("Pfad liegt außerhalb des erlaubten Bereichs.")
+        if not os.path.isfile(real):
+            raise FileNotFoundError(real)
+        if not self._is_text_extension(os.path.basename(real)):
+            raise ValueError("Dateityp wird nicht als Text unterstützt.")
+        try:
+            data = content.encode("utf-8")
+        except (UnicodeEncodeError, LookupError) as exc:
+            raise ValueError("Inhalt ist kein gültiges UTF-8.") from exc
+        if len(data) > _MAX_TEXT_BYTES:
+            raise ValueError("Inhalt überschreitet das 2-MB-Limit.")
+        st = os.stat(real)
+        if st.st_size > _MAX_TEXT_BYTES:
+            raise ValueError("Datei zu groß für den Texteditor (max 2 MB).")
+        current_hash = self._hash_content(open(real, "rb").read())
+        if current_hash != known_hash and not force:
+            raise ValueError(
+                "Die Datei wurde seit dem letzten Laden extern geändert. "
+                "Lade sie neu oder bestätige das Überschreiben."
+            )
+        dir_real = os.path.dirname(real)
+        fd, tmp = tempfile.mkstemp(dir=dir_real, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as out:
+                out.write(data)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(tmp, real)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        st = os.stat(real)
+        return {
+            "path": real,
+            "content": content,
+            "size": st.st_size,
+            "mtime": _now_iso(st.st_mtime),
+            "hash": self._hash_content(data),
         }
 
     # --- Clipboard-Ordner --------------------------------------------------

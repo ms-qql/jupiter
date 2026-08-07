@@ -17,6 +17,7 @@ class FileEntry(BaseModel):
     size: int            # Bytes (bei dir: 0)
     mtime: str           # ISO-8601 (UTC)
     path: str            # absoluter Pfad — direkt referenzierbar (Terminal/Session)
+    editable: bool = False  # ob Datei im Texteditor bearbeitbar (PROJ-76)
 
 
 class RootEntry(BaseModel):
@@ -73,3 +74,22 @@ class ClipboardDirRead(BaseModel):
 
 class ClipboardDirPatch(BaseModel):
     path: str = Field(..., min_length=1, description="Neuer Clipboard-Ordner (innerhalb der Roots).")
+
+
+class TextFileRead(BaseModel):
+    """Inhalt einer editierbaren Textdatei (PROJ-76)."""
+
+    path: str
+    content: str
+    size: int
+    mtime: str
+    hash: str
+
+
+class TextFileWrite(BaseModel):
+    """Schreib-Request: Pfad + vollständiger Inhalt + Hash (Konflikterkennung)."""
+
+    path: str = Field(..., min_length=1, description="Absoluter Pfad innerhalb der Roots.")
+    content: str = Field(..., description="Vollständiger neuer Dateiinhalt.")
+    hash: str = Field(..., description="SHA256 des beim Laden/letzten Speichern bekannten Stands.")
+    force: bool = Field(False, description="Überschreibt auch bei erkanntem Konflikt.")

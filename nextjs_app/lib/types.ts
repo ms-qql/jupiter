@@ -786,6 +786,7 @@ export interface FileEntry {
   size: number;
   mtime: string; // ISO
   path: string; // absoluter Pfad (für „Pfad kopieren" / In-Session-Referenz)
+  editable?: boolean; // ob im Texteditor bearbeitbar (PROJ-76)
 }
 
 /** Erlaubter Wurzel-Ordner (RootSelector). */
@@ -814,6 +815,25 @@ export interface DeleteResult {
 /** Clipboard-Ordner (GET/PATCH /settings/clipboard-dir). */
 export interface ClipboardDir {
   path: string;
+}
+
+// --- PROJ-76: Textdateien im Fileexplorer bearbeiten -------------------------
+
+/** Inhalt einer editierbaren Textdatei (GET /files/text). */
+export interface TextFileRead {
+  path: string;
+  content: string;
+  size: number;
+  mtime: string;
+  hash: string;
+}
+
+/** Schreib-Request für PUT /files/text. */
+export interface TextFileWrite {
+  path: string;
+  content: string;
+  hash: string;
+  force?: boolean;
 }
 
 // --- PROJ-69: Clipboard Micro-App -----------------------------------------

@@ -23,6 +23,7 @@ import {
   FolderPlus,
   Pencil,
   RefreshCw,
+  TextCursor,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -30,8 +31,17 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { FilePreview } from "@/components/cockpit/file-preview";
+import { TextFileEditor } from "@/components/cockpit/text-file-editor";
 import { ActiveSessionPanel } from "@/components/cockpit/active-session-panel";
 import { ResizableAside } from "@/components/cockpit/resizable-aside";
 import { BranchBadge } from "@/components/cockpit/branch-panel";
@@ -80,6 +90,14 @@ export function FileExplorer() {
   const [mobilePane, setMobilePane] = useState<"list" | "view">("list");
   const dropActive = useRef(false);
   const [dragOver, setDragOver] = useState(false);
+  // PROJ-76: Editor-Modus.
+  const [editingPath, setEditingPath] = useState<string | null>(null);
+  const dirtyRef = useRef(false);
+  const saveRef = useRef<(() => Promise<void>) | null>(null);
+  const savingRef = useRef(false);
+  // Ungespeichert-Dialog: pending-Aktion wird ausgeführt, sobald der Nutzer
+  // Speichern/Verwerfen wählt; Abbrechen = null.
+  const [unsavedAction, setUnsavedAction] = useState<(() => void) | null>(null);
 
   const { upload, uploading } = useFileUpload(path ?? undefined);
 
@@ -146,6 +164,18 @@ export function FileExplorer() {
     },
     [upload, refresh],
   );
+
+  // PROJ-76: Browser-Reload/Tab-Schließen mit ungespeicherten Änderungen.
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (dirtyRef.current) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
 
   // Paste (Screenshot/Datei) → Upload in den aktuellen Ordner.
   useEffect(() => {
@@ -229,13 +259,42 @@ export function FileExplorer() {
   }
 
   function openDir(p: string) {
-    setSelectedPath(null);
-    setPath(p);
+    function go() {
+      setSelectedPath(null);
+      setEditingPath(null);
+      setPath(p);
+    }
+    if (editingPath && dirtyRef.current) {
+      setUnsavedAction(() => go);
+    } else {
+      go();
+    }
   }
 
   function selectFile(entry: FileEntry) {
-    setSelectedPath(entry.path);
-    setMobilePane("view");
+    function go() {
+      setSelectedPath(entry.path);
+      setEditingPath(null);
+      setMobilePane("view");
+    }
+    if (editingPath && editingPath !== entry.path && dirtyRef.current) {
+      setUnsavedAction(() => go);
+    } else {
+      go();
+    }
+  }
+
+  function editFile(entry: FileEntry) {
+    function go() {
+      setSelectedPath(entry.path);
+      setEditingPath(entry.path);
+      setMobilePane("view");
+    }
+    if (editingPath && editingPath !== entry.path && dirtyRef.current) {
+      setUnsavedAction(() => go);
+    } else {
+      go();
+    }
   }
 
   const canGoUp = path !== null && !roots.some((r) => r.path === path);
@@ -462,8 +521,13 @@ export function FileExplorer() {
                           <Download className="size-4" />
                         </IconBtn>
                       )}
+                      {entry.editable && entry.kind === "file" && (
+                        <IconBtn title="Bearbeiten" onClick={() => editFile(entry)}>
+                          <Pencil className="size-4" />
+                        </IconBtn>
+                      )}
                       <IconBtn title="Umbenennen" onClick={() => void handleRename(entry)}>
-                        <Pencil className="size-4" />
+                        <TextCursor className="size-4" />
                       </IconBtn>
                       <IconBtn title="Löschen" onClick={() => void handleDelete(entry)}>
                         <Trash2 className="size-4" />
@@ -493,10 +557,16 @@ export function FileExplorer() {
             >
               <ArrowLeft className="size-4" /> Liste
             </Button>
-            {/* PROJ-37: Ohne gewählte Datei bleibt rechts das aktive Fenster
-                (laufende Session) stehen statt eines leeren Platzhalters; erst
-                eine Datei mit Vorschau ersetzt es. */}
-            {selectedEntry ? (
+            {/* PROJ-76: Editor-Modus hat Vorrang vor Vorschau. */}
+            {selectedEntry && editingPath === selectedEntry.path ? (
+              <TextFileEditor
+                key={selectedEntry.path}
+                entry={selectedEntry}
+                saveRef={saveRef}
+                onClose={() => setEditingPath(null)}
+                onDirtyChange={(d) => { dirtyRef.current = d; }}
+              />
+            ) : selectedEntry ? (
               <FilePreview key={selectedEntry.path} entry={selectedEntry} />
             ) : (
               <ActiveSessionPanel />
@@ -504,6 +574,49 @@ export function FileExplorer() {
           </div>
         </main>
       </div>
+      {/* PROJ-76: Ungespeichert-Dialog bei Datei-/Ordnerwechsel */}
+      <Dialog open={!!unsavedAction} onOpenChange={(o) => !o && setUnsavedAction(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Ungespeicherte Änderungen</DialogTitle>
+            <DialogDescription>
+              Der aktuelle Entwurf wurde noch nicht gespeichert.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setUnsavedAction(null)}>
+              Abbrechen
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                dirtyRef.current = false;
+                const fn = unsavedAction;
+                setUnsavedAction(null);
+                fn?.();
+              }}
+            >
+              Verwerfen
+            </Button>
+            <Button
+              disabled={savingRef.current}
+              onClick={async () => {
+                savingRef.current = true;
+                try {
+                  await saveRef.current?.();
+                } catch { return; }
+                finally { savingRef.current = false; }
+                dirtyRef.current = false;
+                const fn = unsavedAction;
+                setUnsavedAction(null);
+                fn?.();
+              }}
+            >
+              {savingRef.current ? "Speichert…" : "Speichern"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

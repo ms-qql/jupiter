@@ -23,6 +23,8 @@ from ..schemas.files import (
     MoveRequest,
     RenameRequest,
     RootEntry,
+    TextFileRead,
+    TextFileWrite,
     UploadResult,
     ZipRequest,
 )
@@ -86,6 +88,37 @@ def download_zip(request: Request, payload: ZipRequest) -> StreamingResponse:
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="dateien.zip"'},
     )
+
+
+@router.get("/text", response_model=TextFileRead)
+def read_text(
+    request: Request,
+    path: str = Query(..., min_length=1, description="Absoluter Pfad innerhalb der Roots."),
+) -> dict:
+    try:
+        return _svc(request).read_text(path)
+    except ValueError as exc:
+        raise _400(exc) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Datei nicht gefunden.") from exc
+
+
+@router.put("/text", response_model=TextFileRead)
+def write_text(request: Request, payload: TextFileWrite) -> dict:
+    svc = _svc(request)
+    try:
+        return svc.write_text(payload.path, payload.content, payload.hash, payload.force)
+    except ValueError as exc:
+        detail = str(exc)
+        if "extern geändert" in detail:
+            raise HTTPException(status_code=409, detail=detail) from exc
+        raise _400(exc) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Datei nicht gefunden.") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Keine Berechtigung zum Speichern dieser Datei.") from exc
+    except OSError as exc:
+        raise _os_error(exc) from exc
 
 
 @router.post("/upload", response_model=UploadResult)
