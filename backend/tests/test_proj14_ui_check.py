@@ -184,7 +184,7 @@ def test_start_run_with_uploaded_screenshot_passes_png_to_runner(tmp_path, monke
 
     resp = client.post(
         "/ui-check/runs/with-screenshot",
-        data={"url": "https://new.example", "ai_model": "Claude Sonnet"},
+        data={"url": "www.new.example", "ai_model": "Claude Sonnet"},
         files={"screenshot": ("website.png", io.BytesIO(b"\x89PNG\r\n\x1a\npixels"), "image/png")},
     )
 
