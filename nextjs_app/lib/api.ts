@@ -135,7 +135,9 @@ async function rawFetch(
   withAuth = true,
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
-  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (!headers.has("Content-Type") && !(init?.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
   const token = getAccessToken();
   if (withAuth && token) headers.set("Authorization", `Bearer ${token}`);
   return fetch(`${API_BASE}${path}`, {
