@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-76
+**Next Available ID:** PROJ-77
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -88,6 +88,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-73 | Token Savings — globales, engine-übergreifendes Optimierungsprofil | P1 | Deployed | PROJ-1, PROJ-9, PROJ-48, PROJ-51, PROJ-52, PROJ-56, PROJ-57 | [Spec](PROJ-73-token-savings-profile.md) |
 | PROJ-74 | Bugfix: Backend-Neustart orphaniert lebende tmux-Sessions unnötig (rehydrate() ignoriert echte Prozess-Liveness) | P1 | Deployed | PROJ-63, PROJ-27, PROJ-33, PROJ-66 | [Spec](PROJ-74-rehydrate-tmux-liveness-haertung.md) |
 | PROJ-75 | Bugfix-Verifikation: PROJ-72-Transkript-Replay nach wiederholtem Resume in Produktion nicht restlos ausgeschlossen | P1 | Planned | PROJ-72, PROJ-63, PROJ-66, PROJ-70 | [Spec](PROJ-75-proj72-replay-produktionsverifikation.md) |
+| PROJ-76 | Textdateien im Fileexplorer bearbeiten | P1 | Architected | PROJ-11, PROJ-12, PROJ-28, PROJ-37 | [Spec](PROJ-76-textdateien-im-fileexplorer-bearbeiten.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
