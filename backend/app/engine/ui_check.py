@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from PIL import Image, UnidentifiedImageError
+
 from ..config import settings
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -226,18 +228,37 @@ class UiCheckService:
     def _save_screenshot(source: Any, target: Path) -> None:
         """Store one bounded PNG inside its newly-created run directory."""
         header = source.read(8)
-        if header != b"\x89PNG\r\n\x1a\n":
-            raise ValueError("Bitte einen PNG-Screenshot hochladen.")
+        if header == b"\x89PNG\r\n\x1a\n":
+            total = len(header)
+            with target.open("wb") as output:
+                output.write(header)
+                while chunk := source.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > settings.upload_max_file_bytes:
+                        raise ValueError(
+                            f"Screenshot zu groß (max. {settings.upload_max_file_bytes // (1024 * 1024)} MB)."
+                        )
+                    output.write(chunk)
+            return
+
+        if header[:3] != b"\xff\xd8\xff":
+            raise ValueError("Bitte einen PNG- oder JPEG-Screenshot hochladen.")
+        source.seek(0)
         total = len(header)
-        with target.open("wb") as output:
-            output.write(header)
-            while chunk := source.read(1024 * 1024):
-                total += len(chunk)
-                if total > settings.upload_max_file_bytes:
-                    raise ValueError(
-                        f"Screenshot zu groß (max. {settings.upload_max_file_bytes // (1024 * 1024)} MB)."
-                    )
-                output.write(chunk)
+        while chunk := source.read(1024 * 1024):
+            total += len(chunk)
+            if total > settings.upload_max_file_bytes:
+                raise ValueError(
+                    f"Screenshot zu groß (max. {settings.upload_max_file_bytes // (1024 * 1024)} MB)."
+                )
+        source.seek(0)
+        try:
+            with Image.open(source) as image:
+                if image.width * image.height > 25_000_000:
+                    raise ValueError("Screenshot hat zu viele Pixel (max. 25 Megapixel).")
+                image.convert("RGB").save(target, "PNG")
+        except UnidentifiedImageError as exc:
+            raise ValueError("Bitte einen lesbaren JPEG-Screenshot hochladen.") from exc
 
     def cancel_run(self, run_id: str) -> dict[str, Any]:
         run_id = _safe_run_id(run_id)

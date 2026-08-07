@@ -1384,16 +1384,33 @@ export function startUiCheckRun(
     Object.entries(req).forEach(([key, value]) => {
       if (value !== undefined && value !== null) form.append(key, String(value));
     });
-    return request<UiCheckStartResponse>("/ui-check/runs/with-screenshot", {
-      method: "POST",
-      body: form,
-      headers: authHeaders(),
-    });
+    return uploadUiCheckScreenshot(form);
   }
   return request<UiCheckStartResponse>("/ui-check/runs", {
     method: "POST",
     body: JSON.stringify(req),
   });
+}
+
+async function uploadUiCheckScreenshot(form: FormData): Promise<UiCheckStartResponse> {
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}/ui-check/runs/with-screenshot`, {
+      method: "POST", body: form, credentials: "include", headers: authHeaders(),
+    });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (!resp.ok) {
+    if (resp.status === 401) handleAuthFailure();
+    let detail = `Start fehlgeschlagen (${resp.status})`;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+    } catch { /* ignore */ }
+    throw new ApiError(detail, resp.status);
+  }
+  return (await resp.json()) as UiCheckStartResponse;
 }
 
 export function cancelUiCheckRun(runId: string): Promise<UiCheckRunDetail> {

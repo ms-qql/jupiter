@@ -769,11 +769,11 @@ function DashboardTab({
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="ui-screenshot">Screenshot (optional, PNG)</Label>
+                <Label htmlFor="ui-screenshot">Screenshot (optional, PNG oder JPEG)</Label>
                 <Input
                   id="ui-screenshot"
                   type="file"
-                  accept="image/png"
+                  accept="image/png,image/jpeg"
                   onChange={(event) => setScreenshot(event.target.files?.[0] ?? null)}
                 />
                 {screenshot && (
