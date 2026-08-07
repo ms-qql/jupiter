@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import io
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -159,6 +160,37 @@ def test_start_run_uses_auto_script_with_judge_model(tmp_path, monkeypatch):
     assert cmd[0].endswith("scripts/ui-check-auto.sh")
     # UI-Label "Claude Opus" muss zum CLI-Alias "opus" werden (nicht wörtlich).
     assert "--judge-model" in cmd and cmd[cmd.index("--judge-model") + 1] == "opus"
+
+
+def test_start_run_with_uploaded_screenshot_passes_png_to_runner(tmp_path, monkeypatch):
+    from app.engine import ui_check as ui_check_mod
+
+    root = _fixture_project(tmp_path)
+    monkeypatch.setattr(settings, "ui_check_project_path", str(root))
+    captured = {}
+
+    class _FakeProc:
+        pid = 4245
+
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(ui_check_mod.subprocess, "Popen", _FakeProc)
+    client = TestClient(create_app())
+
+    resp = client.post(
+        "/ui-check/runs/with-screenshot",
+        data={"url": "https://new.example", "ai_model": "Claude Sonnet"},
+        files={"screenshot": ("website.png", io.BytesIO(b"\x89PNG\r\n\x1a\npixels"), "image/png")},
+    )
+
+    assert resp.status_code == 201
+    screenshot = captured["cmd"][captured["cmd"].index("--screenshot") + 1]
+    assert screenshot.endswith("uploaded-screenshot.png")
+    assert Path(screenshot).read_bytes() == b"\x89PNG\r\n\x1a\npixels"
 
 
 def test_start_run_omits_judge_model_for_unknown_label(tmp_path, monkeypatch):

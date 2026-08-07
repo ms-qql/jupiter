@@ -1374,7 +1374,20 @@ export function getUiCheckRun(
 
 export function startUiCheckRun(
   req: UiCheckStartRequest,
+  screenshot?: File | null,
 ): Promise<UiCheckStartResponse> {
+  if (screenshot) {
+    const form = new FormData();
+    form.append("screenshot", screenshot);
+    Object.entries(req).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) form.append(key, String(value));
+    });
+    return request<UiCheckStartResponse>("/ui-check/runs/with-screenshot", {
+      method: "POST",
+      body: form,
+      headers: authHeaders(),
+    });
+  }
   return request<UiCheckStartResponse>("/ui-check/runs", {
     method: "POST",
     body: JSON.stringify(req),

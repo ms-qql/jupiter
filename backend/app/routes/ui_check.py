@@ -1,8 +1,9 @@
 """UI-Check-API (PROJ-14) — lokale Runner-Schicht fuer die native Micro-App."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
+from pydantic import ValidationError
 
 from ..engine.ui_check import (
     UiCheckBrandingIncomplete,
@@ -54,6 +55,37 @@ async def start_run(request: Request, payload: UiCheckStartRequest) -> dict:
         raise HTTPException(status_code=409, detail="Run-Ordner existiert bereits.") from exc
     except UiCheckConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/runs/with-screenshot", response_model=UiCheckStartResponse, status_code=201)
+async def start_run_with_screenshot(
+    request: Request,
+    screenshot: UploadFile = File(...),
+    url: str = Form(...),
+    mode: str = Form("auto"),
+    depth: str = Form("audit"),
+    ai_provider: str = Form("claude"),
+    ai_model: str = Form(...),
+    prompt: str | None = Form(None),
+    industry: str | None = Form(None),
+    desktop: bool = Form(False),
+    full_pipeline: bool = Form(False),
+) -> dict:
+    try:
+        payload = UiCheckStartRequest.model_validate({
+            "url": url, "mode": mode, "depth": depth, "ai_provider": ai_provider,
+            "ai_model": ai_model, "prompt": prompt, "industry": industry,
+            "desktop": desktop, "full_pipeline": full_pipeline,
+        })
+        return _svc(request).start_run(payload, screenshot.file)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail="Run-Ordner existiert bereits.") from exc
+    finally:
+        await screenshot.close()
 
 
 @router.get("/runs/{run_id}/status", response_model=UiCheckRunDetail)
