@@ -157,6 +157,7 @@ export default function UiCheckApp() {
   const [model, setModel] = useState(PROVIDERS[0].models[0]);
   const [industry, setIndustry] = useState("");
   const [desktop, setDesktop] = useState(true);
+  const [screenshot, setScreenshot] = useState<File | null>(null);
   const [prompt, setPrompt] = useState("");
   const [pipelineMode, setPipelineMode] = useState<PipelineModeId>("complete");
   const [mockupConflict, setMockupConflict] = useState(false);
@@ -241,7 +242,7 @@ export default function UiCheckApp() {
         industry: industry.trim() || null,
         desktop,
         full_pipeline: pipelineMode === "complete",
-      });
+      }, screenshot);
       setActiveRunId(res.run_id);
       toast.success("UI-Check-Lauf gestartet");
       await refresh();
@@ -477,6 +478,8 @@ export default function UiCheckApp() {
               setIndustry={setIndustry}
               desktop={desktop}
               setDesktop={setDesktop}
+              screenshot={screenshot}
+              setScreenshot={setScreenshot}
               prompt={prompt}
               setPrompt={setPrompt}
               busy={busy}
@@ -549,6 +552,8 @@ function DashboardTab({
   setIndustry,
   desktop,
   setDesktop,
+  screenshot,
+  setScreenshot,
   prompt,
   setPrompt,
   busy,
@@ -584,6 +589,8 @@ function DashboardTab({
   setIndustry: (value: string) => void;
   desktop: boolean;
   setDesktop: (value: boolean) => void;
+  screenshot: File | null;
+  setScreenshot: (file: File | null) => void;
   prompt: string;
   setPrompt: (value: string) => void;
   busy: boolean;
@@ -759,6 +766,21 @@ function DashboardTab({
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder="z. B. Fokus auf Terminbuchung, Marke beibehalten, Zielgruppe Hausbesitzer 45+."
                 />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="ui-screenshot">Screenshot (optional, PNG oder JPEG)</Label>
+                <Input
+                  id="ui-screenshot"
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  onChange={(event) => setScreenshot(event.target.files?.[0] ?? null)}
+                />
+                {screenshot && (
+                  <p className="text-xs text-muted-foreground">
+                    {screenshot.name} wird statt des automatischen Snapshots verwendet.
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-3">

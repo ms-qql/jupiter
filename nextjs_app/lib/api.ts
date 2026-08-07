@@ -54,6 +54,11 @@ import type {
   ProviderBudgetSnapshotRead,
   ProviderBudgetLimits,
   ProviderBudgetSetting,
+  TokenSavingsChoice,
+  TokenSavingsConfig,
+  TokenSavingsPreview,
+  TokenSavingsSetting,
+  SavingsMetrics,
   ScoutRequest,
   ScoutResult,
   VaultRagPreview,
@@ -130,7 +135,9 @@ async function rawFetch(
   withAuth = true,
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
-  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (!headers.has("Content-Type") && !(init?.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
   const token = getAccessToken();
   if (withAuth && token) headers.set("Authorization", `Bearer ${token}`);
   return fetch(`${API_BASE}${path}`, {
@@ -349,6 +356,42 @@ export function setEngineSettings(
     method: "PUT",
     body: JSON.stringify({ engines }),
   });
+}
+
+// --- PROJ-73: Token Savings -----------------------------------------------
+
+export function getTokenSavings(
+  engine = "claude",
+  projectPath?: string,
+  signal?: AbortSignal,
+): Promise<TokenSavingsSetting> {
+  const params = new URLSearchParams({ engine });
+  if (projectPath) params.set("project_path", projectPath);
+  return request<TokenSavingsSetting>(`/settings/token-savings?${params}`, { signal });
+}
+
+export function setTokenSavings(
+  config: TokenSavingsConfig,
+  engine = "claude",
+): Promise<TokenSavingsSetting> {
+  return request<TokenSavingsSetting>(
+    `/settings/token-savings?${new URLSearchParams({ engine })}`,
+    { method: "PUT", body: JSON.stringify(config) },
+  );
+}
+
+export function previewTokenSavings(
+  engine: string,
+  projectPath: string,
+  choice: TokenSavingsChoice,
+  signal?: AbortSignal,
+): Promise<TokenSavingsPreview> {
+  const params = new URLSearchParams({ engine, project_path: projectPath, choice });
+  return request<TokenSavingsPreview>(`/settings/token-savings/preview?${params}`, { signal });
+}
+
+export function getSavingsMetrics(signal?: AbortSignal): Promise<SavingsMetrics> {
+  return request<SavingsMetrics>("/usage/token-savings?range=30d", { signal });
 }
 
 // --- PROJ-19 (#28/#27): Token-/Kosten-Dashboard ----------------------------
@@ -790,6 +833,39 @@ export async function fetchFileBlob(path: string, signal?: AbortSignal): Promise
  *  (Object-URL aus dem Blob statt nacktem href ohne Token). */
 export async function downloadFile(path: string, filename: string): Promise<void> {
   const blob = await fetchFileBlob(path);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Mehrere Dateien/Ordner als ZIP authentifiziert herunterladen (Mehrfachauswahl). */
+export async function downloadZip(paths: string[], filename = "dateien.zip"): Promise<void> {
+  let resp: Response;
+  try {
+    resp = await rawFetch("/files/download-zip", {
+      method: "POST",
+      body: JSON.stringify({ paths }),
+    });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (resp.status === 401 && (await refreshAccessToken())) {
+    resp = await rawFetch("/files/download-zip", {
+      method: "POST",
+      body: JSON.stringify({ paths }),
+    });
+  }
+  if (resp.status === 401) {
+    handleAuthFailure();
+    throw new ApiError("Nicht angemeldet", 401);
+  }
+  if (!resp.ok) throw new ApiError(`Fehler ${resp.status}`, resp.status);
+  const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -1300,11 +1376,41 @@ export function getUiCheckRun(
 
 export function startUiCheckRun(
   req: UiCheckStartRequest,
+  screenshot?: File | null,
 ): Promise<UiCheckStartResponse> {
+  if (screenshot) {
+    const form = new FormData();
+    form.append("screenshot", screenshot);
+    Object.entries(req).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) form.append(key, String(value));
+    });
+    return uploadUiCheckScreenshot(form);
+  }
   return request<UiCheckStartResponse>("/ui-check/runs", {
     method: "POST",
     body: JSON.stringify(req),
   });
+}
+
+async function uploadUiCheckScreenshot(form: FormData): Promise<UiCheckStartResponse> {
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}/ui-check/runs/with-screenshot`, {
+      method: "POST", body: form, credentials: "include", headers: authHeaders(),
+    });
+  } catch {
+    throw new ApiError("Backend nicht erreichbar", 0);
+  }
+  if (!resp.ok) {
+    if (resp.status === 401) handleAuthFailure();
+    let detail = `Start fehlgeschlagen (${resp.status})`;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+    } catch { /* ignore */ }
+    throw new ApiError(detail, resp.status);
+  }
+  return (await resp.json()) as UiCheckStartResponse;
 }
 
 export function cancelUiCheckRun(runId: string): Promise<UiCheckRunDetail> {

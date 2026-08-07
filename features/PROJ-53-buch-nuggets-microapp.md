@@ -1,8 +1,8 @@
 # PROJ-53: Buch-Nuggets (native Micro-App)
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-06-28
-**Last Updated:** 2026-06-28
+**Last Updated:** 2026-07-15
 
 ## Dependencies
 - Requires: PROJ-40 (Sidebar-Sektion „Micro-Apps" + `kind: native`) — Buch-Nuggets ist eine **native Micro-App** (`group: micro`, `kind: native`, Route `/apps/<key>`, Eintrag in `microapps-registry.ts`), gleiches Muster wie PROJ-41.
@@ -39,7 +39,7 @@ Schwerpunkt: **Technik- und Finanzbücher.** Jede Notiz besteht aus:
 - **D4 — Abbildungs-Auswahl:** Alle Figuren extrahieren → die Session **wählt per Bildunterschrift + Umgebungstext** die relevanten aus und referenziert sie an der passenden Stelle im md (wie `hal-video-summary` Frames einbettet).
 - **D5 — Contra-Engine:** **Web-recherchegestützt** (deep-research-Pattern light), belegte Gegenpositionen mit Quelle.
 - **D6 — Zahlen-Grounding:** „Numbers/Evidence" mit **Seitenzitat** verankert.
-- **D7 — Modell-Auswahl (Kosten):** **Dropdown** aus der Engine-/Modell-Registry (PROJ-51). **Default: Stufen-Logik** (günstiges Modell für Chunk-Extrakte, starkes Modell für Konsolidierung + Contra) mit **Umschalter „global ein Modell für alles"**. **Kostenschätzung vor dem Start** (aus Seitenzahl/Tokens) + optionales **Seitenlimit**.
+- **D7 — Modell-Auswahl (Kosten):** **Dropdown** aus Claude-Modellen (haiku/sonnet/opus) **und OpenCode-Modellen** (DeepSeek V4 Flash/Pro, MiniMax M3, Qwen 3.7 Plus/Max, GLM 5.2, Kimi K2.7 Code, MiMo V2.5/Pro). **Default: Stufen-Logik** mit `opencode-go/deepseek-v4-flash` für beides. OpenCode-Modelle routen automatisch über die `opencode`-Engine. Umschalter **„global ein Modell für alles"**. **Kostenschätzung vor dem Start** (aus Seitenzahl/Tokens) + optionales **Seitenlimit**.
 - **D8 — Hal-Ablage:** Zielordner `04 Resources/Buch_Nuggets/`. Pro Buch: `…/<Autor>-<Titel>/<Autor>-<Titel>.md` + Unterordner `figures/` + konsolidierte PDF.
 - **D9 — Re-Run/Duplikate:** Erkennung über Titel/Hash → fragen **„überschreiben oder neue Version?"**.
 - **D10 — MVP-Grenze:** Quiz, Karteikarten, Mehr-Buch-Vergleich, „apply to my business" = **Phase 2**, nicht MVP.
@@ -246,7 +246,7 @@ Kein Auth/RLS (MVP-Entscheidung); `owner` gestempelt, nicht gefiltert. Upload + 
 - `backend/app/engine/book_nuggets.py` — `BookNuggetsWorker` (sequenziell, **eine** Session zur Zeit, **Auto-Drain** bei Add — kein Cooldown/Zeitplan) + reine Helfer `validate_source`, `compute_book_hash_sync`, `estimate_cost`, `build_prompt`, `parse_result_paths`, `parse_phase` + `DuplicateError`.
 - `backend/app/schemas/book_nuggets.py` — Pydantic v2 (QueueItem/WorkerState/Queue, QueueAdd Req/Result, Estimate Req/Result, DuplicateConflict, Settings Read/Patch, Library).
 - `backend/app/routes/book_nuggets.py` — Router (API unten).
-- `backend/app/config.py` — `book_nuggets_*`-Defaults (db_path, poll 5s, model `opus`, permission `bypassPermissions`, project_path=Vault, output_subdir `04 Resources/Buch_Nuggets`); **`epub` in `upload_allowed_extensions`** ergänzt (pdf/txt/docx waren schon drin; **mobi bewusst nicht**).
+- `backend/app/config.py` — `book_nuggets_*`-Defaults (db_path, poll 5s, model `opencode-go/deepseek-v4-flash`, permission `bypassPermissions`, project_path=Vault, output_subdir `04 Resources/Buch_Nuggets`); **`epub` in `upload_allowed_extensions`** ergänzt (pdf/txt/docx waren schon drin; **mobi bewusst nicht**).
 - `backend/app/main.py` — `bn_repo` gebaut, `app.state.book_nuggets` (Worker), `_book_nuggets_loop` als Lifespan-Task, `startup()` (Schema + running→pending), Router registriert, `bn_repo.close()` beim Shutdown.
 - `backend/app/db/__init__.py` — Exporte. `backend/tests/conftest.py` — Test-Isolation (eigene DB in tmp, Poll-Intervall aus).
 - `backend/tests/test_proj53_book_nuggets.py` — 27 Tests (Helper + Worker + Duplikat + Persistenz + API).
@@ -278,7 +278,7 @@ GET    /book-nuggets/settings           → {default_model_mode, default_model_e
 PATCH  /book-nuggets/settings           → Teil-Update derselben Felder
 ```
 QueueItem: `{id, owner, source_type, source_ref, title, author, model_mode, model_extract, model_consolidate, page_limit, cost_estimate, status, phase, result_dir, result_note_path, result_pdf_path, error_message, session_id, created_at, started_at, finished_at}`.
-Modelle: `haiku|sonnet|opus`. Modi: `staged|single`.
+Modelle: `haiku | sonnet | opus | opencode-go/deepseek-v4-flash | opencode-go/deepseek-v4-pro | opencode-go/minimax-m3 | opencode-go/qwen3.7-plus | opencode-go/qwen3.7-max | opencode-go/glm-5.2 | opencode-go/kimi-k2.7-code | opencode-go/mimo-v2.5 | opencode-go/mimo-v2.5-pro`. Modi: `staged|single`.
 
 ### Offener Hand-off (Frontend, /abc-frontend)
 - `engines.yaml`/`engines.example.yaml`-Eintrag `book_nuggets` (`kind: native`, `group: micro`, Label „Buch-Nuggets", Icon z. B. `book`/`book-open`).
@@ -357,7 +357,8 @@ Keine Critical/High/Medium gefunden.
 
 ## Deployment
 - **Production URL:** https://jupiter.auxevo.tech (Route `/apps/book_nuggets`, Sidebar-Sektion „Micro-Apps")
-- **Deployed:** 2026-06-28 · **Version:** 0.26.0 · **Tag:** v0.26.0-PROJ-53
+- **Initial deploy:** 2026-06-28 · **Version:** 0.26.0 · **Tag:** v0.26.0-PROJ-53
+- **Follow-up deploy:** 2026-07-16 · **Version:** 0.27.33 · **Tag:** v0.27.33-PROJ-53 — vollständige Ergebnisprüfung, fortschrittsabhängige Fortsetzungen, historische Statuskorrektur und OpenCode-Modell-Support.
 - **Host:** Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend` aus `/home/dev/projects/jupiter`, Caddy TLS), Auto-Deploy via GitHub-Webhook auf `main` (`jupiter-deploy/deploy.sh`: `git reset --hard origin/main` + `npm run build` + Service-Restart) ([[jupiter-deployment]]).
 - **Geshippt:** native Micro-App Buch-Nuggets — Backend (SQLite-Queue-Worker, Stufen-Modelllogik, Kostenschätzung, Duplikat-Logik, 8 Routen) + Frontend (Upload/URL, Modell-Steuerung, Queue mit Phase, Bibliothek, Duplikat-Dialog) + Host-Skill `hal-book-nuggets`. **Mit-promotet:** Chat-Modus-Fix (Initial-Prompt ausblenden) + Status-Docs PROJ-1/2/3/6.
 - **Hinweis:** Prod-`engines.yaml` (gitignored) trägt den `book_nuggets`-Eintrag bereits (überlebt `git reset --hard`).
@@ -366,3 +367,20 @@ Keine Critical/High/Medium gefunden.
   - [ ] **Live-Smoke AC 9/10/11** (QA-Empfehlung): je 1× echtes pdf + epub → 11 Blöcke, Seitenzitate, Contra-Quellen sichten.
   - [ ] Upload + URL + Duplikat-Dialog + Kostenschätzung end-to-end.
 - **Fast-Follow (QA LOW-1):** Upload-`source_ref` serverseitig auf `allowed_roots` härten.
+
+## Changelog
+
+### 2026-07-16 — Große Bücher: Abschluss- und Fortsetzungslogik gehärtet
+- `done` nur noch mit `JUPITER_BOOK_RESULT` und tatsächlich vorhandener Markdown-/PDF-Datei.
+- Unvollständige Sessions dürfen sich über mehrere fortschreitende Turns fortsetzen; identischer Stillstand oder 12 Fortsetzungen beendet den Lauf sichtbar als Fehler.
+- Der Fortsetzungsprompt verlangt bei hängenden/fehlenden Sub-Agenten einen Inline-Fallback für die restlichen Chunks.
+- Historische `done`-Einträge ohne vollständige Artefakte werden beim Worker-Start auf `error` korrigiert.
+- Regression: großer Lauf mit `8/10` → `9/10` → Ergebnis; PROJ-53-Suite: 43 Tests grün.
+
+### 2026-07-15 — OpenCode-Modell-Support
+- **Modelle:** 9 OpenCode-Modelle hinzugefügt (DeepSeek V4 Flash/Pro, MiniMax M3, Qwen 3.7 Plus/Max, GLM 5.2, Kimi K2.7 Code, MiMo V2.5/Pro) — zusätzlich zu den bestehenden Claude-Modellen (haiku/sonnet/opus).
+- **Engine-Routing:** `_engine_for_model()` in `book_nuggets.py` — erkennt `opencode-go/*`-Präfix und routet Session automatisch auf die `opencode`-Engine.
+- **Default:** `opencode-go/deepseek-v4-flash` als neues Standardmodell (Extrakt + Konsolidierung).
+- **Preise:** Kostenschätzung um OpenCode-Preise ergänzt (best-effort, grob).
+- **Geändert:** `config.py`, `engine/book_nuggets.py`, `db/book_nuggets_queue.py`, `schemas/book_nuggets.py`, `types.ts`, `book-nuggets-app.tsx`.
+- **Tests:** 38/38 PROJ-53-Tests grün, keine Regression.

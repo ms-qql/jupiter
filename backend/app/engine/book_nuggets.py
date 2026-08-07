@@ -41,7 +41,14 @@ logger = logging.getLogger(__name__)
 
 # Erlaubte Umwandlungs-Modelle (Kurz-Aliase der Claude-CLI). Server-Whitelist
 # gegen ungültige Slugs (PROJ-18-Slug-Falle).
-VALID_MODELS: tuple[str, ...] = ("haiku", "sonnet", "opus")
+VALID_MODELS: tuple[str, ...] = (
+    "haiku", "sonnet", "opus",
+    "opencode-go/glm-5.2", "opencode-go/qwen3.7-max",
+    "opencode-go/kimi-k2.7-code", "opencode-go/minimax-m3",
+    "opencode-go/mimo-v2.5-pro", "opencode-go/deepseek-v4-pro",
+    "opencode-go/qwen3.7-plus", "opencode-go/mimo-v2.5",
+    "opencode-go/deepseek-v4-flash",
+)
 VALID_MODES: tuple[str, ...] = ("staged", "single")
 
 # Im MVP unterstützte Dateiformate (D-Entscheidung: mobi = Fast-Follow/Phase 2).
@@ -49,10 +56,28 @@ MVP_EXTENSIONS: frozenset[str] = frozenset({"pdf", "epub", "txt", "docx"})
 
 # Grobe, gemittelte Preise pro 1 Mio. Tokens (USD) — NUR für die Best-effort-
 # Kostenschätzung, keine Abrechnung. Bücher sind fast nur Input.
-PRICE_PER_MTOK: dict[str, float] = {"haiku": 1.0, "sonnet": 6.0, "opus": 18.0}
+PRICE_PER_MTOK: dict[str, float] = {
+    "haiku": 1.0, "sonnet": 6.0, "opus": 18.0,
+    "opencode-go/deepseek-v4-flash": 0.3,
+    "opencode-go/deepseek-v4-pro": 5.0,
+    "opencode-go/minimax-m3": 2.0,
+    "opencode-go/qwen3.7-plus": 2.0,
+    "opencode-go/qwen3.7-max": 4.0,
+    "opencode-go/glm-5.2": 2.0,
+    "opencode-go/kimi-k2.7-code": 3.0,
+    "opencode-go/mimo-v2.5": 1.5,
+    "opencode-go/mimo-v2.5-pro": 5.0,
+}
 
 # Maschinenlesbarer Abschluss-Marker, den der Prompt von der Session anfordert.
 _RESULT_MARKER = "JUPITER_BOOK_RESULT"
+# ponytail: Safety ceiling for pathological "still waiting" loops; configure only if real runs hit it.
+_MAX_CONTINUATIONS = 12
+_CONTINUE_PROMPT = (
+    "Setze die Buchzusammenfassung jetzt fort. Warte nicht nur auf Sub-Agenten: "
+    "Bearbeite fehlende Chunks bei Bedarf selbst. Erstelle die Markdown-Notiz und PDF "
+    "und gib erst danach den vollständigen JUPITER_BOOK_RESULT-Block aus."
+)
 _NOTE_RE = re.compile(r"^\s*note:\s*(.+?)\s*$", re.MULTILINE)
 _PDF_RE = re.compile(r"^\s*pdf:\s*(.+?)\s*$", re.MULTILINE)
 _DIR_RE = re.compile(r"^\s*dir:\s*(.+?)\s*$", re.MULTILINE)
@@ -156,8 +181,8 @@ def estimate_cost(
             cap_tokens = page_limit * 500  # ~500 Token/Seite
             est_tokens = min(est_tokens, cap_tokens)
             pages = min(pages, page_limit)
-        p_ext = PRICE_PER_MTOK.get(model_extract, PRICE_PER_MTOK["sonnet"])
-        p_con = PRICE_PER_MTOK.get(model_consolidate, PRICE_PER_MTOK["opus"])
+        p_ext = PRICE_PER_MTOK.get(model_extract, PRICE_PER_MTOK["opencode-go/deepseek-v4-flash"])
+        p_con = PRICE_PER_MTOK.get(model_consolidate, PRICE_PER_MTOK["opencode-go/deepseek-v4-flash"])
         if model_mode == "single":
             est_cost = est_tokens / 1_000_000 * p_con
         else:
@@ -259,6 +284,14 @@ def parse_result_paths(text: str) -> dict:
     return out
 
 
+def result_is_complete(text: str, result: dict) -> bool:
+    """Ein Nugget zählt erst mit Abschlussmarker und beiden Artefakten als fertig."""
+    return (
+        _RESULT_MARKER in text
+        and all(result.get(key) and Path(result[key]).is_file() for key in ("note", "pdf"))
+    )
+
+
 def parse_phase(text: str) -> str | None:
     """Letzte gemeldete Verarbeitungs-Phase aus dem Transcript (best-effort)."""
     if not text:
@@ -275,6 +308,14 @@ def _now() -> datetime:
     return datetime.now()
 
 
+def _engine_for_model(model: str) -> str | None:
+    """Bestimmt die Engine anhand des Modell-Präfix.
+    ``opencode-go/*`` → ``"opencode"``, sonst ``None`` (Claude)."""
+    if model.startswith("opencode-go/"):
+        return "opencode"
+    return None
+
+
 class BookNuggetsWorker:
     """Sequenzieller Queue-Worker (PROJ-53). Genau **eine** Session gleichzeitig.
 
@@ -288,6 +329,8 @@ class BookNuggetsWorker:
         self._draining = False
         self._current_id: int | None = None
         self._current_session_id: str | None = None
+        self._continuations = 0
+        self._last_incomplete_output: str | None = None
 
     # --- Lifecycle ---------------------------------------------------------
 
@@ -295,6 +338,17 @@ class BookNuggetsWorker:
         """Idempotenter Start: Schema anlegen, verwaiste ``running`` → ``pending``."""
         await self._repo.init()
         await self._repo.reset_running()
+        rows = await self._repo.list_queue()
+        for row in rows:
+            if row["status"] == DONE and not all(
+                row.get(key) and Path(row[key]).is_file()
+                for key in ("result_note_path", "result_pdf_path")
+            ):
+                await self._repo.update(
+                    row["id"], status=ERROR,
+                    error_message="Historischer Eintrag ohne vollständige Markdown-/PDF-Artefakte.",
+                )
+        self._draining = any(row["status"] == PENDING for row in rows)
 
     # --- Öffentliche Steuerung (von den Routen aufgerufen) -----------------
 
@@ -487,6 +541,8 @@ class BookNuggetsWorker:
 
     async def _start(self, row: dict) -> None:
         item_id = row["id"]
+        model_consolidate = row.get("model_consolidate") or settings.book_nuggets_model
+        model_extract = row.get("model_extract") or "sonnet"
         try:
             runtime = await self._manager.create(
                 project_path=settings.book_nuggets_project_path,
@@ -494,11 +550,12 @@ class BookNuggetsWorker:
                     row["source_type"], row["source_ref"],
                     settings.book_nuggets_output_subdir,
                     row.get("model_mode") or "staged",
-                    row.get("model_extract") or "sonnet",
+                    model_extract,
                     row.get("page_limit"),
                     None,  # vault-seitige Versionierung erledigt der Skill bei Bedarf
                 ),
-                model=row.get("model_consolidate") or settings.book_nuggets_model,
+                model=model_consolidate,
+                engine=_engine_for_model(model_consolidate),
                 permission_mode=settings.book_nuggets_permission_mode,
                 owner=settings.default_owner,
                 project_name="Buch-Nuggets",
@@ -515,6 +572,8 @@ class BookNuggetsWorker:
             return
         self._current_id = item_id
         self._current_session_id = runtime.state.session_id
+        self._continuations = 0
+        self._last_incomplete_output = None
         await self._repo.update(
             item_id, status=RUNNING, phase="parsing",
             session_id=runtime.state.session_id, started_at=_now().isoformat(),
@@ -532,7 +591,35 @@ class BookNuggetsWorker:
         status = runtime.state.status
         if status in (SESSION_WAITING, SESSION_DONE):
             res = parse_result_paths(text)
-            await self._finish(success=True, result=res)
+            if result_is_complete(text, res):
+                await self._finish(success=True, result=res)
+            else:
+                latest_output = next(
+                    (
+                        e.text for e in reversed(runtime.transcript)
+                        if e.role == "assistant" and e.kind == "text"
+                    ),
+                    "",
+                )
+                if (
+                    self._continuations < _MAX_CONTINUATIONS
+                    and latest_output != self._last_incomplete_output
+                ):
+                    self._last_incomplete_output = latest_output
+                    self._continuations += 1
+                    try:
+                        await self._manager.send_input(self._current_session_id, _CONTINUE_PROMPT)
+                    except Exception as exc:  # noqa: BLE001 — Abschlussfehler nur für dieses Buch.
+                        await self._finish(success=False, error=f"Fortsetzung fehlgeschlagen: {exc}")
+                else:
+                    await self._finish(
+                        success=False,
+                        error=(
+                            "Verarbeitung ohne neuen Fortschritt oder nach "
+                            f"{_MAX_CONTINUATIONS} Fortsetzungen ohne vollständiges Ergebnis "
+                            "beendet (Markdown/PDF fehlen)."
+                        ),
+                    )
         elif status == SESSION_ERROR:
             await self._finish(
                 success=False, error=runtime.state.error or "Verarbeitung fehlgeschlagen."
@@ -570,6 +657,8 @@ class BookNuggetsWorker:
         await self._stop_current_session()
         self._current_id = None
         self._current_session_id = None
+        self._continuations = 0
+        self._last_incomplete_output = None
 
     async def _stop_current_session(self) -> None:
         if not self._current_session_id:

@@ -16,6 +16,7 @@ import mimetypes
 import os
 import shutil
 import tempfile
+import zipfile
 from datetime import datetime, timezone
 
 from ..config import settings
@@ -245,6 +246,75 @@ class FileService:
             raise FileExistsError(dest)
         os.rename(real, dest)
         return self._entry(dest)
+
+    def build_zip(self, paths: list[str]):
+        """Realpfade der Auswahl validieren und einen ZIP-Chunk-Generator liefern.
+
+        Validierung (ungültige Pfade übersprungen, analog ``delete``s Best-Effort)
+        passiert hier synchron, damit ein leeres Ergebnis noch als ``ValueError``
+        (→ 400) beim Aufrufer landet, statt erst mitten im Response-Stream zu
+        scheitern. Das eigentliche Packen läuft danach lazy im Generator — die
+        ZIP-Daten liegen nie komplett im RAM, sondern werden je Datei ausgeliefert.
+        """
+        resolved: list[str] = []
+        for p in paths:
+            try:
+                resolved.append(self._real_existing(p))
+            except (ValueError, FileNotFoundError):
+                continue
+        if not resolved:
+            raise ValueError("Keine gültigen Dateien zum Herunterladen.")
+        return self._stream_zip(resolved)
+
+    @staticmethod
+    def _stream_zip(resolved: list[str]):
+        """Yield ZIP-Bytes häppchenweise, sobald sie im Sink anfallen (kein Voll-Puffer)."""
+
+        class _ChunkSink:
+            def __init__(self) -> None:
+                self._chunks: list[bytes] = []
+                self._pos = 0
+
+            def write(self, data: bytes) -> int:
+                self._chunks.append(data)
+                self._pos += len(data)
+                return len(data)
+
+            def tell(self) -> int:
+                return self._pos
+
+            def flush(self) -> None:
+                pass
+
+            def drain(self) -> bytes:
+                out = b"".join(self._chunks)
+                self._chunks.clear()
+                return out
+
+        sink = _ChunkSink()
+        zf = zipfile.ZipFile(sink, "w", zipfile.ZIP_DEFLATED)
+        try:
+            for real in resolved:
+                if os.path.isdir(real):
+                    base_name = os.path.basename(real)
+                    for root, _, files in os.walk(real):
+                        for f in files:
+                            full = os.path.join(root, f)
+                            arc = os.path.join(base_name, os.path.relpath(full, real))
+                            zf.write(full, arc)
+                            chunk = sink.drain()
+                            if chunk:
+                                yield chunk
+                else:
+                    zf.write(real, os.path.basename(real))
+                    chunk = sink.drain()
+                    if chunk:
+                        yield chunk
+        finally:
+            zf.close()  # schreibt das zentrale Verzeichnis in den Sink
+        chunk = sink.drain()
+        if chunk:
+            yield chunk
 
     def delete(self, paths: list[str]) -> dict:
         deleted: list[str] = []

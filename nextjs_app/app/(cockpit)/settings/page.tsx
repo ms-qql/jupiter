@@ -22,6 +22,7 @@ import { TranscriptionControl } from "@/components/cockpit/transcription-control
 import { RegistryControl } from "@/components/cockpit/registry-control";
 import { EngineModelsControl } from "@/components/cockpit/engine-models-control";
 import { ProviderBudgetControl } from "@/components/cockpit/provider-budget-control";
+import { TokenSavingsControl } from "@/components/cockpit/token-savings-control";
 
 type Section = {
   id: string;
@@ -36,6 +37,7 @@ const SECTIONS: Section[] = [
   { id: "watchdog", title: "Watchdog", control: <WatchdogControl /> },
   { id: "liveness", title: "Liveness", control: <LivenessControl /> },
   { id: "budget", title: "Budget", control: <ProviderBudgetControl /> },
+  { id: "token-savings", title: "Token Savings", control: <TokenSavingsControl /> },
   { id: "sprache", title: "Sprache", control: <TranscriptionControl /> },
   { id: "modelle", title: "Modelle", control: <EngineModelsControl /> },
   { id: "registry", title: "Registry", control: <RegistryControl /> },

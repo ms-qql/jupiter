@@ -18,6 +18,7 @@ Zeitbezug: ``created_at`` ist tz-aware UTC; die Zeitfenster werden in UTC gebild
 from __future__ import annotations
 
 import logging
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -148,6 +149,52 @@ def _sum_cache(rows: list[dict]) -> tuple[int, int]:
     return read, creation
 
 
+GOLDEN_TASKS = ("code_search", "debugging", "tests", "review", "free_chat")
+PILOT_ENGINES = ("claude", "codex", "opencode")
+PILOT_MIN_RUNS = 5
+PILOT_MAX_LATENCY_INCREASE_PCT = 20.0
+
+
+def evaluate_golden_pilot(rows: list[dict]) -> dict:
+    """Vergleicht nur gleiche Golden-Tasks je Engine im Savings-A/B-Paar."""
+    import statistics
+
+    paired = [
+        r for r in rows
+        if r.get("engine") in PILOT_ENGINES and r.get("savings_pilot_task") in GOLDEN_TASKS
+    ]
+    cells = {
+        (engine, task, enabled): [
+            r for r in paired
+            if r.get("engine") == engine
+            and r.get("savings_pilot_task") == task
+            and bool(r.get("savings_enabled")) is enabled
+        ]
+        for engine in PILOT_ENGINES for task in GOLDEN_TASKS for enabled in (False, True)
+    }
+    savings = [r for r in paired if bool(r.get("savings_enabled"))]
+    controls = [r for r in paired if not bool(r.get("savings_enabled"))]
+    def degraded_count(row: dict) -> int:
+        try:
+            return len(json.loads(row.get("savings_degraded") or "[]"))
+        except (TypeError, json.JSONDecodeError):
+            return 0
+    fallback_count = sum(degraded_count(r) for r in savings)
+    complete = all(len(cell) >= PILOT_MIN_RUNS for cell in cells.values())
+    if not complete:
+        return {"estimated_tokens_avoided": None, "additional_latency_ms": None,
+                "fallback_count": fallback_count, "pilot_status": "not_ready", "small_sample": True}
+    s_tokens = statistics.mean(float(r.get("tokens_used") or 0) for r in savings)
+    c_tokens = statistics.mean(float(r.get("tokens_used") or 0) for r in controls)
+    s_latency = statistics.median(float(r.get("savings_latency_ms") or 0) for r in savings)
+    c_latency = statistics.median(float(r.get("savings_latency_ms") or 0) for r in controls)
+    additional = s_latency - c_latency
+    security_clean = all(r.get("savings_pilot_safe") is True for r in savings)
+    stable = security_clean and fallback_count == 0 and (c_latency == 0 or additional <= c_latency * PILOT_MAX_LATENCY_INCREASE_PCT / 100)
+    return {"estimated_tokens_avoided": max(0, round(c_tokens - s_tokens)), "additional_latency_ms": round(additional, 1),
+            "fallback_count": fallback_count, "pilot_status": "stable" if stable else "eligible", "small_sample": False}
+
+
 def aggregate_summary(rows: list[dict], range_: UsageRange, now: datetime) -> dict:
     scoped = filter_by_range(rows, range_, now)
     cache_read, cache_creation = _sum_cache(scoped)
@@ -230,6 +277,37 @@ class UsageService:
     ) -> list[dict]:
         rows = await self._repo.list_all()
         return aggregate_drilldown(rows, range_, self._now(), model=model, project=project)
+
+    async def savings_metrics(self, range_: UsageRange) -> dict:
+        """Aggregiert Savings-Pilotdaten, ohne Provider-Tokens umzudeuten.
+
+        Die derzeitigen Skill-Adapter liefern keine belastbare Baseline pro Turn.
+        Deshalb bleiben Einsparung und Zusatzlatenz explizit ``None`` statt einer
+        erfundenen Null. Degraded-Snapshots sind dagegen echte Fallback-Ereignisse.
+        """
+        rows = filter_by_range(await self._repo.list_all(), range_, self._now())
+        enabled = [r for r in rows if bool(r.get("savings_enabled"))]
+        control = [r for r in rows if not bool(r.get("savings_enabled"))]
+        def fallback_count(row: dict) -> int:
+            raw = row.get("savings_degraded") or "[]"
+            try:
+                return len(json.loads(raw)) if isinstance(raw, str) else len(raw)
+            except (TypeError, json.JSONDecodeError):
+                return 0
+
+        fallbacks = sum(fallback_count(r) for r in enabled)
+        pilot = evaluate_golden_pilot(rows)
+        return {
+            "range": range_,
+            "sample_size": len(enabled),
+            "control_sample_size": len(control),
+            "estimated_tokens_avoided": pilot["estimated_tokens_avoided"],
+            "additional_latency_ms": pilot["additional_latency_ms"],
+            "fallback_count": fallbacks,
+            "measurement_status": "available" if pilot["estimated_tokens_avoided"] is not None else "unavailable",
+            "pilot_status": pilot["pilot_status"],
+            "small_sample": pilot["small_sample"],
+        }
 
 
 class BudgetRefreshRateLimited(RuntimeError):
@@ -368,14 +446,20 @@ class ProviderBudgetService:
     _WINDOW_LABELS: dict[str, tuple[str, str]] = {}
     _DEFAULT_LABELS: tuple[str, str] = ("5h", "Woche")
 
+    # Codex kennt seit dem Provider-Wechsel kein 5h-Fenster mehr — nur Woche.
+    _WEEK_ONLY_PROVIDERS = ("codex",)
+
     def _windows(self, provider: str) -> list[_WindowSpec]:
         limit_5h, limit_week = self._limits_for(provider)
         label_5h, label_week = self._WINDOW_LABELS.get(
             provider, self._DEFAULT_LABELS
         )
+        week_spec = _WindowSpec("week", label_week, timedelta(days=7), limit_week)
+        if provider in self._WEEK_ONLY_PROVIDERS:
+            return [week_spec]
         return [
             _WindowSpec("5h", label_5h, timedelta(hours=5), limit_5h),
-            _WindowSpec("week", label_week, timedelta(days=7), limit_week),
+            week_spec,
         ]
 
     def _limits_for(self, provider: str) -> tuple[int, int]:

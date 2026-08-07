@@ -71,6 +71,16 @@ COLUMNS: tuple[str, ...] = (
     "tmux_pane",
     "tmux_capture_cursor",
     "transport_status",
+    # PROJ-73: unveränderlicher Token-Savings-Snapshot (JSON nur für kleine Metadaten).
+    "savings_enabled",
+    "savings_source",
+    "savings_profile_version",
+    "savings_modules",
+    "savings_degraded",
+    "savings_provenance",
+    "savings_pilot_task",
+    "savings_latency_ms",
+    "savings_pilot_safe",
 )
 
 SCHEMA_SQL = """
@@ -105,7 +115,16 @@ CREATE TABLE IF NOT EXISTS session_index (
     tmux_session          TEXT,
     tmux_pane             TEXT,
     tmux_capture_cursor   INTEGER DEFAULT 0,
-    transport_status      TEXT
+    transport_status      TEXT,
+    savings_enabled       INTEGER DEFAULT 0,
+    savings_source        TEXT DEFAULT 'global',
+    savings_profile_version TEXT,
+    savings_modules       TEXT DEFAULT '[]',
+    savings_degraded      TEXT DEFAULT '[]',
+    savings_provenance    TEXT DEFAULT '[]',
+    savings_pilot_task    TEXT,
+    savings_latency_ms    REAL,
+    savings_pilot_safe    INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 
@@ -149,6 +168,15 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("tmux_pane", "TEXT"),  # PROJ-63
     ("tmux_capture_cursor", "INTEGER DEFAULT 0"),  # PROJ-63
     ("transport_status", "TEXT"),  # PROJ-63
+    ("savings_enabled", "INTEGER DEFAULT 0"),  # PROJ-73
+    ("savings_source", "TEXT DEFAULT 'global'"),
+    ("savings_profile_version", "TEXT"),
+    ("savings_modules", "TEXT DEFAULT '[]'"),
+    ("savings_degraded", "TEXT DEFAULT '[]'"),
+    ("savings_provenance", "TEXT DEFAULT '[]'"),
+    ("savings_pilot_task", "TEXT"),
+    ("savings_latency_ms", "REAL"),
+    ("savings_pilot_safe", "INTEGER"),
 )
 
 

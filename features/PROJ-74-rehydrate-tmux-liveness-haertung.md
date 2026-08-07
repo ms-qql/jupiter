@@ -1,8 +1,9 @@
 # PROJ-74: Bugfix: Backend-Neustart orphaniert lebende tmux-Sessions unnötig (rehydrate() ignoriert echte Prozess-Liveness)
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-07-17
 **Last Updated:** 2026-07-18
+**Deployed:** 2026-07-18 · Version 0.27.34 · https://jupiter.auxevo.tech
 
 ## Problem / Motivation
 Report `docs/reports/2026-07-17-session-management-vergleich.md` (Vergleich mit Wayland/Agentic-OS-Session-Management) hat folgende Lücke identifiziert:
@@ -244,4 +245,8 @@ proj14/27/33/63/64/66 + `test_proj4_decision_cards.py`: 170 passed (168 + 2 neue
 - **Recommendation:** Deploy
 
 ## Deployment
-_To be added by /deploy_
+**Production URL:** https://jupiter.auxevo.tech
+**Deployed:** 2026-07-18 · Version: 0.27.34
+**Host:** host-nativ (systemd `jupiter-backend`/`jupiter-frontend`) auf demselben Dev-VPS, GitHub-Webhook (`jupiter-webhook.service`) löst bei Push auf `main` `deploy.sh` aus (`git reset --hard origin/main`, `npm ci && npm run build`, `systemctl restart jupiter-backend jupiter-frontend`) — kein Dokploy/Docker in diesem Projekt.
+
+**Branch-Hinweis:** `dev` war seit dem letzten PROJ-72-Redeploy/PROJ-73/PROJ-53 nicht mehr mit `main` synchronisiert (main lief bereits auf v0.27.33, `dev` noch auf v0.27.30). Statt `dev` blind zu mergen, wurden nur die beiden PROJ-74-Commits per Cherry-Pick auf `main` aufgesetzt (Konflikte in `docs/PRD.md`/`features/INDEX.md` manuell aufgelöst, main-Inhalt bleibt führend). `dev` selbst bleibt vorerst divergent — Empfehlung: bei Gelegenheit `dev` mit `main` synchronisieren (`git checkout dev && git merge --no-ff origin/main`), bevor das nächste Feature dort startet.

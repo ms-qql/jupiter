@@ -6,11 +6,14 @@ die beiden Endpunkte via FastAPI-TestClient mit einem Fake-Repo ab.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.engine.usage import (
+    GOLDEN_TASKS,
+    PILOT_ENGINES,
     UsageService,
     aggregate_drilldown,
     aggregate_summary,
@@ -64,6 +67,47 @@ def test_filter_by_range() -> None:
     ]
     assert [r["session_id"] for r in filter_by_range(rows, "7d", NOW)] == ["neu"]
     assert len(filter_by_range(rows, "all", NOW)) == 2
+
+
+def test_savings_metrics_are_honest_without_turn_baseline() -> None:
+    class Repo:
+        async def list_all(self):
+            return [
+                _row(savings_enabled=1, savings_degraded='["caveman: timeout"]'),
+                _row(session_id="control", savings_enabled=0),
+            ]
+
+    service = UsageService(Repo())
+    service._now = lambda: NOW  # type: ignore[method-assign]
+    metrics = asyncio.run(service.savings_metrics("all"))
+
+    assert metrics["estimated_tokens_avoided"] is None
+    assert metrics["additional_latency_ms"] is None
+    assert metrics["fallback_count"] == 1
+    assert metrics["sample_size"] == metrics["control_sample_size"] == 1
+    assert metrics["measurement_status"] == "unavailable"
+
+
+def test_golden_pilot_requires_every_engine_and_task_cell() -> None:
+    from app.engine.usage import evaluate_golden_pilot
+
+    rows = [
+        _row(engine="claude", savings_pilot_task="code_search", savings_enabled=enabled,
+             savings_latency_ms=100, savings_pilot_safe=True)
+        for enabled in (False, True) for _ in range(5)
+    ]
+    assert evaluate_golden_pilot(rows)["pilot_status"] == "not_ready"
+
+    rows = [
+        _row(engine=engine, savings_pilot_task=task, savings_enabled=enabled,
+             tokens_used=80 if enabled else 100, savings_latency_ms=110 if enabled else 100,
+             savings_pilot_safe=True)
+        for engine in PILOT_ENGINES for task in GOLDEN_TASKS
+        for enabled in (False, True) for _ in range(5)
+    ]
+    assert evaluate_golden_pilot(rows)["pilot_status"] == "stable"
+    next(row for row in rows if row["savings_enabled"])["savings_pilot_safe"] = False
+    assert evaluate_golden_pilot(rows)["pilot_status"] == "eligible"
 
 
 def test_summary_groups_and_costs() -> None:

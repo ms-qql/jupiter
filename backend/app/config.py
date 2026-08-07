@@ -45,6 +45,11 @@ _DEFAULT_LIVENESS_PATH = str(Path(__file__).resolve().parent.parent / "config" /
 # Engine-Overrides). Live mtime-geprüft wie Policy/Watchdog/Liveness.
 _DEFAULT_TRANSPORT_PATH = str(Path(__file__).resolve().parent.parent / "config" / "transport.yaml")
 
+# PROJ-73: globaler Token-Savings-Default + administrative Modulfreigaben.
+_DEFAULT_TOKEN_SAVINGS_PATH = str(
+    Path(__file__).resolve().parent.parent / "config" / "token_savings.yaml"
+)
+
 # Standard-Wurzel der Marktplatz/Registry (PROJ-26): backend/registry/. Dort liegen die
 # installierten Rollen/Skills/Agenten (manifest.yaml + definition.md + versions/) und das
 # Import/Export-Staging. Datei-first, kein DB-Zwang — git-versionierbar, von Hand prüfbar.
@@ -219,6 +224,12 @@ class Settings(BaseSettings):
     provider_budget_claude_cli_enabled: bool = True
     provider_budget_codex_rollout_enabled: bool = True
     codex_sessions_dir: str = str(Path.home() / ".codex" / "sessions")
+    # OpenCode Go meldet sein Wochenlimit serverseitig nur als Fehlertext im CLI-Log
+    # ("Weekly usage limit reached. Resets in N days"), nicht als $-Kosten (die
+    # Zen/Go-Bundle-Modelle sind Abo-Kontingent, kein Per-Token-Preis) → die bisherige
+    # Kostenschätzung blieb bei laufendem Kontingent-Limit fälschlich niedrig.
+    provider_budget_opencode_log_enabled: bool = True
+    opencode_log_path: str = str(Path.home() / ".local" / "share" / "opencode" / "log" / "opencode.log")
     # Optionale Fallback-Quoten für lokale Schätzung. 0 = unbekannt → UI zeigt n/v
     # statt erfundener Prozentwerte. Live-Quelle ist provider_budgets.yaml (UI-editierbar);
     # diese env-Felder bleiben als letzter Fallback, wenn kein Store gesetzt ist (Tests).
@@ -249,6 +260,12 @@ class Settings(BaseSettings):
 
     # Verzeichnis der Knappheits-Konstitution (PROJ-6): global.md + roles/<rolle>.md.
     constitution_dir: str = _DEFAULT_CONSTITUTION_DIR
+
+    # PROJ-73: live editierbarer globaler Savings-Default. Fremdtools werden durch
+    # diesen Schalter nie installiert; ein expliziter CodeGraph-Pfad verhindert die
+    # Abhängigkeit von interaktiven NVM-Shellprofilen.
+    token_savings_config_path: str = _DEFAULT_TOKEN_SAVINGS_PATH
+    codegraph_bin: str = ""
 
     # Trust-Policy-Datei (PROJ-10): abgestufte Freigabe-Regeln + Phasen-Gate. Wird
     # bei JEDER Auswertung mtime-geprüft (live editierbar ohne Neustart). Fehlt/kaputt
@@ -373,6 +390,8 @@ class Settings(BaseSettings):
         "ods", "odp",
         # E-Books (PROJ-53 Buch-Nuggets; mobi = Fast-Follow/Phase 2, daher hier nicht)
         "epub",
+        # Video
+        "mp4",
         # Archive
         "zip", "tar", "gz", "tgz",
     }
@@ -381,10 +400,18 @@ class Settings(BaseSettings):
     # Standard ist self-hosted faster-whisper (lokal, kein API-Key, keine
     # laufenden Kosten). Modellgröße als Kompromiss aus Deutsch-Qualität und
     # CPU-Latenz/RAM auf dem GPU-losen Dev-VPS; via Env hoch-/runterschaltbar.
-    whisper_model: str = "small"
+    whisper_model: str = "base"
     # Transkriptions-Sprache; leer = auto-detect (mehrsprachig, empfohlen).
     # Explizit setzen (z.B. "de") nur wenn Spracherkennung zu ungenau.
     whisper_language: str = ""
+    # CPU-Threads für ctranslate2; 0 = alle Kerne des Hosts nutzen.
+    whisper_cpu_threads: int = 0
+    # Greedy-Decoding (1) statt Beam-Search (faster-whisper-Default 5) — bei
+    # Diktat-Kurzaufnahmen kaum Qualitätsverlust, aber deutlich weniger Latenz.
+    whisper_beam_size: int = 1
+    # Voice-Activity-Detection: schneidet Stille/Rauschen VOR dem Decoder weg.
+    # Verhindert die teuren Halluzinations-Schleifen in Pausen.
+    whisper_vad_filter: bool = True
     # Optionaler Groq-Cloud-Fallback (pay-per-use). Leerer Key = nicht verfügbar.
     # Secret NUR aus der .env (JUPITER_GROQ_API_KEY), nie im Repo.
     groq_api_key: str = ""
@@ -462,7 +489,7 @@ class Settings(BaseSettings):
     book_nuggets_poll_interval_seconds: float = 5.0
     # Default-Hauptmodell (Konsolidierung) der Verarbeitungs-Session, falls am Eintrag
     # keins gesetzt ist. permission_mode = bypassPermissions (headless, kein Gate).
-    book_nuggets_model: str = "opus"
+    book_nuggets_model: str = "opencode/deepseek-v4-flash-free"
     book_nuggets_permission_mode: str = "bypassPermissions"
     # Arbeitsverzeichnis (cwd/Scope) der Sessions. Default = Hal-Vault. MUSS innerhalb
     # allowed_roots liegen + existieren.

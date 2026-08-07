@@ -13,12 +13,12 @@ import {
 } from "./sidebar-prefs-provider";
 
 describe("buildDefaults", () => {
-  it("setzt alle bekannten Einträge auf ihre Defaults (sichtbar)", () => {
+  it("setzt alle bekannten Einträge auf ihre Defaults", () => {
     const d = buildDefaults();
     expect(d.doku).toEqual({ visible: true, order: 0 });
     expect(d.dateien).toEqual({ visible: true, order: 1 });
     expect(d.sessions).toEqual({ visible: true, order: 0 });
-    expect(d["budget:claude"]).toEqual({ visible: true, order: 0 });
+    expect(d["budget:claude"]).toEqual({ visible: false, order: 0 });
     expect(d["budget:codex"]).toEqual({ visible: true, order: 1 });
     expect(d["budget:opencode"]).toEqual({ visible: true, order: 2 });
   });
@@ -124,7 +124,7 @@ describe("RESET", () => {
       doku: { visible: true, order: 0 },
       dateien: { visible: true, order: 1 },
       sessions: { visible: true, order: 0 },
-      "budget:claude": { visible: true, order: 0 },
+      "budget:claude": { visible: false, order: 0 },
       "budget:codex": { visible: true, order: 1 },
       "budget:opencode": { visible: true, order: 2 },
     });

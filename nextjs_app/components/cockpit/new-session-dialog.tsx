@@ -31,7 +31,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ApiError, createSession, getEngines, getLaunchSuggestion } from "@/lib/api";
+import {
+  ApiError,
+  createSession,
+  getEngines,
+  getLaunchSuggestion,
+  previewTokenSavings,
+} from "@/lib/api";
 import { ABC_PHASES, modelLabel, projectName } from "@/lib/status";
 import type {
   AbcPhase,
@@ -39,6 +45,8 @@ import type {
   FeatureSuggestion,
   LaunchSuggestion,
   PermissionMode,
+  TokenSavingsChoice,
+  TokenSavingsPreview,
 } from "@/lib/types";
 import { useSessions } from "./sessions-provider";
 import { PushToTalkButton } from "./push-to-talk-button";
@@ -93,6 +101,10 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
   // PROJ-18: Engine-Auswahl (Default „claude"); Liste + Verfügbarkeit aus GET /engines.
   const [engine, setEngine] = useState<string>("claude");
   const [engines, setEngines] = useState<EngineRead[]>([]);
+  // PROJ-73: globalen Standard verwenden oder nur diese Session überschreiben.
+  const [tokenSavings, setTokenSavings] = useState<TokenSavingsChoice>("standard");
+  const [savingsPreview, setSavingsPreview] = useState<TokenSavingsPreview | null>(null);
+  const [savingsPreviewError, setSavingsPreviewError] = useState<string | null>(null);
 
   // PROJ-9: Vorschlag aus der INDEX.md.
   const [suggestion, setSuggestion] = useState<LaunchSuggestion | null>(null);
@@ -175,6 +187,31 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
     return () => ctrl.abort();
   }, [open]);
 
+  // PROJ-73: nicht-blockierende Preview nach Engine/Pfad/Override. Sie zeigt die
+  // wirklich verfügbaren Module; ein Fehler verhindert den Session-Start nicht.
+  useEffect(() => {
+    if (!open || !projectPath.trim()) return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      previewTokenSavings(engine, projectPath.trim(), tokenSavings, ctrl.signal)
+        .then((value) => {
+          setSavingsPreview(value);
+          setSavingsPreviewError(null);
+        })
+        .catch((error) => {
+          if (ctrl.signal.aborted) return;
+          setSavingsPreview(null);
+          setSavingsPreviewError(
+            error instanceof ApiError ? error.message : "Preview nicht verfügbar",
+          );
+        });
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [open, engine, projectPath, tokenSavings]);
+
   // Optionen = Empfehlung + Alternativen (für die Auswahlliste).
   const options: FeatureSuggestion[] = suggestion?.empfehlung
     ? [suggestion.empfehlung, ...suggestion.alternativen]
@@ -214,6 +251,9 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
     setEngine("claude");
     setModel("sonnet");
     setWorkflowMode("workflow");
+    setTokenSavings("standard");
+    setSavingsPreview(null);
+    setSavingsPreviewError(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -230,6 +270,7 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
         role: chatMode ? undefined : role.trim() || undefined,
         project_name: project.trim() || undefined,
         engine,
+        token_savings: tokenSavings,
       });
       toast.success("Session gestartet");
       setOpen(false);
@@ -448,6 +489,59 @@ export function NewSessionDialog({ children }: { children: React.ReactNode }) {
                 Decision Cards greifen nicht.
               </p>
             )}
+
+            <div className="grid gap-2 rounded-md border border-border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor="token_savings">Token Savings</Label>
+                {savingsPreview && (
+                  <Badge variant={savingsPreview.enabled ? "default" : "secondary"}>
+                    {savingsPreview.enabled ? "effektiv an" : "effektiv aus"}
+                  </Badge>
+                )}
+              </div>
+              <Select
+                value={tokenSavings}
+                onValueChange={(value) =>
+                  value && setTokenSavings(value as TokenSavingsChoice)
+                }
+              >
+                <SelectTrigger id="token_savings">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="standard">Globalen Standard verwenden</SelectItem>
+                  <SelectItem value="on">Für diese Session einschalten</SelectItem>
+                  <SelectItem value="off">Für diese Session ausschalten</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {savingsPreview ? (
+                <div className="grid gap-1 text-[11px] leading-snug text-muted-foreground">
+                  <p>
+                    Profil <span className="font-mono">{savingsPreview.profile_version}</span>
+                    {savingsPreview.modules.length > 0
+                      ? ` · aktiv: ${savingsPreview.modules.map((m) => m.name).join(", ")}`
+                      : " · keine Module aktiv"}
+                  </p>
+                  {savingsPreview.degraded.length > 0 && (
+                    <p className="text-amber-600 dark:text-amber-400">
+                      Eingeschränkt: {savingsPreview.degraded.join(" · ")}
+                    </p>
+                  )}
+                </div>
+              ) : savingsPreviewError ? (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  Savings-Preview nicht verfügbar ({savingsPreviewError}). Der Session-Start
+                  bleibt möglich.
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">Preview wird geladen…</p>
+              )}
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Laufende Sessions behalten diesen Start-Snapshot. Fehlende Module werden
+                ausgelassen und blockieren den Start nicht.
+              </p>
+            </div>
           </div>
 
           <DialogFooter className="shrink-0">

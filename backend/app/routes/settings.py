@@ -10,6 +10,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from ..config import THRESHOLD_MAX_PCT, THRESHOLD_MIN_PCT, clamp_threshold, settings
 from ..engine import liveness, policy, transport_settings, watchdog
+from ..engine.manager import validate_project_path
+from ..engine.savings import savings_health, savings_resolver, savings_store
 from ..engine.abc_phases import ABC_PHASES
 from ..engine.files import FileService
 from ..engine.provider_budget import provider_budget_store
@@ -25,10 +27,14 @@ from ..schemas.settings import (
     PolicyPreviewRead,
     ProviderBudgetLimitsPut,
     ProviderBudgetSettingRead,
+    SavingsModuleHealth,
     ThresholdSettingPatch,
     ThresholdSettingRead,
     TransportSettingPut,
     TransportSettingRead,
+    TokenSavingsPreview,
+    TokenSavingsPut,
+    TokenSavingsRead,
     TrustPolicyPut,
     TrustPolicyRead,
     WatchdogLimitsPut,
@@ -219,6 +225,57 @@ async def put_transports(payload: TransportSettingPut) -> dict:
     try:
         return transport_settings.transport_store.save(payload.model_dump())
     except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Token Savings (PROJ-73) ----------------------------------------------
+
+
+@router.get("/token-savings", response_model=TokenSavingsRead)
+async def get_token_savings(engine: str = "claude", project_path: str | None = None) -> dict:
+    try:
+        modules = savings_health.all_health(engine, project_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {**savings_store.snapshot(), "modules": modules}
+
+
+@router.put("/token-savings", response_model=TokenSavingsRead)
+async def put_token_savings(payload: TokenSavingsPut, engine: str = "claude") -> dict:
+    try:
+        snapshot = savings_store.save(payload.model_dump())
+        return {**snapshot, "modules": savings_health.all_health(engine)}
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/token-savings/preview", response_model=TokenSavingsPreview)
+async def preview_token_savings(
+    engine: str = "claude", project_path: str = "/home/dev/projects/jupiter",
+    choice: str = "standard",
+) -> dict:
+    if choice not in ("standard", "on", "off"):
+        raise HTTPException(status_code=400, detail="choice muss standard, on oder off sein.")
+    try:
+        real_path = validate_project_path(project_path)
+        result = savings_resolver.resolve(
+            choice=choice, engine=engine, project_path=real_path, base_prompt=""
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result.snapshot()
+
+
+@router.get(
+    "/token-savings/modules/{module}/health", response_model=SavingsModuleHealth
+)
+async def get_savings_module_health(
+    module: str, engine: str = "claude", project_path: str | None = None
+) -> dict:
+    try:
+        real_path = validate_project_path(project_path) if project_path else None
+        return savings_health.module_health(module, engine, real_path)
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

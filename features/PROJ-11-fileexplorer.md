@@ -276,7 +276,35 @@ Next.js 16 + shadcn/ui, Branch `dev`. Beide Oberflächen über den geteilten Hoo
 ### Produktionsreife: ✅ READY
 Keine Critical/High-Bugs. Backend adversarial abgesichert, Build grün. Die 5 Low-Punkte sind sichere Abweichungen/Nice-to-haves und können als Follow-up adressiert werden. Empfehlung: kurzer manueller Browser-Smoke der beiden interaktiven Flows vor `/abc-deploy`.
 
+## Nachtrag: Mehrfach-Download als ZIP (2026-07-30)
+Löst die im ursprünglichen QA offen gelassene AC-Klammer „Download einzelner Dateien (und Ordner als Zip optional)" ein: Mehrfachauswahl im Explorer (Checkboxen, bereits für Löschen vorhanden) lässt sich jetzt auch gesammelt als **ein ZIP** herunterladen — analog zum bestehenden „N löschen"-Button.
+
+**Backend:** `POST /files/download-zip` (`{paths:[…]}` → `StreamingResponse`, `application/zip`). `FileService.build_zip` — pro Pfad `_real_existing` (gleiche `realpath`/Root-Härtung wie überall), Ordner rekursiv via `os.walk` unter ihrem Basisnamen gepackt, ungültige/fehlende Pfade übersprungen statt Abbruch; komplett leeres Ergebnis → 400.
+**Frontend:** `downloadZip()` in `lib/api.ts` (gleiches Blob+Object-URL-Muster wie `downloadFile`, inkl. 401-Refresh-Retry); Button „N herunterladen" neben „N löschen" in der Mehrfachauswahl-Leiste.
+
+### QA Test Results (Nachtrag)
+**Getestet:** 2026-07-30 · **Branch:** main (ad-hoc, kein eigener Feature-Spec — direkte Erweiterung von PROJ-11)
+
+**Automatisiert:** 5 neue Backend-Tests (`test_proj11_files.py`): Mehrfachauswahl-Dateien im ZIP, Ordner rekursiv, gemischte gültig/ungültig Pfade (ungültige übersprungen), alle Pfade ungültig → 400, leere `paths` → 422. Alle 34 Tests der Datei grün. Volle Backend-Suite: 1208 grün, 2 vorbestehende Failures in `test_proj50_codex_abc.py` (YAML-Frontmatter-Drift in einer nicht mit diesem Feature zusammenhängenden Skill-Datei, per `git stash` als vorbestehend verifiziert — keine Regression). Frontend: `tsc --noEmit` sauber für alle berührten Dateien (7 vorbestehende Fehler in fremden Test-Dateien, nicht berührt).
+
+**Manuell/Red-Team (Code-Review, kein Browser-Smoke durchgeführt):**
+- Zip-Slip: ausgeschlossen — Arcnames stammen aus `os.walk(real)` relativ zum bereits gehärteten `real`, nie aus rohem Nutzer-Input.
+- Traversal/Symlink: gleiche `_real_existing`-Härtung wie Download/Delete — gemeinsame Codepfad.
+- Kein Auth-Unterschied zu den übrigen `/files/*`-Routen (Jupiter-Override, by design).
+
+**Befunde (2026-07-30, beide gefixt):**
+- **Low, GEFIXT:** `build_zip` baute die ZIP komplett im RAM (`io.BytesIO`) statt zu streamen. Jetzt: `FileService.build_zip` validiert Pfade synchron (400 bei leerem Ergebnis bleibt erhalten), packt danach lazy über `_stream_zip` — ein Chunk-Sink liefert die ZIP-Bytes je Datei aus, `StreamingResponse` reicht sie direkt durch. Kein Voll-Puffer mehr.
+- **Low, GEFIXT:** Auswahl blieb nach ZIP-Download bestehen. `handleDownloadSelected` ruft jetzt nach Erfolg `setSelected(new Set())`, analog zu `handleDeleteSelected`.
+- Regression: 34/34 `test_proj11_files.py` weiterhin grün, `tsc --noEmit` sauber für beide geänderten Frontend-Dateien.
+- Kein manueller Browser-Smoke (Download-Dialog/Dateiinhalt im echten Browser) — vor Deploy empfohlen, analog zur ursprünglichen QA-Empfehlung.
+
+**Production-Ready: ✅ READY** — kein Critical/High/Low offen.
+
 ## Deployment
 **Deployed:** 2026-06-23 · **URL:** https://jupiter.auxevo.tech · **Version:** v0.2.0 · **Branch:** dev → main
 Host-native (systemd `jupiter-backend`/`jupiter-frontend`, Caddy TLS, GitHub-Webhook). Ausgeliefert: `/files`-API + Fileexplorer (`/dateien`) + In-Session Dokument-Clipboard. `python-multipart` als Dependency deklariert.
 **Browser-Smoke (nach SW-/Hard-Refresh zu bestätigen):** Upload per Button/Drag-and-Drop/Paste · „Pfad kopieren" · In-Session-Anhängen fügt Pfad ein.
+
+**Nachtrag-Deploy (Mehrfach-Download als ZIP):** 2026-07-30 · **URL:** https://jupiter.auxevo.tech · **Version:** v0.27.38 · **Branch:** main
+Host-native (systemd `jupiter-backend`/`jupiter-frontend`, Caddy TLS, GitHub-Webhook). Ausgeliefert: `POST /files/download-zip` (gestreamt) + „N herunterladen"-Button im Explorer.
+**Browser-Smoke (nach SW-/Hard-Refresh zu bestätigen):** Mehrfachauswahl → „N herunterladen" liefert eine ZIP mit den erwarteten Dateien/Ordnern; Auswahl leert sich danach.

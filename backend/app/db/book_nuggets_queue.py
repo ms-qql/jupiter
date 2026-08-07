@@ -56,8 +56,8 @@ CREATE INDEX IF NOT EXISTS idx_bnq_hash ON book_nuggets_queue(book_hash);
 CREATE TABLE IF NOT EXISTS book_nuggets_settings (
     id                         INTEGER PRIMARY KEY CHECK (id = 1),
     default_model_mode         TEXT NOT NULL DEFAULT 'staged',
-    default_model_extract      TEXT NOT NULL DEFAULT 'sonnet',
-    default_model_consolidate  TEXT NOT NULL DEFAULT 'opus',
+    default_model_extract      TEXT NOT NULL DEFAULT 'opencode-go/deepseek-v4-flash',
+    default_model_consolidate  TEXT NOT NULL DEFAULT 'opencode-go/deepseek-v4-flash',
     default_page_limit         INTEGER
 );
 """
@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS book_nuggets_settings (
 # Idempotente Spalten-Migrationen für bestehende DBs (Vorbild ``session_index.py``).
 # Heute leer — Platzhalter für künftige additive Migrationen.
 _MIGRATIONS: tuple[tuple[str, str], ...] = ()
+_SETTINGS_MIGRATION_VERSION = 1
 
 
 @runtime_checkable
@@ -104,8 +105,8 @@ class SqliteBookNuggetsRepository:
     )
     _SETTINGS_DEFAULTS: dict = {
         "default_model_mode": "staged",
-        "default_model_extract": "sonnet",
-        "default_model_consolidate": "opus",
+        "default_model_extract": "opencode-go/deepseek-v4-flash",
+        "default_model_consolidate": "opencode-go/deepseek-v4-flash",
         "default_page_limit": None,
     }
 
@@ -133,8 +134,28 @@ class SqliteBookNuggetsRepository:
                 "INSERT OR IGNORE INTO book_nuggets_settings "
                 "(id, default_model_mode, default_model_extract, "
                 "default_model_consolidate, default_page_limit) "
-                "VALUES (1, 'staged', 'sonnet', 'opus', NULL)"
+                "VALUES (1, ?, ?, ?, ?)",
+                (
+                    self._SETTINGS_DEFAULTS["default_model_mode"],
+                    self._SETTINGS_DEFAULTS["default_model_extract"],
+                    self._SETTINGS_DEFAULTS["default_model_consolidate"],
+                    self._SETTINGS_DEFAULTS["default_page_limit"],
+                ),
             )
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version < _SETTINGS_MIGRATION_VERSION:
+                conn.execute(
+                    "UPDATE book_nuggets_settings "
+                    "SET default_model_extract = ?, default_model_consolidate = ? "
+                    "WHERE id = 1 AND default_model_mode = 'staged' "
+                    "AND default_model_extract = 'sonnet' "
+                    "AND default_model_consolidate = 'opus'",
+                    (
+                        self._SETTINGS_DEFAULTS["default_model_extract"],
+                        self._SETTINGS_DEFAULTS["default_model_consolidate"],
+                    ),
+                )
+                conn.execute(f"PRAGMA user_version = {_SETTINGS_MIGRATION_VERSION}")
 
     def _list_queue_sync(self) -> list[dict]:
         with self._connect() as conn:

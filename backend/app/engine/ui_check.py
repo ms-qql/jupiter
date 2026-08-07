@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from PIL import Image, UnidentifiedImageError
+
 from ..config import settings
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -156,10 +158,18 @@ class UiCheckService:
             raise UiCheckNotFound(run_id)
         return self._detail(path)
 
-    def start_run(self, payload: Any) -> dict[str, str]:
+    def start_run(self, payload: Any, screenshot: Any | None = None) -> dict[str, str]:
         self._ensure_project()
         run_dir = self._next_run_dir(str(payload.url))
         run_dir.mkdir(parents=True, exist_ok=False)
+        screenshot_path = None
+        if screenshot is not None:
+            screenshot_path = run_dir / "uploaded-screenshot.png"
+            try:
+                self._save_screenshot(screenshot, screenshot_path)
+            except Exception:
+                shutil.rmtree(run_dir)
+                raise
         self._write_initial_status(run_dir, payload)
 
         # ui-check-auto.sh verkettet Collect → Judge-Pass (headless Claude) →
@@ -172,6 +182,8 @@ class UiCheckService:
             cmd += ["--prompt", payload.prompt]
         if payload.desktop:
             cmd.append("--desktop")
+        if screenshot_path:
+            cmd += ["--screenshot", str(screenshot_path)]
         # Der Judge ist immer Claude (visuelle Rubrik-Bewertung). Bei Claude-Läufen
         # das gewählte Modell als CLI-Alias durchreichen. Das Frontend schickt ein
         # Label ("Claude Sonnet") — die claude-CLI kennt nur Aliasse (sonnet/opus/
@@ -211,6 +223,42 @@ class UiCheckService:
         else:
             self._processes[run_id] = proc
         return {"run_id": run_id, "status": "running"}
+
+    @staticmethod
+    def _save_screenshot(source: Any, target: Path) -> None:
+        """Store one bounded PNG inside its newly-created run directory."""
+        header = source.read(8)
+        if header == b"\x89PNG\r\n\x1a\n":
+            total = len(header)
+            with target.open("wb") as output:
+                output.write(header)
+                while chunk := source.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > settings.upload_max_file_bytes:
+                        raise ValueError(
+                            f"Screenshot zu groß (max. {settings.upload_max_file_bytes // (1024 * 1024)} MB)."
+                        )
+                    output.write(chunk)
+            return
+
+        if header[:3] != b"\xff\xd8\xff":
+            raise ValueError("Bitte einen PNG- oder JPEG-Screenshot hochladen.")
+        source.seek(0)
+        total = len(header)
+        while chunk := source.read(1024 * 1024):
+            total += len(chunk)
+            if total > settings.upload_max_file_bytes:
+                raise ValueError(
+                    f"Screenshot zu groß (max. {settings.upload_max_file_bytes // (1024 * 1024)} MB)."
+                )
+        source.seek(0)
+        try:
+            with Image.open(source) as image:
+                if image.width * image.height > 25_000_000:
+                    raise ValueError("Screenshot hat zu viele Pixel (max. 25 Megapixel).")
+                image.convert("RGB").save(target, "PNG")
+        except UnidentifiedImageError as exc:
+            raise ValueError("Bitte einen lesbaren JPEG-Screenshot hochladen.") from exc
 
     def cancel_run(self, run_id: str) -> dict[str, Any]:
         run_id = _safe_run_id(run_id)

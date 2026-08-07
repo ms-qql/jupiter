@@ -255,3 +255,23 @@ Dritter Einbauort der bestehenden `PushToTalkButton`-Komponente: die **normale N
 
 Verifiziert: `npx tsc --noEmit` sauber (keine neuen Fehler).
 **Offen:** Browser-Smoke mit echtem Diktat in einer Session; noch nicht deployed (lebt auf `dev`).
+
+## Nachtrag — Latenz-Fix Spracheingabe (2026-07-31, Version 0.27.39)
+**Branch:** main · Auslöser: Diktat reagierte „extrem langsam", Transkription dauerte spürbar lange.
+
+**Root Cause (gemessen auf dem Dev-VPS):**
+1. Groq war nie konfiguriert (`/etc/jupiter-backend.env` enthielt keinen `JUPITER_GROQ_API_KEY`) → jede Aufnahme lief lokal auf CPU.
+2. Das Modell wurde **lazy beim ersten Request** geladen: kalter Load des `small`-Modells (464 MB) = **11,3 s**, warm 1,7 s. Backend wurde am 30.07. dreimal neu gestartet → jede erste Aufnahme nach einem Deploy zahlte diese 11 s.
+3. `transcribe()` lief mit den langsamsten faster-whisper-Defaults: `beam_size=5`, **kein `vad_filter`** (Stille/Rauschen wurden mitdekodiert → Halluzinations-Schleifen), kein `cpu_threads` (8 Kerne ungenutzt).
+4. Der Button war während der gesamten Transkription nur `disabled` — ohne Fortschrittsanzeige wirkte er tot.
+
+**Fix:**
+- `config.py`: `whisper_model` `small` → `base`; neu `whisper_cpu_threads` (0 = alle Kerne), `whisper_beam_size=1`, `whisper_vad_filter=True` — alle per `JUPITER_*`-Env übersteuerbar.
+- `engine/transcription.py`: neuer `_load_model()` (setzt `cpu_threads`), `transcribe()` mit `beam_size` + `vad_filter`, neue `warmup()`-Methode (No-Op bei aktivem Groq).
+- `main.py`: `_whisper_warmup()` als Hintergrund-Task im Lifespan — lädt das Modell beim Start, blockiert den Start nicht, wird beim Shutdown gecancelt.
+- `push-to-talk-button.tsx`: Sekundenzähler für Aufnahme und Transkription (Button + Tooltip).
+
+**Groq:** optional weiterhin möglich — `JUPITER_GROQ_API_KEY` in `/etc/jupiter-backend.env` + Backend-Neustart. `use_groq_transcription` steht per Default auf `true`, greift aber nur mit Key. DSGVO-Hinweis unverändert: mit Groq verlässt das Audio den VPS.
+
+**Verifiziert:** `pytest backend/tests` grün, `npm run lint` + `npm run build` sauber. Modell `base` (142 MB) auf dem Host gecacht.
+**Offen (Browser-only):** echtes Diktat auf https://jupiter.auxevo.tech gegenprüfen (Aufnahme → Transkript → editierbar).

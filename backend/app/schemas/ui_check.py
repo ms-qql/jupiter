@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 RunStatus = Literal["queued", "running", "done", "error", "cancelled"]
 Mode = Literal["auto", "landing", "app"]
@@ -125,6 +125,11 @@ class UiCheckStartRequest(BaseModel):
     # AC-3: bei depth="redesign" haengt der Runner Redesign, Bildbefuellung und
     # Mockup-Export automatisch an den Audit-Lauf an, statt nur den Audit zu starten.
     full_pipeline: bool = False
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def add_url_scheme(cls, value: str) -> str:
+        return value if "://" in value else f"https://{value}"
 
 
 class UiCheckStartResponse(BaseModel):

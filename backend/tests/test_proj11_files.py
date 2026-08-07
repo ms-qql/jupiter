@@ -139,6 +139,54 @@ def test_download_missing_404(client, root):
     assert res.status_code == 404
 
 
+# --- Mehrfach-Download (ZIP) ------------------------------------------------
+
+def test_download_zip_bundles_selected_files(client, root):
+    a = client.post("/files/upload", files={"files": ("a.txt", b"aaa", "text/plain")}).json()["files"][0]["path"]
+    b = client.post("/files/upload", files={"files": ("b.txt", b"bbb", "text/plain")}).json()["files"][0]["path"]
+    res = client.post("/files/download-zip", json={"paths": [a, b]})
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/zip"
+    import zipfile
+    from io import BytesIO
+    zf = zipfile.ZipFile(BytesIO(res.content))
+    assert sorted(zf.namelist()) == ["a.txt", "b.txt"]
+    assert zf.read("a.txt") == b"aaa"
+    assert zf.read("b.txt") == b"bbb"
+
+
+def test_download_zip_includes_folder_contents_recursively(client, root):
+    mk = client.post("/files/mkdir", json={"parent": root, "name": "ordner"})
+    folder = mk.json()["path"]
+    client.post("/files/upload", files={"files": ("f.txt", b"x", "text/plain")}, data={"target_dir": folder})
+    res = client.post("/files/download-zip", json={"paths": [folder]})
+    assert res.status_code == 200
+    import zipfile
+    from io import BytesIO
+    zf = zipfile.ZipFile(BytesIO(res.content))
+    assert zf.namelist() == ["ordner/f.txt"]
+
+
+def test_download_zip_skips_invalid_paths_but_keeps_valid_ones(client, root):
+    a = client.post("/files/upload", files={"files": ("a.txt", b"aaa", "text/plain")}).json()["files"][0]["path"]
+    res = client.post("/files/download-zip", json={"paths": [a, "/etc/passwd", os.path.join(root, "nope.txt")]})
+    assert res.status_code == 200
+    import zipfile
+    from io import BytesIO
+    zf = zipfile.ZipFile(BytesIO(res.content))
+    assert zf.namelist() == ["a.txt"]
+
+
+def test_download_zip_all_invalid_returns_400(client, root):
+    res = client.post("/files/download-zip", json={"paths": ["/etc/passwd", os.path.join(root, "nope.txt")]})
+    assert res.status_code == 400
+
+
+def test_download_zip_empty_paths_rejected(client):
+    res = client.post("/files/download-zip", json={"paths": []})
+    assert res.status_code == 422
+
+
 # --- Operationen -----------------------------------------------------------
 
 def test_mkdir_rename_move_delete(client, root):

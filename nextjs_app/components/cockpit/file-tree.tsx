@@ -95,7 +95,9 @@ function TreeFileRow({
         )}
       >
         <FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate">{node.name.replace(/\.md$/i, "")}</span>
+        <span className="truncate" title={node.name.replace(/\.md$/i, "")}>
+          {node.name.replace(/\.md$/i, "")}
+        </span>
       </button>
     </li>
   );
@@ -125,7 +127,9 @@ function TreeFolderRow({
           <ChevronRightIcon className="size-3.5 shrink-0" />
         )}
         <FolderIcon className="size-3.5 shrink-0" />
-        <span className="truncate">{node.name}</span>
+        <span className="truncate" title={node.name}>
+          {node.name}
+        </span>
       </button>
       {open && (
         <ul className="flex flex-col gap-0.5">

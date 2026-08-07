@@ -14,6 +14,7 @@ import Link from "next/link";
 import {
   ArrowLeft,
   ArrowUp,
+  BrainCircuit,
   ClipboardPaste,
   Copy,
   Download,
@@ -32,11 +33,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { FilePreview } from "@/components/cockpit/file-preview";
 import { ActiveSessionPanel } from "@/components/cockpit/active-session-panel";
+import { ResizableAside } from "@/components/cockpit/resizable-aside";
 import { BranchBadge } from "@/components/cockpit/branch-panel";
 import {
   ApiError,
   deleteFiles,
   downloadFile,
+  downloadZip,
   getClipboardDir,
   listDir,
   listFileRoots,
@@ -47,6 +50,10 @@ import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { DirListing, FileEntry, RootEntry } from "@/lib/types";
 import { useFileUpload } from "./use-file-upload";
+
+// Fixer Pfad des Hal-Vaults (settings.vault_root) — kein eigener Root, aber
+// per Sprungmarke wie Clipboard sofort erreichbar.
+const HAL_PATH = "/home/dev/tools/Hal";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -66,6 +73,7 @@ export function FileExplorer() {
   const [listing, setListing] = useState<DirListing | null>(null);
   const [clipboardPath, setClipboardPath] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // PROJ-28: auf schmalen Breiten Panel ⇄ Ansicht umschalten (nie beide quetschen).
@@ -108,6 +116,7 @@ export function FileExplorer() {
   // Laden bei Pfadwechsel — setState nur in den Promise-Callbacks (kein sync setState im Effect).
   useEffect(() => {
     if (!path) return;
+    setSelected(new Set());
     let active = true;
     listDir(path)
       .then((d) => {
@@ -188,6 +197,32 @@ export function FileExplorer() {
     }
   }
 
+  async function handleDeleteSelected() {
+    const paths = Array.from(selected);
+    if (!paths.length) return;
+    if (!window.confirm(`${paths.length} Element(e) wirklich löschen?`)) return;
+    try {
+      const res = await deleteFiles(paths);
+      if (res.failed.length) toast.error("Löschen fehlgeschlagen");
+      if (selectedPath && paths.includes(selectedPath)) setSelectedPath(null);
+      setSelected(new Set());
+      void refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Löschen fehlgeschlagen");
+    }
+  }
+
+  async function handleDownloadSelected() {
+    const paths = Array.from(selected);
+    if (!paths.length) return;
+    try {
+      await downloadZip(paths);
+      setSelected(new Set());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Download fehlgeschlagen");
+    }
+  }
+
   async function copyPath(p: string) {
     const ok = await copyText(p);
     toast[ok ? "success" : "error"](ok ? "Pfad kopiert" : "Kopieren nicht möglich");
@@ -252,9 +287,11 @@ export function FileExplorer() {
 
       <div className="flex min-h-0 flex-1">
         {/* Spalte 2: Datei-/Verzeichnis-Panel */}
-        <aside
+        <ResizableAside
+          storageKey="dateien:list-width"
+          defaultWidth={320}
           className={cn(
-            "w-full shrink-0 flex-col border-r border-border bg-card/40 md:flex md:w-80",
+            "w-full flex-col border-r border-border bg-card/40 md:flex",
             mobilePane === "list" ? "flex" : "hidden md:flex",
           )}
           onDrop={(e) => {
@@ -304,7 +341,56 @@ export function FileExplorer() {
                 <ClipboardPaste className="size-4" /> Clipboard
               </Button>
             )}
+            <Button
+              type="button"
+              size="sm"
+              variant={path === HAL_PATH ? "default" : "secondary"}
+              onClick={() => openDir(HAL_PATH)}
+              title={HAL_PATH}
+            >
+              <BrainCircuit className="size-4" /> HAL
+            </Button>
           </div>
+
+          {/* Mehrfachauswahl: alle markieren + gesammelt löschen. */}
+          {listing && listing.entries.length > 0 && (
+            <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs">
+              <label className="flex items-center gap-1.5 text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={selected.size === listing.entries.length}
+                  onChange={(e) =>
+                    setSelected(
+                      e.target.checked ? new Set(listing.entries.map((en) => en.path)) : new Set(),
+                    )
+                  }
+                />
+                Alle
+              </label>
+              {selected.size > 0 && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2"
+                    onClick={() => void handleDownloadSelected()}
+                  >
+                    <Download className="size-3.5" /> {selected.size} herunterladen
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    className="h-6 px-2"
+                    onClick={() => void handleDeleteSelected()}
+                  >
+                    <Trash2 className="size-3.5" /> {selected.size} löschen
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Listing */}
           <ScrollArea
@@ -328,13 +414,27 @@ export function FileExplorer() {
                       entry.path === selectedPath && "bg-accent",
                     )}
                   >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(entry.path)}
+                      onChange={(e) =>
+                        setSelected((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(entry.path);
+                          else next.delete(entry.path);
+                          return next;
+                        })
+                      }
+                    />
                     {entry.kind === "dir" ? (
                       <button
                         className="flex flex-1 items-center gap-2 truncate text-left hover:text-primary"
                         onClick={() => openDir(entry.path)}
                       >
                         <Folder className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{entry.name}</span>
+                        <span className="truncate" title={entry.name}>
+                          {entry.name}
+                        </span>
                       </button>
                     ) : (
                       <button
@@ -342,7 +442,9 @@ export function FileExplorer() {
                         onClick={() => selectFile(entry)}
                       >
                         <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{entry.name}</span>
+                        <span className="truncate" title={entry.name}>
+                          {entry.name}
+                        </span>
                         <span className="shrink-0 text-xs text-muted-foreground">
                           {formatBytes(entry.size)}
                         </span>
@@ -372,7 +474,7 @@ export function FileExplorer() {
               </ul>
             )}
           </ScrollArea>
-        </aside>
+        </ResizableAside>
 
         {/* Spalte 3: Inhalts-Ansicht */}
         <main

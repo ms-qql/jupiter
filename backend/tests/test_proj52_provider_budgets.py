@@ -141,7 +141,6 @@ async def test_configured_limits_estimate_per_provider_and_window() -> None:
     by_provider = {p.provider: p for p in snap.providers}
     claude_5h = next(w for w in by_provider["claude"].windows if w.window == "5h")
     claude_week = next(w for w in by_provider["claude"].windows if w.window == "week")
-    codex_5h = next(w for w in by_provider["codex"].windows if w.window == "5h")
     codex_week = next(w for w in by_provider["codex"].windows if w.window == "week")
 
     assert claude_5h.quality == "estimated"
@@ -149,8 +148,8 @@ async def test_configured_limits_estimate_per_provider_and_window() -> None:
     assert claude_5h.used_pct == 50.0
     assert claude_week.used_tokens == 1500
     assert claude_week.used_pct == 50.0
-    assert codex_5h.used_tokens == 3000
-    assert codex_5h.used_pct == 50.0
+    # Codex hat kein 5h-Fenster mehr — nur Woche.
+    assert [w.window for w in by_provider["codex"].windows] == ["week"]
     assert codex_week.quality == "unavailable"  # keine Wochen-Quote konfiguriert
 
 

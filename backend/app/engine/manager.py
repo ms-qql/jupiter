@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import signal
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -32,6 +33,7 @@ from .generic_cli_driver import GenericCliDriver
 from .openai_driver import OpenAIDriver
 from .transport import TmuxTransport
 from .registry import DRIVER_GENERIC_CLI, DRIVER_OPENAI, EngineProfile, engine_registry
+from .savings import SavingsChoice, savings_resolver
 from .cache_manager import CacheManager
 from .constitution import resolve_constitution
 from .decisions import OBSOLETE, OPEN, RESOLVED, DecisionOutcome, PendingDecision
@@ -367,6 +369,17 @@ class SessionState:
     # aufgelöst und am State gehalten, damit ein Resume/Rehydrate denselben Transport
     # verwendet (kein Wechsel mitten in einer Session durch Settings-Änderung).
     transport: str = "direct"
+    # PROJ-73: beim Start aufgelöster, über Resume unveränderlicher Savings-Snapshot.
+    savings_enabled: bool = False
+    savings_source: str = "global"
+    savings_profile_version: str | None = None
+    savings_modules: list[dict] = field(default_factory=list)
+    savings_degraded: list[str] = field(default_factory=list)
+    savings_provenance: list[dict] = field(default_factory=list)
+    savings_pilot_task: str | None = None
+    savings_latency_ms: float | None = None
+    # Ausschließlich der kontrollierte Golden-Runner darf diesen QA-Befund setzen.
+    savings_pilot_safe: bool | None = None
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -423,6 +436,15 @@ class SessionState:
             "queued_ticket_ids": [t.get("ticket_id") for t in self.queued_tickets],
             # PROJ-63: Transport-Badge fürs Cockpit ("direct" | "tmux").
             "transport": self.transport,
+            "savings_enabled": self.savings_enabled,
+            "savings_source": self.savings_source,
+            "savings_profile_version": self.savings_profile_version,
+            "savings_modules": list(self.savings_modules),
+            "savings_degraded": list(self.savings_degraded),
+            "savings_provenance": list(self.savings_provenance),
+            "savings_pilot_task": self.savings_pilot_task,
+            "savings_latency_ms": self.savings_latency_ms,
+            "savings_pilot_safe": self.savings_pilot_safe,
         }
 
 
@@ -469,6 +491,7 @@ class SessionRuntime:
         # nur für die Live-Anzeige. Wird bei Session-Ende (terminal/„tot") geleert.
         self.last_activity: dict | None = None
         self._activity_ring: list[dict] = []
+        self._savings_turn_started_at: float | None = time.monotonic() if state.savings_pilot_task else None
 
     def derive_liveness(self, timeout: float | None = None) -> str:
         """PROJ-27: verifizierter Liveness-Zustand — frisch aus vorhandenen Signalen.
@@ -590,6 +613,8 @@ class SessionRuntime:
                 model = event.raw.get("model")
                 if model:
                     self.state.model = model
+                if self.state.savings_pilot_task:
+                    self._savings_turn_started_at = time.monotonic()
             elif event.subtype == "waiting":
                 # Leerer Chat-Start bei Engines, die ohne Nachricht keinen Prozess
                 # anlegen können (aktuell OpenCode): bereit für die erste Eingabe.
@@ -669,6 +694,10 @@ class SessionRuntime:
 
         elif event.type == "result":
             self._apply_usage(event)
+            if event.raw.get("final", True) and self._savings_turn_started_at is not None:
+                self.state.savings_latency_ms = round(
+                    (time.monotonic() - self._savings_turn_started_at) * 1000, 1
+                )
             self.state.num_turns = int(event.raw.get("num_turns", self.state.num_turns) or 0)
             if is_error_result(event):
                 self.state.status = ERROR
@@ -1290,6 +1319,15 @@ class SessionManager:
             "resume_id": s.resume_id,  # PROJ-56
             "context_status": s.context_status,  # PROJ-56
             "transport": s.transport,  # PROJ-63
+            "savings_enabled": 1 if s.savings_enabled else 0,
+            "savings_source": s.savings_source,
+            "savings_profile_version": s.savings_profile_version,
+            "savings_modules": json.dumps(s.savings_modules),
+            "savings_degraded": json.dumps(s.savings_degraded),
+            "savings_provenance": json.dumps(s.savings_provenance),
+            "savings_pilot_task": s.savings_pilot_task,
+            "savings_latency_ms": s.savings_latency_ms,
+            "savings_pilot_safe": 1 if s.savings_pilot_safe else 0 if s.savings_pilot_safe is not None else None,
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -1515,6 +1553,15 @@ class SessionManager:
             except (TypeError, ValueError):
                 return _now()
 
+        def _json_list(value) -> list:
+            if not value:
+                return []
+            try:
+                parsed = json.loads(value) if isinstance(value, str) else value
+                return parsed if isinstance(parsed, list) else []
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return []
+
         return SessionState(
             session_id=row["session_id"],
             owner=row.get("owner") or settings.default_owner,
@@ -1542,6 +1589,15 @@ class SessionManager:
             resume_id=row.get("resume_id"),  # PROJ-56
             context_status=row.get("context_status"),  # PROJ-56
             transport=row.get("transport") or "direct",  # PROJ-63
+            savings_enabled=bool(row.get("savings_enabled")),
+            savings_source=row.get("savings_source") or "global",
+            savings_profile_version=row.get("savings_profile_version"),
+            savings_modules=_json_list(row.get("savings_modules")),
+            savings_degraded=_json_list(row.get("savings_degraded")),
+            savings_provenance=_json_list(row.get("savings_provenance")),
+            savings_pilot_task=row.get("savings_pilot_task"),
+            savings_latency_ms=row.get("savings_latency_ms"),
+            savings_pilot_safe=(bool(row["savings_pilot_safe"]) if row.get("savings_pilot_safe") is not None else None),
         )
 
     async def create(
@@ -1560,6 +1616,9 @@ class SessionManager:
         parent_coordinator_id: str | None = None,
         ticket_id: str | None = None,
         contract_pointer: str | None = None,
+        token_savings: SavingsChoice = "standard",
+        savings_pilot_task: str | None = None,
+        savings_pilot_safe: bool | None = None,
     ) -> SessionRuntime:
         # PROJ-18: Engine-Profil auflösen (Default = eingebaute Claude-Engine). iFrame/
         # Launch-Einträge sind KEINE steuerbaren Sessions → klar ablehnen.
@@ -1597,10 +1656,16 @@ class SessionManager:
         # Knappheits-Konstitution auflösen (#24): global + optionaler Rollen-Override,
         # danach optionaler session-spezifischer Zusatz (kann Konstitution nicht entfernen).
         resolved = resolve_constitution(role, settings.constitution_dir)  # ValueError bei ungültiger Rolle
-        # PROJ-19 (#27): Prompt-Caching — stabile Konstitution als cache-freundliches
-        # Präfix + Inhalts-Hash (Invalidierung). Assemblierung identisch zu
-        # combine_with_extra (stabil zuerst) → Verhalten unverändert.
-        plan = self._cache_manager.plan(resolved.text, extra_system_prompt)
+        # PROJ-73: globalen Default + Session-Override einmalig auflösen. Der Savings-
+        # Prompt wird Teil des stabilen Cache-Präfixes; Profilwechsel erzeugt damit
+        # automatisch einen anderen PROJ-19-Cache-Key.
+        savings = savings_resolver.resolve(
+            choice=token_savings,
+            engine=profile.key,
+            project_path=real_path,
+            base_prompt=resolved.text,
+        )
+        plan = self._cache_manager.plan(savings.prompt, extra_system_prompt)
         effective = plan.prompt
 
         session_id = str(uuid.uuid4())
@@ -1622,6 +1687,14 @@ class SessionManager:
             parent_coordinator_id=parent_coordinator_id,
             ticket_id=ticket_id,
             contract_pointer=contract_pointer,
+            savings_enabled=savings.enabled,
+            savings_source=savings.source,
+            savings_profile_version=savings.profile_id,
+            savings_modules=list(savings.modules),
+            savings_degraded=list(savings.degraded),
+            savings_provenance=list(savings.provenance),
+            savings_pilot_task=savings_pilot_task,
+            savings_pilot_safe=savings_pilot_safe,
         )
         # PROJ-50: abc-Workflow auf Engines OHNE Claude-PreToolUse-Skill-Signal
         # (generic_cli/Codex). Codex liefert kein Skill-Stream-Event (Spike), daher:

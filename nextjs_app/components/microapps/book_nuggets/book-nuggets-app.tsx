@@ -72,9 +72,18 @@ import type {
 
 // Modell-Whitelist (Backend: haiku/sonnet/opus).
 const MODEL_CHOICES: { value: BookNuggetsModel; label: string }[] = [
-  { value: "haiku", label: "Haiku (schnell & günstig)" },
-  { value: "sonnet", label: "Sonnet (ausgewogen)" },
-  { value: "opus", label: "Opus (höchste Qualität)" },
+  { value: "opencode-go/deepseek-v4-flash", label: "DeepSeek V4 Flash (schnell)" },
+  { value: "opencode-go/deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+  { value: "opencode-go/minimax-m3", label: "MiniMax M3" },
+  { value: "opencode-go/qwen3.7-plus", label: "Qwen 3.7 Plus" },
+  { value: "opencode-go/qwen3.7-max", label: "Qwen 3.7 Max" },
+  { value: "opencode-go/glm-5.2", label: "GLM 5.2" },
+  { value: "opencode-go/kimi-k2.7-code", label: "Kimi K2.7 Code" },
+  { value: "opencode-go/mimo-v2.5", label: "MiMo V2.5" },
+  { value: "opencode-go/mimo-v2.5-pro", label: "MiMo V2.5 Pro" },
+  { value: "haiku", label: "Claude Haiku (günstig)" },
+  { value: "sonnet", label: "Claude Sonnet (ausgewogen)" },
+  { value: "opus", label: "Claude Opus (höchste Qualität)" },
 ];
 
 // Im MVP unterstützte Formate (mobi bewusst nicht).
@@ -146,8 +155,8 @@ export default function BookNuggetsApp() {
 
   // Modell-Steuerung (D7).
   const [modelMode, setModelMode] = useState<BookNuggetsModelMode>("staged");
-  const [modelExtract, setModelExtract] = useState<BookNuggetsModel>("sonnet");
-  const [modelConsolidate, setModelConsolidate] = useState<BookNuggetsModel>("opus");
+  const [modelExtract, setModelExtract] = useState<BookNuggetsModel>("opencode-go/deepseek-v4-flash");
+  const [modelConsolidate, setModelConsolidate] = useState<BookNuggetsModel>("opencode-go/deepseek-v4-flash");
   const [pageLimit, setPageLimit] = useState("");
 
   // Kostenschätzung + Hinzufügen + Duplikat-Konflikt.

@@ -103,7 +103,7 @@ export const SIDEBAR_ITEMS: SidebarItemDef[] = [
     label: "Claude-Verbrauch",
     icon: BotIcon,
     section: "budget",
-    defaultVisible: true,
+    defaultVisible: false,
     defaultOrder: 0,
   },
   {

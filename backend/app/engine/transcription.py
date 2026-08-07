@@ -89,6 +89,34 @@ class TranscriptionService:
                 pass
         return TranscriptionOutcome(transcript=text.strip(), provider=provider)
 
+    # --- Modell-Cache / Warmup --------------------------------------------
+
+    def _load_model(self, model_cls):
+        """Lädt das Whisper-Modell einmalig und hält es im Prozess."""
+        if self._model is None:
+            threads = settings.whisper_cpu_threads or (os.cpu_count() or 4)
+            self._model = model_cls(
+                settings.whisper_model,
+                device="cpu",
+                compute_type="int8",
+                cpu_threads=threads,
+            )
+        return self._model
+
+    async def warmup(self) -> None:
+        """Modell beim Start vorladen — sonst zahlt die ERSTE Aufnahme nach jedem
+        Neustart den Ladevorgang (auf dem Dev-VPS ~11 s, kalter Page-Cache).
+        Bei aktivem Groq unnötig: dann läuft die Transkription in der Cloud."""
+        if self.use_groq():
+            return
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:  # pragma: no cover - Umgebungsfrage
+            return
+        import anyio
+
+        await anyio.to_thread.run_sync(lambda: self._load_model(WhisperModel))
+
     # --- Engines -----------------------------------------------------------
 
     async def _faster_whisper(self, audio_path: str, language: str) -> str:
@@ -105,11 +133,13 @@ class TranscriptionService:
         import anyio
 
         def _run() -> str:
-            if self._model is None:
-                self._model = WhisperModel(
-                    settings.whisper_model, device="cpu", compute_type="int8"
-                )
-            segments, _info = self._model.transcribe(audio_path, language=language or None)
+            model = self._load_model(WhisperModel)
+            segments, _info = model.transcribe(
+                audio_path,
+                language=language or None,
+                beam_size=settings.whisper_beam_size,
+                vad_filter=settings.whisper_vad_filter,
+            )
             return "".join(seg.text for seg in segments)
 
         try:
