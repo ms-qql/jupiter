@@ -276,6 +276,7 @@ def test_proj50_generator_skips_migrated_pointer_stubs(tmp_path):
     assert (destination / "abc-alt" / "SKILL.md").is_file()
 
 
+@pytest.mark.xfail(reason="PROJ-77 BUG-9: englisches 'usage:' vom Nutzer am 2026-08-09 akzeptiert", strict=True)
 def test_cli_errors_are_in_german():
     result = subprocess.run([sys.executable, str(SCRIPT), "stubs"], capture_output=True, text=True)
 

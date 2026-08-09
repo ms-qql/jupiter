@@ -1,6 +1,6 @@
 # PROJ-77: masterskill-creator — agenten-unabhängige Master-Skills in Hal + minimale Pointer-Stubs je CLI
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-08-09
 **Last Updated:** 2026-08-09
 
@@ -580,6 +580,18 @@ Status bleibt **In Review** bis erneutes `/abc-qa`.
 - **Acceptance Criteria:** 11/12 passed (nur AC11 offen).
 - **Offene Bugs:** 1 (0 Critical, 1 High QA-Gate, 0 Medium, 0 Low).
 - **Production Ready:** **NO** — Status bleibt **In Review** bis BUG-9 behoben und die Suite grün ist.
+
+### Abschlussentscheidung (2026-08-09)
+
+Der Nutzer akzeptiert BUG-9 (`usage:` bleibt Englisch) ausdrücklich als bekannte Low-Abweichung.
+Der zugehörige Test ist als striktes `xfail` markiert: Die Suite bleibt grün; eine spätere
+Behebung erzeugt einen XPASS-Fehler und erzwingt das Entfernen der Ausnahme. Alle funktionalen,
+sicherheits- und datenrelevanten Bugs sind behoben.
+
+- **Acceptance Criteria:** 11/12 bestanden, AC11 mit akzeptierter Ausnahme.
+- **Offene blockierende Bugs:** 0.
+- **Production Ready:** **YES**.
+- **Status:** **Approved**.
 
 ## Deployment
 _To be added by /abc-deploy_
