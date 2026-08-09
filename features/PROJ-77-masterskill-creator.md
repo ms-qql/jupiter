@@ -367,5 +367,68 @@ Umgesetzt exakt nach Tech Design, kein FastAPI/DB-Code (Feature berührt keinen 
 **Reviewed:** 2026-08-09
 **Entscheidung:** Zuerst BUG-1 bis BUG-3 beheben: Pfad-Traversal schließen, Codex-System-Skills schützen und Migration bei Fehlern atomar halten. Danach erneut `/abc-qa` ausführen.
 
+### Backoffice-Fix (2026-08-09)
+
+**Modus:** Produkt-Bug (Helfer-Skript, kein App-Code) · Ausgangspunkt: PROJ-77-QA-Report oben.
+
+- **BUG-1 (Pfad-Traversal):** `validate_skill_name()` in `masterskill.py` lehnt Namen mit `..`-
+  Segmenten/absoluten Pfaden ab; aufgerufen am Anfang von `cmd_stubs` und `cmd_migrate`.
+- **BUG-2 (Codex-System-Skills migrierbar):** `cmd_migrate` bricht sofort ab, sobald `claude_dir`
+  oder `codex_dir` die Marker-Datei `.codex-system-skills.marker` enthält — vor allen anderen
+  Prüfungen, auch im `--dry-run`.
+- **BUG-3 (Migration nicht atomar):** Stub-Erzeugung (Schritt 4) läuft in `try/except`; schlägt sie
+  fehl, werden alle in Schritt 3 archivierten Verzeichnisse zurück an ihren Ursprungspfad
+  verschoben, bevor der Fehler weitergereicht wird.
+- **Reproduktion/Verifikation:** `backend/tests/test_proj77_masterskill_creator.py` —
+  `test_codex_system_skills_are_never_migrated`, `test_skill_name_cannot_escape_managed_directories`,
+  `test_stub_failure_keeps_originals_in_place` liefen vor dem Fix rot, danach grün
+  (`11 passed, 4 failed` statt `8 passed, 7 failed`). Verbleibende 4 Fehler sind BUG-4/7/8/9,
+  bewusst außerhalb dieses Fix-Scopes. `test_proj50_codex_abc.py` unverändert (2 vorbestehende
+  Fehler = BUG-5/6, ebenfalls außerhalb des Scopes).
+- **Knowledge:** `bug-geloest-jupiter-proj77-migrate-traversal-atomicity.md` im Hal-Vault.
+- **Rest-Risiko:** BUG-4 (YAML-Doppelpunkt in Description), BUG-5/6 (PROJ-50-Generator-Drift),
+  BUG-7 (`check` erkennt manipulierten Master-Pfad im Stub nicht), BUG-8 (fehlendes
+  Agenten-Verzeichnis wird angelegt statt übersprungen), BUG-9 (englische argparse-Fehler) bleiben
+  offen. Status bleibt **In Review** bis erneutes `/abc-qa`.
+
+### Backoffice-Fix Runde 2 (2026-08-09) — BUG-4/5/6/7/9
+
+- **BUG-4 (YAML-Doppelpunkt im Stub bricht):** `masterskill.py` bekam `yaml_scalar()` — jeder
+  Frontmatter-Wert (`name`, `description`, `short-description`, `argument-hint`) wird über
+  `yaml.safe_dump` korrekt gequotet statt roh interpoliert.
+- **BUG-5 (gleicher Fehler im PROJ-50-Generator):** `scripts/gen_codex_skills.py` –
+  `transform_frontmatter()` quotet `short-description` jetzt genauso über `yaml.safe_dump`
+  statt rohem String-Concat.
+- **BUG-6 (PROJ-50-Generator-Drift):** `python scripts/gen_codex_skills.py` (Schreibmodus)
+  ausgeführt — `abc-backoffice` und `abc-customer-journey` neu generiert, `--check` danach grün
+  (`OK: alle 17 Codex-Skills aktuell.`, `abc-requirements` bewusst übersprungen als migrierter
+  Pointer-Stub).
+- **BUG-7 (`check` übersieht manipulierten Master-Pfad):** `cmd_check` vergleicht jetzt zusätzlich,
+  ob der erwartete Master-Verweis (`<master_dir>/SKILL.md`) im Stub-Text vorkommt, nicht nur die
+  Description.
+- **BUG-9 (englische CLI-Fehler):** `GermanArgumentParser` (Subklasse von `argparse.ArgumentParser`)
+  übersetzt die gängigen argparse-Fehlermeldungen (u. a. „the following arguments are required")
+  ins Deutsche; gilt automatisch für alle Subparser.
+- **Verifikation:** `backend/tests/test_proj77_masterskill_creator.py` + `test_proj50_codex_abc.py`
+  zusammen: **34 passed, 1 failed** (nur noch der BUG-8-Test, siehe unten). Vorher (nach Runde 1):
+  11+2 von 19 rot.
+- **Knowledge:** Ergänzung in `bug-geloest-jupiter-proj77-migrate-traversal-atomicity.md`
+  (Datei-Historie zeigt beide Runden; Erkenntnis-Abschnitt um BUG-4/5/6/7/9 erweitert — siehe Vault).
+
+**BUG-8 — bewusst NICHT gefixt, Ziel-Konflikt statt Bug:**
+Die im QA-Report verlangte Änderung („fehlendes Agenten-Verzeichnis überspringen, nicht anlegen")
+widerspricht direkt Akzeptanzkriterium 10 („ein neuer Agent wird allein durch einen
+`agents.yaml`-Eintrag unterstützt, erneuter Lauf erzeugt Stubs") und dem dafür geschriebenen,
+bereits grünen Test `test_registry_only_adds_kimi_without_changing_master` — beide Szenarien
+(„Kimi zum ersten Mal" vs. „Agent offline") erzeugen exakt dieselbe Vorbedingung: `skills_dir`
+existiert im Dateisystem noch nicht. Ohne ein zusätzliches Unterscheidungsmerkmal in der Registry
+(z. B. ein `bootstrap: true/false`-Flag oder „Verzeichnis MUSS vorab existieren") lässt sich „neuer
+Agent → anlegen" von „Agent offline → überspringen" nicht unterscheiden. Ein Versuch, BUG-8 wie
+im Report beschrieben zu fixen, brach AC10 + den zugehörigen Regressionstest
+(`test_registry_only_adds_kimi_without_changing_master`, `test_stubs_for_active_agents_and_shared_opencode_is_skipped`,
+`test_codex_only_skill_can_be_migrated` — alle drei rot). Änderung deshalb zurückgerollt;
+`test_missing_agent_directory_is_reported_and_skipped` bleibt bewusst rot, bis geklärt ist, welches
+Verhalten tatsächlich gewollt ist (Vorschlag: neues Registry-Feld statt reiner Existenzprüfung).
+
 ## Deployment
 _To be added by /abc-deploy_

@@ -48,6 +48,11 @@ DROP_FRONTMATTER_KEYS = {"argument-hint", "user-invocable", "allowed-tools", "mo
 
 GENERATED_MARKER = "<!-- GENERIERT von scripts/gen_codex_skills.py (PROJ-50) — NICHT direkt editieren; Quelle: ~/.claude/skills -->"
 
+# PROJ-77: Skills, die bereits ins masterskill-creator-Format migriert wurden, liegen als
+# Pointer-Stub vor (Master im Hal-Vault, kein Inhalt mehr hier). Diese NICHT mehr generieren —
+# sonst würde aus dem Claude-Stub eine Codex-Kopie *des Stubs*.
+MASTERSKILL_STUB_MARKER = "Pointer-Stub, erzeugt von masterskill-creator"
+
 # Codex-Präambel: erklärt die Tool-/Umgebungsunterschiede, ohne die Phasen-Logik zu ändern.
 PREAMBLE = """\
 > **Codex-Hinweis (automatisch ergänzt, PROJ-50).** Diese Skill ist die **Codex-Variante**
@@ -181,7 +186,11 @@ def transform_frontmatter(fm: list[str]) -> tuple[str, str]:
     short = " ".join(short.split())  # Folded-Scalar-Umbrüche zu Leerzeichen glätten
     if len(short) > 80:
         short = short[:77].rstrip() + "…"
-    fm_out = "---\n" + "\n".join(kept) + "\nmetadata:\n  short-description: " + short + "\n---\n"
+    # BUG-5-Fix (QA PROJ-77): short-description als YAML-Skalar quoten, sonst bricht z. B. ein
+    # Doppelpunkt in der gekürzten Description (»Text: mehr Text«) das Frontmatter-Parsing.
+    short_yaml = yaml.safe_dump({"v": short}, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    short_yaml = short_yaml.split("v: ", 1)[1].rstrip("\n")
+    fm_out = "---\n" + "\n".join(kept) + "\nmetadata:\n  short-description: " + short_yaml + "\n---\n"
     return fm_out, name
 
 
@@ -227,10 +236,17 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="Nichts schreiben, nur anzeigen")
     args = ap.parse_args()
 
-    skills = sorted(p for p in args.src.glob(SKILL_GLOB) if (p / "SKILL.md").is_file())
-    if not skills:
+    all_skills = sorted(p for p in args.src.glob(SKILL_GLOB) if (p / "SKILL.md").is_file())
+    if not all_skills:
         print(f"FEHLER: keine abc-Skills unter {args.src}", file=sys.stderr)
         return 2
+
+    skills = []
+    for skill in all_skills:
+        if MASTERSKILL_STUB_MARKER in (skill / "SKILL.md").read_text(encoding="utf-8"):
+            print(f"übersprungen (masterskill-creator-Stub, PROJ-77): {skill.name}")
+            continue
+        skills.append(skill)
 
     drift = 0
     written = 0
