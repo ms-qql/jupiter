@@ -507,5 +507,28 @@ Die Fix-Berichte oben wurden unabhängig erneut geprüft. Der dort genannte Stan
 teilweise erzeugte Stub-Verzeichnisse abfangen und die Originale exakt an ihre Ausgangspfade
 zurückbringen. Danach erneut `/abc-qa` ausführen.
 
+### Backoffice-Fix Runde 4 (2026-08-09) — BUG-3 (beide Ausfallarten)
+
+- **Fall A (`SystemExit` nicht abgefangen):** `cmd_migrate`s Rollback fing `except Exception`,
+  aber `cmd_stubs` bricht Validierungsfehler (z. B. Master-Frontmatter ohne `description`) über
+  `sys.exit()` ab — das wirft `SystemExit`, das von `BaseException` erbt, nicht von `Exception`.
+  Fix: `except BaseException` (immer mit sofortigem `raise` danach, kein Verschlucken).
+- **Fall B (Rollback verschachtelt statt ersetzt):** War ein Stub für einen Agenten bereits neu
+  geschrieben, bevor ein späterer Agent fehlschlug, existierte der Zielpfad schon wieder —
+  `shutil.move(archiv, zielpfad)` nistet die archivierte Originalfassung dann **unter** dem
+  liegen gebliebenen Stub-Verzeichnis ein, statt es zu ersetzen. Fix: vor dem `shutil.move`
+  wird ein bereits existierendes Zielverzeichnis per `shutil.rmtree` entfernt.
+- **Verifikation:** `test_stub_system_exit_keeps_original_in_place` und
+  `test_partial_stub_write_rolls_back_cleanly` liefen vorher rot, jetzt grün.
+  `test_proj77_masterskill_creator.py` + `test_proj50_codex_abc.py` zusammen: **37 passed,
+  3 failed** — die verbleibenden 3 sind BUG-8/9/10, bewusst außerhalb dieses Fix-Scopes (Nutzer
+  priorisierte nur BUG-3). `masterskill.py check` gegen die echte Registry weiterhin `OK`.
+- **Knowledge:** Ergänzung in `bug-geloest-jupiter-proj77-migrate-traversal-atomicity.md`.
+
+**Rest-Risiko:** BUG-8 (`check` berücksichtigt `bootstrap: false`-Agenten nicht, meldet `FEHLT
+Stub` obwohl korrekt übersprungen), BUG-9 (die `usage:`-Zeile vor der deutschen Fehlermeldung
+bleibt Englisch), BUG-10 (`check` prüft keine Master-Assets, übersieht tote relative Links nach
+dem Erzeugen der Stubs) bleiben offen. Status bleibt **In Review** bis erneutes `/abc-qa`.
+
 ## Deployment
 _To be added by /abc-deploy_
