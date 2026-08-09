@@ -282,6 +282,7 @@ def test_cli_errors_are_in_german():
     assert result.returncode != 0
     assert "FEHLER" in result.stderr
     assert "required" not in result.stderr
+    assert "usage:" not in result.stderr
 
 
 def test_codex_only_skill_can_be_migrated(helper, tmp_path, monkeypatch):
@@ -329,3 +330,87 @@ def test_stub_failure_keeps_originals_in_place(helper, tmp_path, monkeypatch):
         ))
 
     assert all((source / "SKILL.md").is_file() for source in originals)
+
+
+def test_stub_system_exit_keeps_original_in_place(helper, tmp_path, monkeypatch):
+    agents = [
+        {"id": "claude", "skills_dir": str(tmp_path / ".claude" / "skills"),
+         "frontmatter": ["name", "description"], "enabled": True},
+    ]
+    configure(helper, tmp_path, agents)
+    source = tmp_path / ".claude" / "skills" / "demo"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("---\nname: demo\n---\nOriginal\n", encoding="utf-8")
+    monkeypatch.setattr(helper.Path, "home", classmethod(lambda cls: tmp_path))
+
+    with pytest.raises(SystemExit, match="description"):
+        helper.cmd_migrate(argparse.Namespace(
+            name="demo", source="claude", apply=True, force=False, force_symlink=False,
+        ))
+
+    assert (source / "SKILL.md").is_file()
+
+
+def test_partial_stub_write_rolls_back_cleanly(helper, tmp_path, monkeypatch):
+    agents = [
+        {"id": "claude", "skills_dir": str(tmp_path / ".claude" / "skills"),
+         "frontmatter": ["name", "description"], "enabled": True},
+        {"id": "codex", "skills_dir": str(tmp_path / ".codex" / "skills"),
+         "frontmatter": ["name", "description"], "enabled": True},
+    ]
+    configure(helper, tmp_path, agents)
+    originals = []
+    for agent in (".claude", ".codex"):
+        source = tmp_path / agent / "skills" / "demo"
+        source.mkdir(parents=True)
+        (source / "SKILL.md").write_text(
+            "---\nname: demo\ndescription: Test\n---\nOriginal\n", encoding="utf-8",
+        )
+        originals.append(source)
+    monkeypatch.setattr(helper.Path, "home", classmethod(lambda cls: tmp_path))
+    original_render = helper.render_stub
+    calls = 0
+
+    def fail_second_stub(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("zweiter Stub fehlgeschlagen")
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(helper, "render_stub", fail_second_stub)
+
+    with pytest.raises(OSError, match="zweiter Stub"):
+        helper.cmd_migrate(argparse.Namespace(
+            name="demo", source="claude", apply=True, force=False, force_symlink=False,
+        ))
+
+    assert all((source / "SKILL.md").read_text(encoding="utf-8").endswith("Original\n") for source in originals)
+
+
+def test_check_skips_offline_non_bootstrap_agent(helper, tmp_path):
+    missing = tmp_path / "offline"
+    agents = [
+        {"id": "offline", "skills_dir": str(missing), "frontmatter": ["name", "description"],
+         "bootstrap": False, "enabled": True},
+    ]
+    root = configure(helper, tmp_path, agents)
+    write_master(root, "demo")
+
+    assert helper.cmd_check(argparse.Namespace(name="demo")) == 0
+
+
+def test_check_detects_missing_master_asset(helper, tmp_path):
+    agents = [
+        {"id": "claude", "skills_dir": str(tmp_path / "claude"),
+         "frontmatter": ["name", "description"], "enabled": True},
+    ]
+    root = configure(helper, tmp_path, agents)
+    master = write_master(root, "demo")
+    master.write_text(master.read_text(encoding="utf-8") + "[Vorlage](template.md)\n", encoding="utf-8")
+    asset = master.parent / "template.md"
+    asset.write_text("Vorlage", encoding="utf-8")
+    helper.cmd_stubs(argparse.Namespace(name="demo", agents=None))
+    asset.unlink()
+
+    assert helper.cmd_check(argparse.Namespace(name="demo")) == 1

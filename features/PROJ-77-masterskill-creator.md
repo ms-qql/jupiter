@@ -439,5 +439,66 @@ hat sich für **Option A** entschieden: explizites `bootstrap`-Feld je Agent in 
   (claude/codex-Verzeichnisse existieren real, `bootstrap: false` ändert dort nichts).
 - **Knowledge:** Vault-Notiz um die Auflösung ergänzt (Option A, kein offener Konflikt mehr).
 
+### Re-QA nach Backoffice-Fixes (2026-08-09)
+
+Die Fix-Berichte oben wurden unabhängig erneut geprüft. Der dort genannte Stand „36 passed,
+0 failed" deckte zwei reale Rollback-Abbrucharten sowie zwei `check`-Pflichten nicht ab.
+
+#### Verifiziert behoben
+
+- **BUG-1:** `../`-Pfad-Traversal wird vor jedem Schreibzugriff abgelehnt.
+- **BUG-2:** `.codex-system-skills.marker` stoppt auch den Dry-run vor einer Migration.
+- **BUG-4/5:** Stub- und Generator-Frontmatter bleiben bei Beschreibungen mit Doppelpunkt gültiges YAML.
+- **BUG-6:** `gen_codex_skills.py --check` ist grün; migriertes `abc-requirements` wird übersprungen.
+- **BUG-7 (ursprünglicher Fall):** `check` erkennt einen manipulierten Master-Pfad im Stub.
+- **AC10/BUG-8-Schreibpfad:** `bootstrap: false` überspringt einen offline Agenten; Default/`true`
+  legt das Verzeichnis eines neuen Agenten weiterhin an.
+
+#### Weiter offene Bugs
+
+##### BUG-3: Rollback ist weiterhin nicht atomar
+- **Severity:** High
+- **Fall A:** `cmd_stubs` kann nach dem Archivieren `SystemExit` auslösen, z. B. wenn das kopierte
+  Master-Frontmatter keine `description` hat. `except Exception` fängt `SystemExit` nicht; das
+  Original bleibt ausschließlich im Archiv und fehlt am Agentenpfad.
+- **Fall B:** Wird der erste Stub geschrieben und der zweite schlägt fehl, existiert der
+  Agenten-Zielpfad bereits. `shutil.move(Archiv, Zielpfad)` verschachtelt dann das Original unter
+  dem neuen Stub-Verzeichnis statt den Ausgangszustand wiederherzustellen.
+- **Tests:** `test_stub_system_exit_keeps_original_in_place`,
+  `test_partial_stub_write_rolls_back_cleanly`.
+- **Priority:** Fix before deployment.
+
+##### BUG-8: `check` berücksichtigt offline Agenten nicht
+- **Severity:** Medium
+- **Reproduktion:** Aktivierten Agenten mit `bootstrap: false` und fehlendem `skills_dir`
+  konfigurieren; `cmd_stubs` überspringt ihn korrekt, `cmd_check` meldet dennoch `FEHLT Stub`.
+- **Test:** `test_check_skips_offline_non_bootstrap_agent`.
+
+##### BUG-9: Fehlerausgabe ist nur teilweise Deutsch
+- **Severity:** Low
+- **Reproduktion:** `python masterskill.py stubs` ohne Namen.
+- **Actual:** Der Fehlertext ist Deutsch, die vorangestellte Zeile beginnt weiterhin mit
+  `usage:` statt einer deutschen Ausgabe.
+- **Test:** `test_cli_errors_are_in_german`.
+
+##### BUG-10: `check` prüft Master-Assets nicht
+- **Severity:** Medium
+- **Reproduktion:** Nach der Stub-Erzeugung ein im Master relativ verlinktes Asset löschen und
+  `check` ausführen.
+- **Expected:** Fehler und Exit 1.
+- **Actual:** `check` meldet `OK`, obwohl der Master einen toten relativen Link enthält.
+- **Test:** `test_check_detects_missing_master_asset`.
+
+#### Re-QA-Teststand
+
+- Vollständige Suite vor Ergänzung der neuen Negativtests: **1173 passed, 79 skipped, 0 failed**.
+- Erweiterte PROJ-77-Suite: **15 passed, 5 failed**.
+- Kombiniert PROJ-50 + PROJ-77: **35 passed, 5 failed**.
+- **Acceptance Criteria:** 11/12 passed (AC11 weiterhin nicht vollständig erfüllt).
+- **Offene Bugs:** 4 (0 Critical, 1 High, 2 Medium, 1 Low).
+- **Security:** Pfad-Traversal und System-Skill-Schutz bestanden; atomarer Daten-/Rollback-Schutz
+  weiterhin fehlgeschlagen.
+- **Production Ready:** **NO** — Status bleibt **In Review**.
+
 ## Deployment
 _To be added by /abc-deploy_
