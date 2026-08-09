@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-77
+**Next Available ID:** PROJ-78
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -89,6 +89,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-74 | Bugfix: Backend-Neustart orphaniert lebende tmux-Sessions unnötig (rehydrate() ignoriert echte Prozess-Liveness) | P1 | Deployed | PROJ-63, PROJ-27, PROJ-33, PROJ-66 | [Spec](PROJ-74-rehydrate-tmux-liveness-haertung.md) |
 | PROJ-75 | Bugfix-Verifikation: PROJ-72-Transkript-Replay nach wiederholtem Resume in Produktion nicht restlos ausgeschlossen | P1 | Planned | PROJ-72, PROJ-63, PROJ-66, PROJ-70 | [Spec](PROJ-75-proj72-replay-produktionsverifikation.md) |
 | PROJ-76 | Textdateien im Fileexplorer bearbeiten | P1 | In Review | PROJ-11, PROJ-12, PROJ-28, PROJ-37 | [Spec](PROJ-76-textdateien-im-fileexplorer-bearbeiten.md) |
+| PROJ-77 | masterskill-creator — agenten-unabhängige Master-Skills in Hal + Pointer-Stubs je CLI | P1 | In Review | PROJ-50, PROJ-2 | [Spec](PROJ-77-masterskill-creator.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
