@@ -500,5 +500,12 @@ Die Fix-Berichte oben wurden unabhängig erneut geprüft. Der dort genannte Stan
   weiterhin fehlgeschlagen.
 - **Production Ready:** **NO** — Status bleibt **In Review**.
 
+#### User Review / Priorisierung der Re-QA
+
+**Reviewed:** 2026-08-09
+**Entscheidung:** Zuerst BUG-3 vollständig beheben: Rollback muss sowohl `SystemExit` als auch
+teilweise erzeugte Stub-Verzeichnisse abfangen und die Originale exakt an ihre Ausgangspfade
+zurückbringen. Danach erneut `/abc-qa` ausführen.
+
 ## Deployment
 _To be added by /abc-deploy_
