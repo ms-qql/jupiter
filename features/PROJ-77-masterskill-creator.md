@@ -551,5 +551,35 @@ dem Erzeugen der Stubs) bleiben offen. Status bleibt **In Review** bis erneutes 
 **Rest-Risiko:** BUG-9 (`usage:`-Zeile vor der deutschen Fehlermeldung bleibt Englisch) offen.
 Status bleibt **In Review** bis erneutes `/abc-qa`.
 
+### Re-QA Runde 2 nach Fix-Runden 4/5 (2026-08-09)
+
+#### Verifiziert behoben
+
+- **BUG-3:** Rollback greift bei `SystemExit`; teilweise erzeugte Stub-Zielverzeichnisse werden
+  vor der Rückverschiebung entfernt. Beide Negativtests sind grün.
+- **BUG-8:** `check` überspringt offline Agenten mit `bootstrap: false` konsistent zu `stubs`.
+- **BUG-10:** `check` erkennt nachträglich fehlende, relativ verlinkte Master-Assets.
+- **Security:** Pfad-Traversal, Codex-System-Skill-Schutz und atomarer Rollback sind grün.
+- Echte Artefakte: `check masterskill-creator`, `check abc-requirements` und
+  `gen_codex_skills.py --check` melden weiterhin `OK`.
+
+#### Einziger offener Bug
+
+##### BUG-9: `usage:` in CLI-Fehlerausgabe bleibt Englisch
+- **Severity:** High als QA-Gate (inhaltlich Low), weil die permanente Gesamt-Test-Suite rot bleibt.
+- **Reproduktion:** `python masterskill.py stubs` ohne Namen.
+- **Expected:** Vollständig deutsche Fehlerausgabe gemäß AC11.
+- **Actual:** `usage: masterskill.py ...` steht vor der deutschen `FEHLER:`-Zeile.
+- **Test:** `test_cli_errors_are_in_german`.
+- **Priority:** Fix before approval.
+
+#### Teststand
+
+- PROJ-50 + PROJ-77: **39 passed, 1 failed**.
+- Vollständige Suite: **1176 passed, 79 skipped, 1 failed**.
+- **Acceptance Criteria:** 11/12 passed (nur AC11 offen).
+- **Offene Bugs:** 1 (0 Critical, 1 High QA-Gate, 0 Medium, 0 Low).
+- **Production Ready:** **NO** — Status bleibt **In Review** bis BUG-9 behoben und die Suite grün ist.
+
 ## Deployment
 _To be added by /abc-deploy_
