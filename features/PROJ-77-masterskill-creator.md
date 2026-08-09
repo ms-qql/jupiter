@@ -530,5 +530,26 @@ Stub` obwohl korrekt übersprungen), BUG-9 (die `usage:`-Zeile vor der deutschen
 bleibt Englisch), BUG-10 (`check` prüft keine Master-Assets, übersieht tote relative Links nach
 dem Erzeugen der Stubs) bleiben offen. Status bleibt **In Review** bis erneutes `/abc-qa`.
 
+### Backoffice-Fix Runde 5 (2026-08-09) — BUG-8 + BUG-10
+
+- **BUG-8 (`check` ignoriert `bootstrap: false`-Agenten):** `cmd_check` prüfte für jeden aktiven
+  Agenten einen Stub, auch wenn `cmd_stubs` ihn wegen fehlendem Verzeichnis + `bootstrap: false`
+  korrekt übersprungen hatte → falsches `FEHLT Stub`. Fix: dieselbe Bedingung wie in `cmd_stubs`
+  (`not agent_root.is_dir() and not agent.get("bootstrap", True)`) überspringt den Agenten jetzt
+  auch in `cmd_check`.
+- **BUG-10 (`check` prüft keine Master-Assets):** `cmd_check` verglich nur Stub-Description und
+  Master-Pfad-Verweis, nie den Master selbst. Fix: dieselbe relative-Link-Prüfung wie in
+  `cmd_migrate`s Verifikationsschritt (`[text](pfad)`-Links im Master gegen `master_dir` auflösen)
+  läuft jetzt auch in `cmd_check`.
+- **Verifikation:** `test_check_skips_offline_non_bootstrap_agent` +
+  `test_check_detects_missing_master_asset` liefen vorher rot, jetzt grün.
+  `test_proj77_masterskill_creator.py` + `test_proj50_codex_abc.py` zusammen: **39 passed,
+  1 failed** — nur noch BUG-9 (bewusst außerhalb dieser Runde). `masterskill.py check` gegen die
+  echte Registry weiterhin `OK`.
+- **Knowledge:** Ergänzung in `bug-geloest-jupiter-proj77-migrate-traversal-atomicity.md`.
+
+**Rest-Risiko:** BUG-9 (`usage:`-Zeile vor der deutschen Fehlermeldung bleibt Englisch) offen.
+Status bleibt **In Review** bis erneutes `/abc-qa`.
+
 ## Deployment
 _To be added by /abc-deploy_
