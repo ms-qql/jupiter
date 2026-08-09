@@ -415,20 +415,29 @@ Umgesetzt exakt nach Tech Design, kein FastAPI/DB-Code (Feature berührt keinen 
 - **Knowledge:** Ergänzung in `bug-geloest-jupiter-proj77-migrate-traversal-atomicity.md`
   (Datei-Historie zeigt beide Runden; Erkenntnis-Abschnitt um BUG-4/5/6/7/9 erweitert — siehe Vault).
 
-**BUG-8 — bewusst NICHT gefixt, Ziel-Konflikt statt Bug:**
-Die im QA-Report verlangte Änderung („fehlendes Agenten-Verzeichnis überspringen, nicht anlegen")
-widerspricht direkt Akzeptanzkriterium 10 („ein neuer Agent wird allein durch einen
-`agents.yaml`-Eintrag unterstützt, erneuter Lauf erzeugt Stubs") und dem dafür geschriebenen,
-bereits grünen Test `test_registry_only_adds_kimi_without_changing_master` — beide Szenarien
-(„Kimi zum ersten Mal" vs. „Agent offline") erzeugen exakt dieselbe Vorbedingung: `skills_dir`
-existiert im Dateisystem noch nicht. Ohne ein zusätzliches Unterscheidungsmerkmal in der Registry
-(z. B. ein `bootstrap: true/false`-Flag oder „Verzeichnis MUSS vorab existieren") lässt sich „neuer
-Agent → anlegen" von „Agent offline → überspringen" nicht unterscheiden. Ein Versuch, BUG-8 wie
-im Report beschrieben zu fixen, brach AC10 + den zugehörigen Regressionstest
-(`test_registry_only_adds_kimi_without_changing_master`, `test_stubs_for_active_agents_and_shared_opencode_is_skipped`,
-`test_codex_only_skill_can_be_migrated` — alle drei rot). Änderung deshalb zurückgerollt;
-`test_missing_agent_directory_is_reported_and_skipped` bleibt bewusst rot, bis geklärt ist, welches
-Verhalten tatsächlich gewollt ist (Vorschlag: neues Registry-Feld statt reiner Existenzprüfung).
+### Backoffice-Fix Runde 3 (2026-08-09) — BUG-8 (Produktentscheidung: Option A)
+
+BUG-8 war kein Implementierungsfehler, sondern ein Zielkonflikt: „neuer Agent (Kimi), `skills_dir`
+existiert noch nicht → anlegen" (AC10) und „Agent offline, `skills_dir` existiert nicht →
+überspringen" (BUG-8) sind ohne zusätzliches Signal in der Registry dieselbe Vorbedingung. Nutzer
+hat sich für **Option A** entschieden: explizites `bootstrap`-Feld je Agent in `agents.yaml`.
+
+- **`bootstrap: false`** (etablierte Agenten, `claude` + `codex` in der realen Registry): fehlt
+  `skills_dir`, gilt der Agent als offline → `cmd_stubs` überspringt ihn und vermerkt das im Report,
+  statt einen leeren Verzeichnisbaum anzulegen.
+- **`bootstrap: true`/Feld weglassen** (Default — neuer Agent, z. B. Kimi): fehlt `skills_dir` noch,
+  wird es beim ersten `stubs`-Lauf angelegt (`mkdir(parents=True)`), wie bisher.
+- Umsetzung: `cmd_stubs` in `masterskill.py` prüft jetzt `not agent_root.is_dir() and not
+  agent.get("bootstrap", True)` vor dem `mkdir`. `agents.yaml` trägt `bootstrap: false` bei
+  `claude`/`codex`. `SKILL.md` („Neuen Agenten anschließen") dokumentiert die Regel.
+- **Test-Anpassung:** `test_missing_agent_directory_is_reported_and_skipped` erwartet jetzt
+  `bootstrap: false` beim offline-Agenten (semantisch korrekt statt implizit). Neuer Test
+  `test_new_agent_without_bootstrap_flag_still_creates_directory` deckt den Default-Fall
+  (Kimi-artiger Neuzugang ohne explizites `bootstrap`) separat ab.
+- **Verifikation:** `test_proj77_masterskill_creator.py` + `test_proj50_codex_abc.py` zusammen:
+  **36 passed, 0 failed**. `masterskill.py check` gegen die echte Registry weiterhin `OK`
+  (claude/codex-Verzeichnisse existieren real, `bootstrap: false` ändert dort nichts).
+- **Knowledge:** Vault-Notiz um die Auflösung ergänzt (Option A, kein offener Konflikt mehr).
 
 ## Deployment
 _To be added by /abc-deploy_

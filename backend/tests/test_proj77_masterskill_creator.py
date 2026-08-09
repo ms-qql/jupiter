@@ -202,9 +202,11 @@ def test_check_detects_wrong_master_path_in_stub(helper, tmp_path):
 
 
 def test_missing_agent_directory_is_reported_and_skipped(helper, tmp_path, capsys):
+    """bootstrap: false (etablierter Agent) — fehlendes Verzeichnis heißt offline, nicht anlegen."""
     missing = tmp_path / "nicht-vorhanden"
     agents = [
-        {"id": "offline", "skills_dir": str(missing), "frontmatter": ["name", "description"], "enabled": True},
+        {"id": "offline", "skills_dir": str(missing), "frontmatter": ["name", "description"],
+         "bootstrap": False, "enabled": True},
     ]
     root = configure(helper, tmp_path, agents)
     write_master(root, "demo")
@@ -213,6 +215,20 @@ def test_missing_agent_directory_is_reported_and_skipped(helper, tmp_path, capsy
 
     assert not missing.exists()
     assert "übersprungen" in capsys.readouterr().out
+
+
+def test_new_agent_without_bootstrap_flag_still_creates_directory(helper, tmp_path):
+    """bootstrap fehlt/true (Default, z. B. Kimi-Neuzugang) — Verzeichnis wird angelegt."""
+    fresh = tmp_path / "kimi"
+    agents = [
+        {"id": "kimi", "skills_dir": str(fresh), "frontmatter": ["name", "description"], "enabled": True},
+    ]
+    root = configure(helper, tmp_path, agents)
+    write_master(root, "demo")
+
+    helper.cmd_stubs(argparse.Namespace(name="demo", agents=None))
+
+    assert (fresh / "demo" / "SKILL.md").is_file()
 
 
 def test_skill_name_cannot_escape_managed_directories(helper, tmp_path):
