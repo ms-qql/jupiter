@@ -362,5 +362,10 @@ Umgesetzt exakt nach Tech Design, kein FastAPI/DB-Code (Feature berührt keinen 
 - **Production Ready:** **NO**
 - **Recommendation:** High-Bugs zuerst beheben; Status bleibt **In Review**, danach `/abc-qa` erneut ausführen.
 
+### User Review / Priorisierung
+
+**Reviewed:** 2026-08-09
+**Entscheidung:** Zuerst BUG-1 bis BUG-3 beheben: Pfad-Traversal schließen, Codex-System-Skills schützen und Migration bei Fehlern atomar halten. Danach erneut `/abc-qa` ausführen.
+
 ## Deployment
 _To be added by /abc-deploy_
