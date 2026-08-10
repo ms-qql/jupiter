@@ -38,8 +38,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { UiCheckRegistryItem } from "@/lib/types";
 import { isGalleryItem, useUiCheckRegistry } from "./registry-data";
+import { HalRegistryPanel } from "./hal-registry-panel";
 
 const ALL = "__all__";
 
@@ -127,6 +129,13 @@ export function PortfolioTab() {
 
   return (
     <div className="space-y-4">
+      <Tabs defaultValue="catalog">
+        <TabsList>
+          <TabsTrigger value="catalog">Katalog</TabsTrigger>
+          <TabsTrigger value="hal">Hal↔Registry</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="catalog" className="mt-4 space-y-4">
       <Card>
         <CardHeader>
           <CardTitle>Registry-Filter</CardTitle>
@@ -345,6 +354,12 @@ export function PortfolioTab() {
           )}
         </DialogContent>
       </Dialog>
+        </TabsContent>
+
+        <TabsContent value="hal" className="mt-4">
+          <HalRegistryPanel />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

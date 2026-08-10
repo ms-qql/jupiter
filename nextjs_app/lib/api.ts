@@ -102,6 +102,9 @@ import type {
   UiCheckAssembleRequest,
   UiCheckAssembleResponse,
   UiCheckAssembleOutcome,
+  HalRegistryResponse,
+  HalRegistryMatchCandidate,
+  HalIngestResponse,
   MetricsSnapshot,
   MetricsStatus,
   TerminalInfo,
@@ -2021,4 +2024,70 @@ export function getPeppermintProjectOptions(
   signal?: AbortSignal,
 ): Promise<PeppermintProjectOptions> {
   return request<PeppermintProjectOptions>("/peppermint/project-options", { signal });
+}
+
+// ── PROJ-24: Hal↔Registry-Dashboard ────────────────────────────────────────
+
+export function getHalRegistry(signal?: AbortSignal): Promise<HalRegistryResponse> {
+  return request<HalRegistryResponse>("/ui-check/hal-registry", { signal });
+}
+
+export function refreshHalRegistry(): Promise<HalRegistryResponse> {
+  return request<HalRegistryResponse>("/ui-check/hal-registry/refresh", { method: "POST" });
+}
+
+export function selectHalQueueItems(
+  ids: string[],
+  revision?: string | null,
+): Promise<HalRegistryResponse> {
+  return request<HalRegistryResponse>("/ui-check/hal-registry/queue/select", {
+    method: "POST",
+    body: JSON.stringify({ ids, revision }),
+  });
+}
+
+export function cancelHalQueueItem(
+  entryId: string,
+  revision?: string | null,
+): Promise<HalRegistryResponse> {
+  return request<HalRegistryResponse>(
+    `/ui-check/hal-registry/queue/${encodeURIComponent(entryId)}/cancel`,
+    { method: "POST", body: JSON.stringify({ revision }) },
+  );
+}
+
+export function cleanHalQueue(revision?: string | null): Promise<HalRegistryResponse> {
+  return request<HalRegistryResponse>("/ui-check/hal-registry/queue/clean", {
+    method: "POST",
+    body: JSON.stringify({ revision }),
+  });
+}
+
+export function applyHalMatches(
+  matches: HalRegistryMatchCandidate[],
+  revision?: string | null,
+): Promise<HalRegistryResponse> {
+  return request<HalRegistryResponse>("/ui-check/hal-registry/matches/apply", {
+    method: "POST",
+    body: JSON.stringify({ matches, revision }),
+  });
+}
+
+export function dismissHalMatches(
+  registryItems: string[],
+  revision?: string | null,
+): Promise<HalRegistryResponse> {
+  return request<HalRegistryResponse>("/ui-check/hal-registry/matches/dismiss", {
+    method: "POST",
+    body: JSON.stringify({ registry_items: registryItems, revision }),
+  });
+}
+
+export function startHalIngest(
+  entryId: string,
+): Promise<HalIngestResponse> {
+  return request<HalIngestResponse>("/ui-check/hal-registry/ingests", {
+    method: "POST",
+    body: JSON.stringify({ entry_id: entryId }),
+  });
 }

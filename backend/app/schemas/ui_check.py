@@ -213,3 +213,74 @@ class UiCheckAssembleResponse(BaseModel):
     run_id: str
     status: RunStatus
     run_type: RunType = "assemble"
+
+
+# ── PROJ-24: Hal↔Registry-Dashboard ─────────────────────────────────────────
+
+HalQueueStatus = Literal["selected", "done", "cancelled"]
+HalRegistryLinkStatus = Literal["linked", "unlinked", "missing"]
+
+
+class HalRegistryEntry(BaseModel):
+    id: str
+    category: str
+    name: str
+    rel_path: str
+    has_preview: bool = False
+    queue_status: HalQueueStatus | None = None
+
+
+class HalRegistryQueueItem(BaseModel):
+    id: str
+    name: str
+    category: str
+    rel_path: str
+    status: HalQueueStatus
+
+
+class HalRegistryMatchCandidate(BaseModel):
+    registry_item: str
+    suggested_clone: str
+    score: int = 0
+    confirmed: bool = False
+
+
+class HalRegistryInventoryItem(BaseModel):
+    name: str
+    title: str | None = None
+    type: str
+    section: str | None = None
+    source_clone: str | None = None
+    link_status: HalRegistryLinkStatus
+
+
+class HalRegistryResponse(BaseModel):
+    entries: list[HalRegistryEntry] = Field(default_factory=list)
+    queue: list[HalRegistryQueueItem] = Field(default_factory=list)
+    candidates: list[HalRegistryMatchCandidate] = Field(default_factory=list)
+    inventory: list[HalRegistryInventoryItem] = Field(default_factory=list)
+    revision: str | None = None
+
+
+class HalRevisionRequest(BaseModel):
+    revision: str | None = None
+
+
+class HalQueueSelectRequest(BaseModel):
+    ids: list[str] = Field(..., min_length=1, max_length=200)
+    revision: str | None = None
+
+
+class HalMatchesApplyRequest(BaseModel):
+    matches: list[HalRegistryMatchCandidate] = Field(..., min_length=1, max_length=200)
+    revision: str | None = None
+
+
+class HalMatchesDismissRequest(BaseModel):
+    registry_items: list[str] = Field(..., min_length=1, max_length=200)
+    revision: str | None = None
+
+
+class HalIngestResponse(BaseModel):
+    session_id: str
+    message: str = "Ingest-Session gestartet."

@@ -17,12 +17,15 @@ import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from PIL import Image, UnidentifiedImageError
 
 from ..config import settings
+
+if TYPE_CHECKING:
+    from .manager import SessionManager
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _PHASE_ORDER = ("capture", "lighthouse", "branding", "scoring", "redesign", "mockup")
@@ -138,13 +141,14 @@ def _safe_run_id(run_id: str) -> str:
 
 
 class UiCheckService:
-    def __init__(self, project_path: str | None = None) -> None:
+    def __init__(self, project_path: str | None = None, manager: "SessionManager | None" = None) -> None:
         self.project_path = Path(project_path or settings.ui_check_project_path).resolve()
         self.runs_dir = self.project_path / "runs"
         self.data_file = self.project_path / "data" / "runs.jsonl"
         self._processes: dict[str, subprocess.Popen[bytes]] = {}
         self._cancelled_runs: set[str] = set()
         self._chain_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+        self._manager = manager
 
     def list_runs(self) -> dict[str, Any]:
         runs = [self._summary(p) for p in self._run_dirs()]
@@ -970,3 +974,261 @@ class UiCheckService:
             if not candidate.exists():
                 return candidate
         raise UiCheckConflict("Kein freier Run-Ordner fuer Assemble gefunden.")
+
+    # ── PROJ-24: Hal↔Registry-Dashboard ────────────────────────────────────
+
+    def _hal_web_root(self) -> Path:
+        return Path(os.environ.get("HAL_WEB_ROOT", "/home/dev/tools/Hal/04 Resources/Web"))
+
+    def _queue_path(self) -> Path:
+        return self.project_path / ".tmp" / "hal-picker-queue.json"
+
+    def _candidates_path(self) -> Path:
+        return self.project_path / ".tmp" / "hal-match-candidates.json"
+
+    def _read_json_list(self, path: Path) -> list[dict[str, Any]]:
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, list) else []
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return []
+
+    def _write_json_list(self, path: Path, data: list[dict[str, Any]]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+
+    def _content_hash(self, path: Path) -> str:
+        try:
+            with path.open("rb") as fh:
+                return hashlib.sha256(fh.read()).hexdigest()[:16]
+        except (FileNotFoundError, OSError):
+            return ""
+
+    def _scan_hal_entries(self) -> list[dict[str, Any]]:
+        root = self._hal_web_root()
+        entries = []
+        for cat, preview_file in [("Websites", "preview.png"), ("Components", "screenshot.png")]:
+            cat_dir = root / cat
+            if not cat_dir.is_dir():
+                continue
+            for entry in sorted(cat_dir.iterdir()):
+                if not entry.is_dir():
+                    continue
+                rel_path = f"{cat}/{entry.name}"
+                entry_id = rel_path.replace("/", "--")
+                preview_path = root / rel_path / preview_file
+                entries.append({
+                    "id": entry_id,
+                    "category": cat,
+                    "name": entry.name,
+                    "rel_path": rel_path,
+                    "has_preview": preview_path.is_file(),
+                })
+        return entries
+
+    def _load_queue(self) -> list[dict[str, Any]]:
+        return self._read_json_list(self._queue_path())
+
+    def _save_queue(self, queue: list[dict[str, Any]]) -> None:
+        self._write_json_list(self._queue_path(), queue)
+
+    def _load_candidates(self) -> list[dict[str, Any]]:
+        return self._read_json_list(self._candidates_path())
+
+    def _save_candidates(self, candidates: list[dict[str, Any]]) -> None:
+        self._write_json_list(self._candidates_path(), candidates)
+
+    def _compute_link_status(self, source_clone: str | None) -> str:
+        if not source_clone:
+            return "unlinked"
+        root = self._hal_web_root()
+        abs_path = root / source_clone
+        return "linked" if abs_path.is_dir() else "missing"
+
+    def _build_registry_inventory(self) -> list[dict[str, Any]]:
+        try:
+            data = self._read_registry_raw()
+        except UiCheckRegistryError:
+            return []
+        items = data.get("items", [])
+        inventory = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            meta = item.get("meta") or {}
+            source_clone = meta.get("source_clone")
+            inventory.append({
+                "name": item.get("name", ""),
+                "title": item.get("title"),
+                "type": item.get("type", ""),
+                "section": meta.get("section"),
+                "source_clone": source_clone,
+                "link_status": self._compute_link_status(source_clone),
+            })
+        return inventory
+
+    def _sync_ingest_sessions(self, queue: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Leitet done aus dem echten Session-Status ab (BUG-24-2: kein Fake-Erfolg)."""
+        if self._manager is None:
+            return queue
+        changed = False
+        for q in queue:
+            session_id = q.get("ingest_session_id")
+            if q.get("status") != "selected" or not session_id:
+                continue
+            runtime = self._manager.get(session_id)
+            if runtime is None:
+                continue
+            if runtime.state.status == "done" and not runtime.state.error:
+                q["status"] = "done"
+                changed = True
+        if changed:
+            self._save_queue(queue)
+        return queue
+
+    def hal_registry(self) -> dict[str, Any]:
+        entries = self._scan_hal_entries()
+        queue = self._sync_ingest_sessions(self._load_queue())
+        candidates = self._load_candidates()
+        inventory = self._build_registry_inventory()
+
+        queue_map = {q["id"]: q["status"] for q in queue}
+        for e in entries:
+            e["queue_status"] = queue_map.get(e["id"])
+
+        revision = self._content_hash(self._queue_path()) + self._content_hash(self._candidates_path())
+        return {
+            "entries": entries,
+            "queue": queue,
+            "candidates": candidates,
+            "inventory": inventory,
+            "revision": revision or None,
+        }
+
+    def _check_revision(self, revision: str | None) -> None:
+        """Optimistic-Concurrency-Gate: lehnt Writes auf veraltetem Stand ab (BUG-24-3)."""
+        if revision is None:
+            return
+        current = self._content_hash(self._queue_path()) + self._content_hash(self._candidates_path())
+        if revision != (current or None):
+            raise UiCheckConflict("Daten wurden zwischenzeitlich geändert.")
+
+    def refresh_hal_registry(self) -> dict[str, Any]:
+        project = str(self.project_path)
+        scripts_dir = str(self.project_path / "scripts")
+        subprocess.run(
+            ["node", f"{scripts_dir}/registry-hal-picker.mjs"],
+            cwd=project, capture_output=True, timeout=60,
+        )
+        subprocess.run(
+            ["node", f"{scripts_dir}/registry-match-hal.mjs"],
+            cwd=project, capture_output=True, timeout=60,
+        )
+        return self.hal_registry()
+
+    def hal_queue_select(self, ids: list[str], revision: str | None = None) -> dict[str, Any]:
+        self._check_revision(revision)
+        known = {e["id"]: e for e in self._scan_hal_entries()}
+        unknown = [i for i in ids if i not in known]
+        if unknown:
+            raise UiCheckNotFound(f"Unbekannte Hal-ID(s): {', '.join(unknown)}")
+
+        queue = self._load_queue()
+        existing = {q["id"] for q in queue}
+        for entry_id in ids:
+            if entry_id not in existing:
+                entry = known[entry_id]
+                queue.append({
+                    "id": entry_id,
+                    "name": entry["name"],
+                    "category": entry["category"],
+                    "rel_path": entry["rel_path"],
+                    "status": "selected",
+                })
+        self._save_queue(queue)
+        return self.hal_registry()
+
+    def hal_queue_cancel(self, entry_id: str, revision: str | None = None) -> dict[str, Any]:
+        self._check_revision(revision)
+        queue = self._load_queue()
+        for q in queue:
+            if q["id"] == entry_id and q["status"] == "selected":
+                q["status"] = "cancelled"
+                break
+        self._save_queue(queue)
+        return self.hal_registry()
+
+    def hal_queue_clean(self, revision: str | None = None) -> dict[str, Any]:
+        self._check_revision(revision)
+        queue = self._load_queue()
+        queue = [q for q in queue if q["status"] == "selected"]
+        self._save_queue(queue)
+        return self.hal_registry()
+
+    def hal_matches_apply(self, matches: list[dict[str, Any]], revision: str | None = None) -> dict[str, Any]:
+        self._check_revision(revision)
+        candidates = self._load_candidates()
+        for apply_m in matches:
+            for cm in candidates:
+                if cm["registryItem"] == apply_m.get("registry_item") and cm["suggestedClone"] == apply_m.get("suggested_clone"):
+                    cm["confirmed"] = True
+                    break
+        self._save_candidates(candidates)
+        candidates_path = str(self._candidates_path())
+        project = str(self.project_path)
+        subprocess.run(
+            ["node", f"{project}/scripts/registry-match-hal.mjs", "--apply", candidates_path],
+            cwd=project, capture_output=True, timeout=30,
+        )
+        return self.hal_registry()
+
+    def hal_matches_dismiss(self, registry_items: list[str], revision: str | None = None) -> dict[str, Any]:
+        self._check_revision(revision)
+        candidates = self._load_candidates()
+        candidates = [c for c in candidates if c.get("registryItem") not in registry_items]
+        self._save_candidates(candidates)
+        return self.hal_registry()
+
+    async def hal_start_ingest(self, entry_id: str) -> dict[str, Any]:
+        if self._manager is None:
+            raise UiCheckConflict("Session-Manager nicht verfügbar.")
+
+        queue = self._load_queue()
+        entry = next((q for q in queue if q["id"] == entry_id and q["status"] == "selected"), None)
+        if not entry:
+            raise UiCheckNotFound(f"Kein ausgewählter Queue-Eintrag '{entry_id}'")
+
+        # rel_path stammt aus der Queue, die nur ueber hal_queue_select() befuellt wird
+        # (dort bereits gegen _scan_hal_entries() validiert) - trotzdem hier erneut
+        # gegen HAL_WEB_ROOT gehaertet, falls die Queue-Datei extern manipuliert wurde.
+        hal_root = self._hal_web_root().resolve()
+        abs_path = (hal_root / entry["rel_path"]).resolve()
+        if hal_root not in abs_path.parents and abs_path != hal_root:
+            raise UiCheckConflict(f"Hal-Pfad außerhalb von HAL_WEB_ROOT: {entry['rel_path']}")
+        if not abs_path.is_dir():
+            raise UiCheckConflict(f"Hal-Ordner nicht gefunden: {abs_path}")
+
+        prompt = f"/ui-template-ingest {abs_path}"
+        runtime = await self._manager.create(
+            project_path=str(self.project_path),
+            initial_prompt=prompt,
+            permission_mode=settings.default_permission_mode,
+            owner=settings.default_owner,
+            project_name="UI-Check",
+        )
+        session_id = runtime.state.session_id
+
+        queue2 = self._load_queue()
+        for q in queue2:
+            if q["id"] == entry_id and q["status"] == "selected":
+                q["ingest_session_id"] = session_id
+                break
+        self._save_queue(queue2)
+
+        return {
+            "session_id": session_id,
+            "message": f"Ingest-Session für {entry['rel_path']} gestartet.",
+        }

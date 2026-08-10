@@ -14,6 +14,12 @@ from ..engine.ui_check import (
     UiCheckService,
 )
 from ..schemas.ui_check import (
+    HalIngestResponse,
+    HalMatchesApplyRequest,
+    HalMatchesDismissRequest,
+    HalQueueSelectRequest,
+    HalRegistryResponse,
+    HalRevisionRequest,
     UiCheckAssembleRequest,
     UiCheckAssembleResponse,
     UiCheckBrandingProfilesResponse,
@@ -201,3 +207,71 @@ async def get_artifact(request: Request, run_id: str, kind: str) -> FileResponse
     except UiCheckNotFound as exc:
         raise HTTPException(status_code=404, detail="Artefakt nicht gefunden.") from exc
     return FileResponse(path)
+
+
+# ── PROJ-24: Hal↔Registry-Dashboard ─────────────────────────────────────────
+
+
+@router.get("/hal-registry", response_model=HalRegistryResponse)
+async def get_hal_registry(request: Request) -> dict:
+    return _svc(request).hal_registry()
+
+
+@router.post("/hal-registry/refresh", response_model=HalRegistryResponse)
+async def refresh_hal_registry(request: Request) -> dict:
+    return _svc(request).refresh_hal_registry()
+
+
+@router.post("/hal-registry/queue/select", response_model=HalRegistryResponse)
+async def hal_queue_select(request: Request, payload: HalQueueSelectRequest) -> dict:
+    try:
+        return _svc(request).hal_queue_select(payload.ids, payload.revision)
+    except UiCheckNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/hal-registry/queue/{entry_id}/cancel", response_model=HalRegistryResponse)
+async def hal_queue_cancel(request: Request, entry_id: str, payload: HalRevisionRequest | None = None) -> dict:
+    try:
+        return _svc(request).hal_queue_cancel(entry_id, payload.revision if payload else None)
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/hal-registry/queue/clean", response_model=HalRegistryResponse)
+async def hal_queue_clean(request: Request, payload: HalRevisionRequest | None = None) -> dict:
+    try:
+        return _svc(request).hal_queue_clean(payload.revision if payload else None)
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/hal-registry/matches/apply", response_model=HalRegistryResponse)
+async def hal_matches_apply(request: Request, payload: HalMatchesApplyRequest) -> dict:
+    try:
+        return _svc(request).hal_matches_apply([m.model_dump() for m in payload.matches], payload.revision)
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/hal-registry/matches/dismiss", response_model=HalRegistryResponse)
+async def hal_matches_dismiss(request: Request, payload: HalMatchesDismissRequest) -> dict:
+    try:
+        return _svc(request).hal_matches_dismiss(payload.registry_items, payload.revision)
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/hal-registry/ingests", response_model=HalIngestResponse, status_code=201)
+async def hal_start_ingest(request: Request, payload: dict) -> dict:
+    entry_id = payload.get("entry_id", "")
+    if not entry_id:
+        raise HTTPException(status_code=422, detail="entry_id erforderlich")
+    try:
+        return await _svc(request).hal_start_ingest(entry_id)
+    except UiCheckNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UiCheckConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

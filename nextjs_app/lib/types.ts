@@ -1761,3 +1761,54 @@ export interface PeppermintProjectOption {
 export interface PeppermintProjectOptions {
   items: PeppermintProjectOption[];
 }
+
+// ── PROJ-24: Hal↔Registry-Dashboard ────────────────────────────────────────
+
+export type HalQueueStatus = "selected" | "done" | "cancelled";
+export type HalLinkStatus = "linked" | "unlinked" | "missing";
+
+export interface HalRegistryEntry {
+  id: string;
+  category: string;
+  name: string;
+  rel_path: string;
+  has_preview: boolean;
+  queue_status: HalQueueStatus | null;
+}
+
+export interface HalRegistryQueueItem {
+  id: string;
+  name: string;
+  category: string;
+  rel_path: string;
+  status: HalQueueStatus;
+}
+
+export interface HalRegistryMatchCandidate {
+  registry_item: string;
+  suggested_clone: string;
+  score: number;
+  confirmed: boolean;
+}
+
+export interface HalRegistryInventoryItem {
+  name: string;
+  title: string | null;
+  type: string;
+  section: string | null;
+  source_clone: string | null;
+  link_status: HalLinkStatus;
+}
+
+export interface HalRegistryResponse {
+  entries: HalRegistryEntry[];
+  queue: HalRegistryQueueItem[];
+  candidates: HalRegistryMatchCandidate[];
+  inventory: HalRegistryInventoryItem[];
+  revision: string | null;
+}
+
+export interface HalIngestResponse {
+  session_id: string;
+  message: string;
+}

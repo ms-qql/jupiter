@@ -397,7 +397,7 @@ def create_app(
     app.state.peppermint = PeppermintTriageWorker(app.state.manager, pm_repo)
     # PROJ-14: UI-Check-Micro-App liest/schreibt lokale Run-Artefakte im
     # UI-Check-Projekt; keine eigene Datenbank.
-    app.state.ui_check = UiCheckService()
+    app.state.ui_check = UiCheckService(manager=app.state.manager)
     # PROJ-22: Multi-Agent-Dispatch — Koordinator über dem Session-Treiber + Vault-Vertrag.
     app.state.coordinator = CoordinatorService(app.state.manager, vault_service)
     # PROJ-23: Cross-Agent-Review — Challenge eines Artefakts durch eine andere Engine.
