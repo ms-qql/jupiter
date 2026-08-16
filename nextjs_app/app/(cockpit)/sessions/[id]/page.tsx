@@ -13,7 +13,7 @@
 
 import { Fragment, use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, FileIcon, FolderIcon } from "lucide-react";
+import { ArrowLeft, Compass, FileIcon, FolderIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FilePreview } from "@/components/cockpit/file-preview";
 import { FileWorkspace } from "@/components/cockpit/file-workspace";
@@ -143,6 +143,14 @@ export default function SessionDetailPage({
           ← Cockpit
         </Link>
         <div className="ml-auto flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            render={<Link href="/?tab=koordinator" />}
+          >
+            <Compass className="size-4" /> Schwarm
+          </Button>
           {fileFullscreen ? (
             <Button
               type="button"

@@ -118,7 +118,7 @@ export function FeaturePlanDialog({
         model: modelOf(it),
       }));
       const run = await dispatchFeature(plan.project_path, plan.feature_id, items, permissionMode, tokenSavings);
-      toast.success(`Feature-Ausführung ${run.feature_id} gestartet`);
+      toast.success(`Schwarm ${run.feature_id} gestartet`);
       onOpenChange(false);
       onDispatched(run.feature_id);
     } catch (e) {
@@ -133,7 +133,7 @@ export function FeaturePlanDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Feature-Verteilungsplan</DialogTitle>
+          <DialogTitle>Schwarm-Verteilungsplan</DialogTitle>
           <DialogDescription>
             Interne Arbeitspakete für{" "}
             <span className="font-mono">{featureId}</span> mit Rolle/Skill/Engine,
@@ -152,7 +152,7 @@ export function FeaturePlanDialog({
           </p>
         ) : !plan || plan.items.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            Keine internen Arbeitspakete ableitbar (Feature ohne technische
+            Keine internen Arbeitspakete ableitbar (Schwarm ohne technische
             Teilbereiche?).
           </p>
         ) : (

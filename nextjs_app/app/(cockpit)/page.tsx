@@ -15,6 +15,7 @@ import { NewSessionDialog } from "@/components/cockpit/new-session-dialog";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import Link from "next/link";
 import { SettingsIcon } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   BoardSkeleton,
@@ -28,6 +29,7 @@ import {
 import { countTerminal } from "@/lib/status";
 
 export default function CockpitPage() {
+  const searchParams = useSearchParams();
   const { sessions, initialLoading, error } = useSessions();
   const now = useNow();
   const terminalCount = countTerminal(sessions);
@@ -81,7 +83,10 @@ export default function CockpitPage() {
       ) : (
         // PROJ-18 (BUG-3-Fix): Tabs IMMER rendern — der „Werkzeuge"-Tab (iFrame/Launch)
         // ist auch ohne laufende Session erreichbar; der Empty-State lebt im Kacheln-Tab.
-        <Tabs defaultValue="kacheln" className="w-full">
+        <Tabs
+          defaultValue={searchParams.get("tab") === "koordinator" ? "koordinator" : "kacheln"}
+          className="w-full"
+        >
           <TabsList>
             <TabsTrigger value="kacheln">Kacheln</TabsTrigger>
             <TabsTrigger value="kanban">Kanban</TabsTrigger>

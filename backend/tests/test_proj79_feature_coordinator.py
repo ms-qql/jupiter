@@ -56,14 +56,20 @@ def test_feature_plan_derives_packages(tmp_path, monkeypatch):
     ]
     by_id = {p["package_id"]: p for p in plan["items"]}
     assert by_id["PROJ-101.1"]["required_proof"] == "architecture"
+    assert by_id["PROJ-101.1"]["engine"] == "codex"
+    assert by_id["PROJ-101.1"]["model"] == "gpt-5.6-terra"
     assert by_id["PROJ-101.2"]["skill"] == "abc-review-architecture"
     assert by_id["PROJ-101.2"]["model"] == "sonnet"
     assert by_id["PROJ-101.2"]["dependencies"] == ["PROJ-101.1"]
     assert by_id["PROJ-101.3"]["dependencies"] == ["PROJ-101.2"]
     assert by_id["PROJ-101.4"]["dependencies"] == ["PROJ-101.2"]
+    assert by_id["PROJ-101.3"]["engine"] == by_id["PROJ-101.4"]["engine"] == "opencode"
+    assert by_id["PROJ-101.3"]["model"] == by_id["PROJ-101.4"]["model"] == "opencode-go/hy3"
     assert set(by_id["PROJ-101.5"]["dependencies"]) == {"PROJ-101.3", "PROJ-101.4"}
     assert by_id["PROJ-101.5"]["required_proof"] == "qa"
     assert by_id["PROJ-101.3"]["write_scope"] == ["backend/"]
+    assert by_id["PROJ-101.6"]["dependencies"] == ["PROJ-101.5"]
+    assert by_id["PROJ-101.7"]["dependencies"] == ["PROJ-101.6"]
 
 
 def test_feature_plan_unknown_feature_raises(tmp_path, monkeypatch):

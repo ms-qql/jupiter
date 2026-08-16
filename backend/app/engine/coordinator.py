@@ -424,7 +424,7 @@ _ROLE_WRITE_SCOPE: dict[str, list[str]] = {
     "qa": ["backend/tests/", "nextjs_app/"],
     "document": ["docs/", "features/"],
 }
-# Paket-Ausführungsrang (architektur → backend/frontend parallel → qa → deploy → doc).
+# Paket-Ausführungsrang (Architektur → Backend/Frontend parallel → Rest seriell).
 _PACKAGE_RANK: dict[str, int] = {
     "architecture": 1,
     "review-architecture": 2,
@@ -433,6 +433,13 @@ _PACKAGE_RANK: dict[str, int] = {
     "qa": 4,
     "deploy": 5,
     "document": 6,
+}
+# Schwarm-Defaults weichen nur bei den drei ausdrücklich gewünschten Rollen vom
+# allgemeinen ABC-Phasenmodell ab.
+_SWARM_ENGINE_MODEL: dict[str, tuple[str, str]] = {
+    "architecture": ("codex", "gpt-5.6-terra"),
+    "backend": ("opencode", "opencode-go/hy3"),
+    "frontend": ("opencode", "opencode-go/hy3"),
 }
 # Paketstatus.
 PK_WAIT, PK_READY, PK_RUN, PK_DONE, PK_FAIL, PK_SKIP, PK_MANUAL = (
@@ -542,13 +549,16 @@ def build_feature_plan(project_path: str, feature_id: str) -> dict:
     by_phase: dict[str, dict] = {}
     for i, phase in enumerate(exec_order, start=1):
         role = PHASE_TO_ROLE.get(phase)
+        engine, model = _SWARM_ENGINE_MODEL.get(
+            phase, ("claude", abc_phases.model_for_phase(phase))
+        )
         pkg = {
             "package_id": f"PROJ-{num}.{i}",
             "title": f"{phase} — PROJ-{num}",
             "role": role,
             "skill": abc_phases.skill_for_phase(phase),
-            "engine": "claude",
-            "model": abc_phases.model_for_phase(phase),
+            "engine": engine,
+            "model": model,
             "order": _PACKAGE_RANK.get(phase, i),
             "dependencies": [],
             "blocked": False,
@@ -563,8 +573,8 @@ def build_feature_plan(project_path: str, feature_id: str) -> dict:
         }
         by_phase[phase] = pkg
 
-    # Abhängigkeiten: architektur zuerst; backend+frontend parallel danach; qa wartet
-    # auf beide; deploy/document warten auf qa.
+    # Nur Backend und Frontend dürfen parallel laufen. Alle übrigen Pakete bilden
+    # eine Kette: Architektur → Review → Backend/Frontend → QA → Deploy → Dokumentation.
     arch = by_phase.get("architecture")
     architecture_review = by_phase.get("review-architecture")
     backend = by_phase.get("backend")
@@ -581,8 +591,12 @@ def build_feature_plan(project_path: str, feature_id: str) -> dict:
                 pkg["dependencies"].append(backend["package_id"])
             if frontend:
                 pkg["dependencies"].append(frontend["package_id"])
-        if phase in ("deploy", "document") and qa:
+        if phase == "deploy" and qa:
             pkg["dependencies"].append(qa["package_id"])
+        if phase == "document":
+            predecessor = by_phase.get("deploy") or qa
+            if predecessor:
+                pkg["dependencies"].append(predecessor["package_id"])
 
     # Stabile Reihenfolge für den Plan-Dialog: Rang, dann Paket-Nummer.
     items = sorted(by_phase.values(), key=lambda p: (p["order"], p["package_id"]))

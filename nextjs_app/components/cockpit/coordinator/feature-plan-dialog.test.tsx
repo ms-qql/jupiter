@@ -17,6 +17,6 @@ describe("FeaturePlanDialog — PROJ-79", () => {
         onDispatched={() => {}}
       />,
     );
-    expect(html).not.toContain("Feature-Verteilungsplan");
+    expect(html).not.toContain("Schwarm-Verteilungsplan");
   });
 });

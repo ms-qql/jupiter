@@ -67,6 +67,10 @@ Die Ausführung darf weder still abbrechen noch unbemerkt hängen bleiben. Bei e
 ---
 <!-- Sections below are added by subsequent skills -->
 
+## Implementation Notes
+
+- 2026-08-16: Die sichtbare Bezeichnung der Feature-Ausführung lautet **Schwarm**. Nur Backend und Frontend laufen parallel; alle übrigen Arbeitspakete werden seriell eingeplant. Standardzuordnung: Architektur → Codex/Terra, Backend und Frontend → OpenCode/hy3.
+
 ## Tech Design (Solution Architect)
 **Erstellt:** 2026-08-16 · **Stack:** Next.js-Cockpit + FastAPI + vorhandener Session-Live-Index und Vault-Recovery · **Branch:** main
 

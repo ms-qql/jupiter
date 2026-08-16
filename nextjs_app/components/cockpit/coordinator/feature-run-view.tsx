@@ -84,7 +84,7 @@ export function FeatureRunView({
     try {
       const r = await setFeaturePaused(featureId, !run.paused);
       setRun(r);
-      toast.success(r.paused ? "Feature-Ausführung pausiert" : "Fortgesetzt");
+      toast.success(r.paused ? "Schwarm pausiert" : "Fortgesetzt");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Aktion fehlgeschlagen");
     } finally {
@@ -100,7 +100,7 @@ export function FeatureRunView({
       setRun(r);
       toast.success(
         action === "abort"
-          ? "Feature abgebrochen"
+          ? "Schwarm abgebrochen"
           : action === "manual"
             ? "Manuell übernommen"
             : "Erneut versucht",
@@ -117,7 +117,7 @@ export function FeatureRunView({
     setBusy(true);
     try {
       await deleteFeatureRun(coordinator.session_id);
-      toast.success("Feature-Ausführung gelöscht.");
+      toast.success("Schwarm gelöscht.");
       setDeleteOpen(false);
       onDeleted?.();
     } catch (e) {
@@ -140,10 +140,10 @@ export function FeatureRunView({
           className="font-medium hover:underline"
           title={coordinator.project_name ?? coordinator.session_id}
         >
-          🎯 Feature {featureId}
+          🐝 Schwarm {featureId}
         </Link>
         <Badge variant="secondary" className="text-[10px]">
-          Feature-Ausführung
+          Schwarm
         </Badge>
         <Badge variant="outline" className="text-[10px]">
           {meta.label}
@@ -199,7 +199,7 @@ export function FeatureRunView({
             </Button>
             <Button size="sm" variant="destructive" onClick={() => decide("abort")} disabled={busy}>
               <XCircle className="size-3.5" />
-              Feature abbrechen
+              Schwarm abbrechen
             </Button>
           </div>
         </div>
@@ -208,7 +208,7 @@ export function FeatureRunView({
       {/* Paketliste */}
       <div className="mt-3 flex flex-col gap-2 border-l-2 border-emerald-500/20 pl-3">
         {!run ? (
-          <p className="py-2 text-xs text-muted-foreground">Lade Feature-Ausführung …</p>
+          <p className="py-2 text-xs text-muted-foreground">Lade Schwarm …</p>
         ) : run.packages.length === 0 ? (
           <p className="py-2 text-xs text-muted-foreground">Noch keine Arbeitspakete.</p>
         ) : (
@@ -226,7 +226,7 @@ export function FeatureRunView({
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={(next) => !busy && setDeleteOpen(next)}
-        title="Feature-Ausführung löschen?"
+        title="Schwarm löschen?"
         description="Der Koordinator und alle Paket-Sessions werden gestoppt und aus dem Cockpit entfernt. Session-Logs im Vault bleiben erhalten."
         loading={busy}
         onConfirm={() => void removeRun()}

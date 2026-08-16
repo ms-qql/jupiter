@@ -106,7 +106,7 @@ export function CoordinatorPanel() {
           variant={mode === "feature" ? "default" : "ghost"}
           onClick={() => setMode("feature")}
         >
-          Feature
+          Schwarm
         </Button>
         <Button
           size="sm"
@@ -123,7 +123,7 @@ export function CoordinatorPanel() {
           <>
             <div className="flex items-center gap-2 text-sm font-medium">
               <Compass className="size-4 text-emerald-500" />
-              Feature-Ausführung starten
+              Schwarm starten
             </div>
             <p className="text-xs text-muted-foreground">
               Jupiter leitet aus der Spezifikation von{" "}
@@ -204,7 +204,7 @@ export function CoordinatorPanel() {
       {/* Laufende Flotten / Feature-Läufe */}
       {fleets.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
-          Keine aktive Flotte. Dispatche oben eine neue.
+          Kein aktiver Schwarm oder keine aktive Flotte. Starte oben einen neuen.
         </p>
       ) : (
         <div className="flex flex-col gap-4">
