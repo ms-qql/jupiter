@@ -34,6 +34,7 @@ import { useOrchestrationApps } from "./use-orchestration-apps";
 import { useMicroApps } from "./use-microapps";
 import { useMicroAppStatuses } from "./use-microapp-status";
 import { useNow, useSessions } from "./sessions-provider";
+import { useWorkspace } from "./workspace-provider";
 
 const RAIL_LIMIT = 10;
 
@@ -48,6 +49,7 @@ function sortForRail(sessions: Session[]): Session[] {
 export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
   const { sessions, initialLoading, error } = useSessions();
   const pathname = usePathname();
+  const { openIds, activeId } = useWorkspace();
   const now = useNow();
   const [showArchived, setShowArchived] = useState(false);
   const { visibleItems } = useSidebarPrefs();
@@ -235,7 +237,8 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
                     key={s.session_id}
                     session={s}
                     now={now}
-                    active={pathname === `/sessions/${s.session_id}`}
+                    active={activeId === s.session_id}
+                    secondOpen={openIds.length > 1 && openIds.includes(s.session_id) && activeId !== s.session_id}
                     onNavigate={onItemClick}
                   />
                 ))
@@ -263,7 +266,8 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
                         key={s.session_id}
                         session={s}
                         now={now}
-                        active={pathname === `/sessions/${s.session_id}`}
+                        active={activeId === s.session_id}
+                        secondOpen={openIds.length > 1 && openIds.includes(s.session_id) && activeId !== s.session_id}
                         onNavigate={onItemClick}
                       />
                     ))}
@@ -302,11 +306,13 @@ function RailItem({
   session,
   now,
   active,
+  secondOpen,
   onNavigate,
 }: {
   session: Session;
   now: number;
   active: boolean;
+  secondOpen: boolean;
   onNavigate?: () => void;
 }) {
   const meta = statusMeta(session.status);
@@ -316,9 +322,15 @@ function RailItem({
     <Link
       href={`/sessions/${session.session_id}`}
       onClick={onNavigate}
+      aria-current={active ? "true" : undefined}
+      title={secondOpen ? "Als zweite Ansicht geöffnet" : undefined}
       className={cn(
         "group flex items-center gap-2.5 rounded-md px-2 py-2 text-sm transition-colors",
-        active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
+        active
+          ? "bg-accent text-accent-foreground"
+          : secondOpen
+            ? "ring-1 ring-inset ring-accent/60 hover:bg-accent/50"
+            : "hover:bg-accent/50",
       )}
     >
       <Ampel color={meta.ampel} size="sm" className="shrink-0" />
