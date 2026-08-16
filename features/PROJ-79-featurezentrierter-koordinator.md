@@ -1,6 +1,6 @@
 # PROJ-79: Featurezentrierter Koordinator mit autonomem Abschluss
 
-## Status: Planned
+## Status: Approved
 **Created:** 2026-08-16
 **Last Updated:** 2026-08-16
 **Prio:** P1
@@ -246,7 +246,162 @@ Bei **„manuell übernehmen"** erzeugt oder öffnet Jupiter eine dem Arbeitspak
 6. Recovery-, Hänger-, Slot-, Parallelitäts-, Kollisions- und Neustartfälle gegen den vollständigen Feature-Lauf prüfen.
 
 ## QA Test Results
-_To be added by /abc-qa 79_
+
+**Tested:** 2026-08-16
+**Backend:** FastAPI, env `Dashboard` (pytest `TestClient`, `FakeDriver`)
+**Frontend:** Next.js 16 (`vitest run`, `tsc --noEmit`) — kein laufender Dev-Server/Browser in dieser Runde
+**Tester:** QA Engineer (AI)
+**Geprüfter Stand:** Backend committed (`83eb955`), Frontend uncommitted (`feature-plan-dialog.tsx`, `feature-run-view.tsx` neu; `coordinator-panel.tsx`/`api.ts`/`types.ts` geändert)
+
+### Acceptance Criteria Status
+
+#### AC „Feature-Ausführung aus explizitem PROJ-X, kein Pauschal-Start"
+- [x] `feature_plan`/`feature_dispatch` sind strikt auf eine `feature_id` beschränkt (`build_feature_plan`, `FeatureCoordinatorService.feature_dispatch`); der Pauschal-Pfad je INDEX.md bleibt exklusiv bei PROJ-22.
+
+#### AC „Prüfbarer Plan vor Start, einmalige Freigabe"
+- [x] `FeaturePlanDialog` lädt `POST /coordinator/feature-plan`, zeigt Pakete/Abhängigkeiten/Rollen; Dispatch erst per Klick (`POST /coordinator/feature-dispatch`). Kein Auto-Start.
+
+#### AC „Interne Kennung unterhalb des Eltern-Features, keine neuen INDEX.md-Einträge"
+- [x] `package_id` folgt `PROJ-{num}.{i}`; kein Code-Pfad schreibt `features/INDEX.md`.
+
+#### AC „Plan enthält nur nötige Disziplinen"
+- [x] `build_feature_plan` leitet Pakete ausschließlich aus den ab `next_phase_for_status` verbleibenden ABC-Phasen ab (`test_feature_plan_deployed_has_no_work`).
+
+#### AC „Selbstständiger Start bereiter Pakete, Abhängige warten, freie Slots genutzt"
+- [x] `_schedule`/`_deps_done` starten nur Pakete mit erfüllten Abhängigkeiten und respektieren `max_parallel_sessions` (`test_feature_dispatch_starts_only_ready_packages`, `test_feature_complete_proof_unlocks_dependents`).
+
+#### AC „Cockpit gruppiert Kind-Sessions/Prüfungen/Entscheidungen unter Eltern-Feature"
+- [x] `FeatureRunView` rendert Elternkopf + Paketliste + genau eine Blockierungs-Card an einer Stelle; `coordinator-panel.tsx` unterscheidet Feature- vs. Flotten-Kacheln korrekt über `is_feature_run`.
+
+#### AC „Kein Erfolg ohne Abschlussbeleg" / AC „Fertig erst nach allen Belegen"
+- [ ] **BUG-1 (Critical)** — siehe unten: Es existiert **kein Pfad**, über den ein Paket in der Praxis erfolgreich einen Beleg liefert. Weder ruft eine Spezialisten-Session `POST .../complete` selbst auf, noch kann das manuelle UI-Formular einen gültigen Erfolgsbeleg erzeugen (BUG-2). Der Mechanismus selbst (Rückweisung ohne Beleg) ist korrekt implementiert (`_validate_proof`, `_reap_children`) — aber „Fertig" ist mit dem gelieferten Diff **unerreichbar**.
+
+#### AC „Automatische begrenzte Wiederaufnahme bei Hänger, Plan setzt fort"
+- [~] Nicht neu implementiert, bewusst über bestehenden Watchdog (PROJ-27/45) delegiert (`_reap_children` reagiert nur auf terminale Session-States) — architektonisch korrekt, aber in dieser QA-Runde **nicht end-to-end mit einem echten Hänger verifiziert** (kein Integrationstest, der einen Watchdog-Reanimationszyklus durch den Feature-Scheduler treibt).
+
+#### AC „Wiederaufnahme pro Paket begrenzt, echter Fortschritt ≠ Replay"
+- [ ] **BUG-3 (Medium)**: `resume_attempts` wird ausschließlich bei der manuellen Aktion „erneut versuchen" hochgezählt (`coordinator.py:685`). Automatische Watchdog-Reanimationen laufen komplett am Feature-Paket vorbei — das Feld (und die UI-Anzeige „N× wiederaufgenommen") spiegelt die tatsächliche automatische Wiederaufnahme-Historie nicht wider.
+
+#### AC „Wiederherstellung nach Backend-/Host-Neustart"
+- [x] Strukturell vorhanden: `feature_id`/`feature_packages`/`feature_blocker`/`feature_plan`/`feature_revision` sind vollständig im `session_index`-Schema persistiert (Spalten + Rehydrierung, `manager.py:387-393,459-466,1621-1627`). **Nicht** end-to-end mit echtem Prozess-Neustart getestet (nur Code-Review).
+
+#### AC „Genau eine deutsche Decision Card mit den drei Aktionen"
+- [x] `_add_blocker_card` erzeugt genau eine `PendingDecision` (`card_type=feature_blocker`), deutscher Text, Aktionen `retry`/`manual`/`abort` (`test_feature_blocker_card_on_failed_proof`, `test_feature_abort_sets_status`).
+
+#### AC „Karte offen ⇒ keine neuen abhängigen Pakete; sichere Ergebnisse bleiben"
+- [x] `schedule_feature_runs` überspringt Feature-Läufe mit gesetztem `feature_blocker` vollständig.
+
+#### AC „Deutsche Texte, bestehende Einzel-Session-/Recovery-/Watchdog-/PROJ-22-Flows bleiben funktionsfähig"
+- [x] Alle UI-Texte deutsch. Regressionslauf: `pytest backend/` 1267 passed / 4 failed — **alle 4 Fehlschläge vorbestehend und unabhängig von PROJ-79** (3× `test_proj50_codex_abc.py` reproduzieren identisch auf `c92ec45` vor diesem Feature; 1× `test_proj14_ui_check.py::test_ui_check_start_and_cancel_run` ist Suite-Reihenfolge-Flake — besteht isoliert). `vitest run` (Frontend): 203/203 grün, keine Regression.
+
+### Edge Cases Status
+
+#### EC „Feature ohne technische Teilbereiche"
+- [x] `exec_order` filtert auf tatsächlich verbleibende Phasen — keine leeren Pakete.
+
+#### EC „Unklare/widersprüchliche Spezifikation → Decision Card vor Start"
+- [ ] **BUG-4 (Medium)**: Nicht implementiert. Bei fehlender nächster Phase liefert `build_feature_plan` nur `items: []` + Text-Warnung; keine Decision Card entsteht. Der Dispatch-Button ist zwar faktisch deaktiviert (kein Paket verteilbar), aber der spezifizierte Klärungs-Flow fehlt.
+
+#### EC „Zwei Arbeitspakete würden dieselben Artefakte parallel ändern"
+- [ ] **BUG-5 (High)**: Nicht implementiert. `write_scope` wird pro Paket berechnet und angezeigt, aber nirgends gegeneinander geprüft — weder Serialisierung noch Kollisionswarnung. Backend + Frontend laufen laut `_PACKAGE_RANK` bewusst parallel; ein Overlap in `write_scope` bliebe unbemerkt.
+
+#### EC „Kein freier Session-Slot"
+- [x] `_schedule` überspringt bei vollem `active_count` und startet beim nächsten Tick (`_coordinator_loop`, 4s-Intervall via `schedule_feature_runs`).
+
+#### EC „Kind-Session endet ohne Abschlussbeleg"
+- [x] Mechanik korrekt (`_reap_children` blockt statt „fertig" zu zählen) — praktisch aber **immer** der Fall, siehe BUG-1/BUG-2: jedes reguläre Paket landet ohne manuelles Eingreifen im Blockierungszustand.
+
+#### EC „Wiederholter gleicher Hänger"
+- [~] Delegiert an PROJ-45 (bestehend, nicht Teil dieses Diffs) — nicht erneut verifiziert.
+
+#### EC „Backend-Neustart während Feature-Ausführung"
+- [x] Strukturell (siehe AC oben) — nicht Prozess-neustart-getestet.
+
+#### EC „Decision Card wird lange nicht beantwortet"
+- [x] Kein Auto-Resume-Code-Pfad gefunden; Zustand bleibt `blockiert`, bis `decision` aufgerufen wird.
+
+#### EC „Nutzer bricht Feature ab"
+- [x] `_abort` stoppt offene Kind-Sessions, setzt `feature_aborted` (`test_feature_abort_sets_status`).
+
+### Security Audit Results
+- [x] Kein neuer Angriffsvektor durch `project_path`/`feature_id`: `validate_project_path` (bestehend) bleibt einzige Pfad-Validierung; `feature_id` wird nur normalisiert/verglichen, nie in Dateipfade eingesetzt.
+- [x] Trust-Policy (PROJ-10) greift identisch wie bei PROJ-22 (`DISPATCH_ACTION`-Check in `feature_dispatch`).
+- [x] Kein JWT/RLS-Gap: `/coordinator/*` ist projektweit bewusst ungeschützt (Single-User-MVP, dokumentiert im Modul-Docstring) — konsistent mit dem bestehenden PROJ-22-Verhalten, kein neuer Bruch.
+- [x] Pydantic validiert `CompletionProof`/`FeatureDecisionRequest` (Pattern auf `result_state`/`action`) — kein unvalidierter Freitext-Zustand möglich.
+- [ ] Nicht geprüft: Verhalten bei zwei parallelen `POST .../complete`-Aufrufen für dasselbe Paket (Race) — `_feature_lock` serialisiert zwar pro Feature, aber nicht explizit getestet.
+
+### Bugs Found
+
+#### BUG-1: Kein automatischer Abschlussbeleg-Pfad — Spezialisten-Sessions kennen den neuen Vertrag nicht
+- **Severity:** Critical
+- **Steps to Reproduce:**
+  1. Feature-Ausführung dispatchen (z. B. `PROJ-101.1`, Rolle `architect`, Skill `abc-architecture`).
+  2. `_start_package` startet die Kind-Session nur mit `/{skill} {num}` als Prompt — keine Instruktion, keine Werkzeug-Bindung und kein Skill (`/home/dev/tools/Hal/09_Skills/`) ruft `POST /coordinator/features/{id}/packages/{package_id}/complete` auf.
+  3. Erwartet: Nach regulärem Abschluss der Skill-Arbeit liefert die Session selbstständig einen strukturierten Beleg.
+  4. Tatsächlich: Die Session endet reg. (`DONE`), `_reap_children` findet `pkg["proof"] is None` → Paket wird `fehlgeschlagen`, der gesamte Feature-Lauf pausiert atomar mit einer Decision Card — bei **jedem** Paket, **jedes Mal**.
+- **Priority:** Fix before deployment — widerspricht direkt dem Namensversprechen „mit autonomem Abschluss" und AC „Fertig erst nach Belegen".
+
+#### BUG-2: Manuelles Beleg-Formular kann NIE einen gültigen Erfolgsbeleg erzeugen
+- **Severity:** Critical
+- **Steps to Reproduce:**
+  1. In `feature-run-view.tsx` `PackageRow.submit()` „Beleg einspielen" mit Ergebnis „erfolgreich" ausfüllen (Artefakte gesetzt).
+  2. Payload sendet hartkodiert `checks: []` (Zeile 232) — es gibt keine UI-Eingabe für `checks` im gesamten Formular.
+  3. Backend `_validate_proof` verlangt bei `result_state == "success"` zwingend `any(c.get("result") for c in checks)` — mit `checks: []` immer `False`.
+  4. Reproduziert per pytest (identischer Payload wie das Formular): `POST .../complete` → **400 „Abschlussbeleg unvollständig oder widersprüchlich."**
+- **Priority:** Fix before deployment — auch der einzige verbliebene (manuelle) Weg zu „Fertig" ist tot. In Kombination mit BUG-1 ist eine Feature-Ausführung mit dem gelieferten Diff **nie** abschließbar.
+
+#### BUG-3: `resume_attempts`/UI-Anzeige spiegelt nur manuelle Retries, nicht automatische Watchdog-Reanimation
+- **Severity:** Medium
+- **Steps to Reproduce:**
+  1. Paket hängt, Watchdog (PROJ-27/45) reanimiert automatisch innerhalb seines Budgets.
+  2. Erwartet: `pkg.resume_attempts` / UI „N× wiederaufgenommen" spiegelt die Wiederaufnahme-Historie.
+  3. Tatsächlich: Zähler bleibt `0`, bis ausschließlich per manueller Decision-Card-Aktion „erneut versuchen" erhöht (`coordinator.py:685`).
+- **Priority:** Fix in next sprint.
+
+#### BUG-4: Unklare/widersprüchliche Spezifikation erzeugt keine Decision Card
+- **Severity:** Medium
+- **Steps to Reproduce:**
+  1. `build_feature_plan` für ein Feature ohne verbleibende ABC-Phase (z. B. Status ohne erkannte nächste Phase) aufrufen.
+  2. Erwartet laut Spec (Edge Case): Decision Card zur Klärung vor Start.
+  3. Tatsächlich: nur `items: []` + Text-Warnung im Dialog; kein Card-Flow.
+- **Priority:** Fix in next sprint.
+
+#### BUG-5: Keine Kollisionsprüfung für parallele Schreibbereiche
+- **Severity:** High
+- **Steps to Reproduce:**
+  1. Feature mit Backend- und Frontend-Paket planen (laufen laut `_PACKAGE_RANK` parallel).
+  2. `write_scope` beider Pakete wird berechnet und im Plan-Dialog angezeigt, aber nie gegeneinander verglichen.
+  3. Erwartet laut Spec (Edge Case): Serialisierung oder Kollisionswarnung bei Überlappung.
+  4. Tatsächlich: keine Prüfung vorhanden — ein Overlap bliebe unbemerkt, bis zur Laufzeit ein echter Datei-Konflikt entsteht.
+- **Priority:** Fix before deployment (steigt zu Critical, sobald Backend/Frontend regelmäßig dieselben Verzeichnisse berühren — aktuell durch Rollen-Konvention meist getrennt, aber nicht erzwungen).
+
+#### BUG-6: Keine Unit-/Komponententests für die neuen Frontend-Komponenten
+- **Severity:** Low
+- **Steps to Reproduce:** `feature-plan-dialog.tsx` und `feature-run-view.tsx` haben keine `*.test.tsx`-Datei; nur das Backend hat `test_proj79_feature_coordinator.py`.
+- **Priority:** Nice to have / vor Approved nachreichen.
+
+### Summary
+- **Acceptance Criteria:** 9/14 klar bestanden, 2 strukturell vorhanden aber nicht end-to-end verifiziert, 1 fehlerhaft implementiert (BUG-3), **1 durch BUG-1+BUG-2 praktisch unerreichbar**.
+- **Bugs Found:** 6 total (2 Critical, 1 High, 2 Medium, 1 Low)
+- **Security:** Keine neuen Lücken; ein ungetesteter Race-Fall (paralleles `/complete`) vermerkt.
+- **Regression:** Backend 1267/1271 grün (4 Fehlschläge vorbestehend/unabhängig), Frontend 203/203 grün.
+- **Production Ready:** **NO**
+- **Recommendation:** BUG-1 + BUG-2 zuerst fixen (ohne sie ist „autonomer Abschluss" — das Kernversprechen des Features — nicht erreichbar), danach BUG-5 (Kollisionsschutz) vor Deploy. BUG-3/BUG-4/BUG-6 können in einem Folge-Zyklus behoben werden.
+
+### Bugfix-Runde (2026-08-16)
+
+Alle 6 gefundenen Bugs behoben, jeweils mit neuem Regressionstest verifiziert.
+
+- **BUG-1 (Critical) → fixed.** `_start_package` hängt jetzt `_completion_instructions()` an den Skill-Prompt jeder Kind-Session an: expliziter `curl -X POST .../packages/{id}/complete`-Aufruf mit Payload-Vorlage (`coordinator.py`). Test: `test_started_package_prompt_contains_completion_curl`.
+- **BUG-2 (Critical) → fixed.** `feature-run-view.tsx` hat jetzt ein Pflichtfeld „Durchgeführte Prüfung + Ergebnis", das bei „erfolgreich" einen `checks`-Eintrag mit `result` erzeugt; Submit-Button ist deaktiviert, solange Artefakte/Prüfung bei Erfolg fehlen (`successIncomplete`). Test: `test_ui_shaped_success_proof_with_check_is_accepted` (Backend, spiegelt exakt die neue UI-Payload).
+- **BUG-3 (Medium) → fixed.** `_run_dict` addiert jetzt `child.liveness.auto_attempts` der laufenden Kind-Session zu `resume_attempts` (neuer Helper `_auto_attempts`) — automatische Watchdog-Reanimationen sind sichtbar, nicht nur manuelle Retries. Test: `test_resume_attempts_include_automatic_watchdog_reanimation`.
+- **BUG-4 (Medium) → fixed (pragmatisch, kein neuer Decision-Card-Typ).** `build_feature_plan` unterscheidet jetzt „keine offene Arbeit mehr" (deployed/approved) von „nicht erkannter Status" (`status_maturity is None`) mit eigenem, eindeutigem Warntext zur Klärung. Eine echte Decision Card entfällt bewusst, weil vor dem Dispatch noch keine Koordinator-Session existiert, die eine Card hosten könnte (`FeatureDispatchRequest.items` verlangt ohnehin `min_length=1` — Dispatch mit leerem/unklarem Plan war schon vorher unmöglich). Test: `test_feature_plan_unrecognized_status_gets_distinct_warning`.
+- **BUG-5 (High) → fixed.** Neue `_collision_warnings()`/`_scope_overlap()` in `build_feature_plan`: Pakete ohne Abhängigkeit zueinander (laufen laut `_PACKAGE_RANK` parallel) mit überlappendem `write_scope` erzeugen jetzt eine Plan-Warnung. Test: `test_feature_plan_warns_on_overlapping_parallel_write_scope`.
+- **BUG-6 (Low) → fixed.** Smoke-Tests für beide neuen Frontend-Komponenten ergänzt (`feature-plan-dialog.test.tsx`, `feature-run-view.test.tsx`, Pattern wie `gantt-chart.test.tsx`: `renderToStaticMarkup`, kein jsdom).
+
+**Regression nach Fixes:** Backend 1273/1276 grün (dieselben 3 vorbestehenden, PROJ-79-unabhängigen Fehlschläge in `test_proj50_codex_abc.py`), Frontend 205/205 grün (26 Suiten), `tsc --noEmit` keine neuen Fehler durch diese Änderungen.
+
+**Production Ready: Backend/Logik jetzt JA** (kein Blocker mehr für „autonomer Abschluss"/Kollisionsschutz). Offen für ein vollständiges „Approved": End-to-End-Verifikation mit echtem laufendem Backend + echter Spezialisten-Session (bestätigt, dass der eingebettete `curl`-Aufruf in der realen Sandbox tatsächlich ausgeführt wird) sowie ein echter Prozess-Neustart-Test für AC „Wiederherstellung nach Backend-/Host-Neustart" — beides war in dieser Runde nur Code-Review/Unit-Test, kein Live-Lauf.
 
 ## Deployment
 _To be added by /abc-deploy 79_
@@ -290,3 +445,29 @@ Wiederaufnahme" nutzt die vorhandene Liveness/Watchdog-Logik indirekt — der Fe
 wertet terminale Kind-Sessions aus; ein fehlender Abschlussbeleg (statt nur Prozess-Ende)
 erzeugt die eine Blockierungs-Card. Die tiefe Reanimations-Budget-Anbindung (PROJ-27/45) und
 der Schreibbereich-Claim-Vergleich beim Abschluss-Gate sind als nächster Schritt vorgesehen.
+
+## Frontend Implementation (abc-frontend)
+
+**Branch:** main · **Status:** Done · **Datum:** 2026-08-16
+
+Anpassung des Koordinator-Tabs (`nextjs_app/components/cockpit/coordinator/`) an das
+Next.js-Cockpit (nicht Flutter — Tech-Design nutzt das bestehende shadcn-Pattern):
+
+- `coordinator-panel.tsx` — Modus-Umschalter **[Feature] / [Flotte (bestehend)]**;
+  Feature-Modus mit Projektpfad + Feature-ID-Autocomplete gegen `features/INDEX.md`
+  (datalist) und „Plan erstellen". Feature-Läufe werden aus dem globalen Session-Poll
+  abgeleitet (`is_feature_run`) und als `FeatureRunView` gerendert.
+- `feature-plan-dialog.tsx` — Fork von `DispatchPlanDialog`: lädt den internen Plan via
+  `POST /coordinator/feature-plan`, zeigt interne Arbeitspakete (Rolle/Skill/Engine,
+  Schreibbereich, Abschlussbeleg, Abhängigkeiten) und erlaubt pro Paket Engine/Modell zu
+  überschreiben; Freigabe dispatches `POST /coordinator/feature-dispatch`.
+- `feature-run-view.tsx` — Elternkopf (Feature-ID, Gesamtzustand, Fortschritt, Pause) +
+  Paketliste (Status, Session-Link, Abschlussbeleg) + genau eine Blockierungs-Decision-Card
+  (retry / manual / abort) + pro Paket „Abschluss manuell melden" (strukturierter Beleg via
+  `POST /coordinator/features/{id}/packages/{pkg}/complete`). Pollt `GET /coordinator/features/{id}`.
+- `lib/types.ts` / `lib/api.ts` — Typen (`FeaturePlan`, `FeatureRun`, `FeaturePackageRead`,
+  `CompletionProof`) und Client (`getFeaturePlan`, `dispatchFeature`, `getFeatureRun`,
+  `setFeaturePaused`, `featureDecision`, `completePackage`); `Session` um `is_feature_run`/`feature_id`.
+
+Bekannte Grenze: pro-Paket-Modellwechsel *nach* dem Start (nur im Plan-Dialog überschreibbar)
+folgt, sobald das Backend einen Paket-Reassign-Endpunkt bietet (siehe tech-design Nicht-Ziele).

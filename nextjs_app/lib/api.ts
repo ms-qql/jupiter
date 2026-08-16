@@ -115,6 +115,10 @@ import type {
   CoordinatorPlan,
   CoordinatorPlanItem,
   CoordinatorFleet,
+  FeaturePlan,
+  FeaturePlanItem,
+  FeatureRun,
+  CompletionProof,
   TextFileRead,
   TextFileWrite,
 } from "./types";
@@ -1703,6 +1707,79 @@ export function setCoordinatorContract(
     method: "POST",
     body: JSON.stringify({ body, title: title ?? null }),
   });
+}
+
+// --- PROJ-79: Featurezentrierter Koordinator -------------------------------
+
+/** Internen Verteilungsplan für EIN Feature PROJ-X erzeugen — startet NICHTS
+ *  (Human-in-the-Loop). */
+export function getFeaturePlan(
+  projectPath: string,
+  featureId: string,
+  signal?: AbortSignal,
+): Promise<FeaturePlan> {
+  return request<FeaturePlan>("/coordinator/feature-plan", {
+    method: "POST",
+    body: JSON.stringify({ project_path: projectPath, feature_id: featureId }),
+    signal,
+  });
+}
+
+/** Freigegebenen Feature-Plan dispatchen → Feature-Ausführung (Koordinator + Pakete). */
+export function dispatchFeature(
+  projectPath: string,
+  featureId: string,
+  items: FeaturePlanItem[],
+): Promise<FeatureRun> {
+  return request<FeatureRun>("/coordinator/feature-dispatch", {
+    method: "POST",
+    body: JSON.stringify({ project_path: projectPath, feature_id: featureId, items }),
+  });
+}
+
+/** Gesamtsicht einer Feature-Ausführung (pollbar fürs Cockpit). */
+export function getFeatureRun(
+  featureId: string,
+  signal?: AbortSignal,
+): Promise<FeatureRun> {
+  return request<FeatureRun>(`/coordinator/features/${encodeURIComponent(featureId)}`, {
+    signal,
+  });
+}
+
+/** Feature-Ausführung pausieren/fortsetzen. */
+export function setFeaturePaused(
+  featureId: string,
+  paused: boolean,
+): Promise<FeatureRun> {
+  return request<FeatureRun>(
+    `/coordinator/features/${encodeURIComponent(featureId)}/pause`,
+    { method: "POST", body: JSON.stringify({ paused }) },
+  );
+}
+
+/** Blockierungs-Entscheidung: „erneut versuchen" / „manuell übernehmen" / „Feature abbrechen". */
+export function featureDecision(
+  featureId: string,
+  action: "retry" | "manual" | "abort",
+  packageId?: string,
+): Promise<FeatureRun> {
+  return request<FeatureRun>(
+    `/coordinator/features/${encodeURIComponent(featureId)}/decision`,
+    { method: "POST", body: JSON.stringify({ action, package_id: packageId ?? null }) },
+  );
+}
+
+/** Strukturierten Abschlussbeleg einer manuell übernommenen Arbeit einspielen. */
+export function completePackage(
+  featureId: string,
+  packageId: string,
+  proof: CompletionProof,
+): Promise<FeatureRun> {
+  return request<FeatureRun>(
+    `/coordinator/features/${encodeURIComponent(featureId)}/packages/${encodeURIComponent(packageId)}/complete`,
+    { method: "POST", body: JSON.stringify({ ...proof, package_id: packageId }) },
+  );
 }
 
 // --- PROJ-26: Marktplatz/Registry ------------------------------------------

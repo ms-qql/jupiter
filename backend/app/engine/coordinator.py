@@ -23,6 +23,7 @@ import uuid
 from datetime import datetime, timezone
 
 from . import abc_phases
+from ..config import settings
 from .launcher import parse_index_features
 from .manager import SessionLimitError, SessionManager, SessionRuntime, validate_project_path
 from .policy import DENY, policy_store
@@ -458,6 +459,28 @@ def _norm_feature_id(feature_id: str) -> str:
     return fid
 
 
+def _completion_instructions(num: str, pkg: dict) -> str:
+    """QA-BUG-1-Fix: Ohne diese Instruktion kennt die Spezialisten-Session den
+    PROJ-79-Abschlussbeleg-Vertrag nicht und die Session endet regulär, ohne dass der
+    Scheduler das Paket je als erfolgreich zählt. Ruft am Ende genau einen Bash-`curl`
+    gegen den lokalen, unauthentifizierten `/coordinator/*`-Endpunkt (Single-User-MVP,
+    kein neuer Agenten-Treiber)."""
+    url = f"{settings.hook_self_url}/coordinator/features/{num}/packages/{pkg['package_id']}/complete"
+    return (
+        "WICHTIG (PROJ-79 Abschlussbeleg): Dieses Arbeitspaket gilt erst als erledigt, "
+        "wenn du nach Abschluss deiner Aufgabe folgenden Beleg einspielst — ohne ihn "
+        "bleibt das Paket offen und die gesamte Feature-Ausführung pausiert:\n\n"
+        f"curl -sS -X POST '{url}' -H 'Content-Type: application/json' -d '{{\n"
+        '  "result_state": "success",\n'
+        '  "artifacts": ["<geänderte Datei(en), mind. 1>"],\n'
+        '  "checks": [{"name": "<durchgeführte Prüfung>", "result": "ok"}]\n'
+        "}'\n\n"
+        'Bei Fehlschlag "result_state": "failed" setzen und "open_limitations" mit der '
+        'Ursache füllen (dann sind "artifacts"/"checks" nicht Pflicht). Bei "success" '
+        "sind artifacts und checks (mind. je 1 Eintrag) Pflicht."
+    )
+
+
 def build_feature_plan(project_path: str, feature_id: str) -> dict:
     """Interner Verteilungsplan für EIN Feature ``PROJ-X`` (read-only, kein Dispatch).
 
@@ -487,9 +510,21 @@ def build_feature_plan(project_path: str, feature_id: str) -> dict:
 
     start_phase = abc_phases.next_phase_for_status(feature["status"])
     if start_phase is None:
-        warnings.append(
-            f"PROJ-{num} hat Status „{feature['status']}” — keine offene Arbeit mehr."
-        )
+        # QA-BUG-4-Fix: „keine offene Arbeit" (deployed/approved) und ein nicht
+        # erkannter Status sahen bisher identisch aus — Letzteres ist eine unklare
+        # Spezifikation (Edge Case), keine fertige Arbeit. Keine Pakete entstehen in
+        # beiden Fällen (Dispatch bleibt ohnehin leer/blockiert), aber die Warnung muss
+        # den Nutzer eindeutig zur Klärung auffordern statt „fertig" zu suggerieren.
+        if abc_phases.status_maturity(feature["status"]) is None:
+            warnings.append(
+                f"PROJ-{num} hat einen nicht erkannten Status „{feature['status']}” — "
+                "Spezifikation klären, bevor eine Zerlegung geraten wird. Keine "
+                "Arbeitspakete werden vorgeschlagen."
+            )
+        else:
+            warnings.append(
+                f"PROJ-{num} hat Status „{feature['status']}” — keine offene Arbeit mehr."
+            )
         phases: list[str] = []
     else:
         idx = abc_phases.ABC_PHASES.index(start_phase)
@@ -545,6 +580,7 @@ def build_feature_plan(project_path: str, feature_id: str) -> dict:
     items = sorted(by_phase.values(), key=lambda p: (p["order"], p["package_id"]))
     for p in items:
         p["order"] = items.index(p) + 1
+    warnings.extend(_collision_warnings(items))
     return {
         "project_path": real,
         "feature_id": num,
@@ -552,6 +588,34 @@ def build_feature_plan(project_path: str, feature_id: str) -> dict:
         "items": items,
         "warnings": warnings,
     }
+
+
+def _collision_warnings(items: list[dict]) -> list[str]:
+    """QA-BUG-5-Fix: Zwei Pakete ohne Abhängigkeit zueinander (laufen laut
+    ``_PACKAGE_RANK`` also potenziell parallel) mit überlappendem ``write_scope`` vor
+    dem Start als Warnung melden statt die Kollision unbemerkt zu lassen (Edge Case
+    „Zwei Arbeitspakete würden dieselben Artefakte parallel ändern")."""
+    warnings: list[str] = []
+    for i, a in enumerate(items):
+        for b in items[i + 1:]:
+            if a["package_id"] in b["dependencies"] or b["package_id"] in a["dependencies"]:
+                continue  # abhängig → ohnehin serialisiert
+            overlap = _scope_overlap(a["write_scope"], b["write_scope"])
+            if overlap:
+                warnings.append(
+                    f"Kollision: {a['package_id']} und {b['package_id']} könnten "
+                    f"denselben Bereich ändern ({overlap}) — laufen ohne Abhängigkeit "
+                    "potenziell parallel."
+                )
+    return warnings
+
+
+def _scope_overlap(a: list[str], b: list[str]) -> str | None:
+    for pa in a:
+        for pb in b:
+            if pa == pb or pa.startswith(pb) or pb.startswith(pa):
+                return pa if len(pa) >= len(pb) else pb
+    return None
 
 
 class FeatureNotFoundError(Exception):
@@ -748,7 +812,8 @@ class FeatureCoordinatorService:
         self, coordinator: SessionRuntime, real: str, label: str, pkg: dict, num: str
     ) -> None:
         skill = pkg.get("skill")
-        prompt = f"/{skill} {num}" if skill else f"Bearbeite Arbeitspaket {pkg['package_id']}."
+        base = f"/{skill} {num}" if skill else f"Bearbeite Arbeitspaket {pkg['package_id']}."
+        prompt = base + "\n\n" + _completion_instructions(num, pkg)
         child = await self._manager.create(
             project_path=real,
             initial_prompt=prompt,
@@ -879,6 +944,17 @@ class FeatureCoordinatorService:
                 return p
         return None
 
+    def _auto_attempts(self, pkg: dict) -> int:
+        """Automatische Watchdog-Reanimationen (PROJ-27/45) der Kind-Session, falls
+        noch bekannt (0 nach Session-Ende/Restart — nur zusätzliche Anzeige)."""
+        sid = pkg.get("session_id")
+        if not sid:
+            return 0
+        child = self._manager.get(sid)
+        if child is None:
+            return 0
+        return child.liveness.auto_attempts
+
     def _run_dict(self, coordinator: SessionRuntime) -> dict:
         packages = [
             {
@@ -893,7 +969,10 @@ class FeatureCoordinatorService:
                 "write_scope": list(p.get("write_scope", [])),
                 "required_proof": p.get("required_proof", "other"),
                 "session_id": p.get("session_id"),
-                "resume_attempts": p.get("resume_attempts", 0),
+                # QA-BUG-3-Fix: manuelle „erneut versuchen"-Retries + automatische
+                # Watchdog-Reanimationen der zugehörigen Kind-Session (sonst zeigt das
+                # Feld nur manuelle Eingriffe, obwohl PROJ-27/45 meist automatisch greift).
+                "resume_attempts": p.get("resume_attempts", 0) + self._auto_attempts(p),
                 "last_safe_state": p.get("last_safe_state"),
                 "proof": p.get("proof"),
             }

@@ -194,3 +194,78 @@ def test_feature_blocker_card_on_failed_proof(client, tmp_path):
     assert r.status_code == 200
     assert r.json()["blocker"] is None
     assert r.json()["status"] in ("läuft", "planung")
+
+
+# --- QA-Bugfixes -------------------------------------------------------------
+
+
+def test_started_package_prompt_contains_completion_curl(client, tmp_path):
+    """BUG-1: Kind-Session muss den Abschlussbeleg-Vertrag im Prompt kennen — sonst
+    endet sie regulär, ohne dass der Scheduler sie je als erfolgreich zählt."""
+    proj = _write_project(tmp_path)
+    run = _dispatch(client, proj)
+    pkg = next(p for p in run["packages"] if p["package_id"] == "PROJ-101.1")
+    runtime = client.app.state.manager.get(pkg["session_id"])
+    prompt = runtime.driver._spec.initial_prompt
+    assert "/coordinator/features/101/packages/PROJ-101.1/complete" in prompt
+    assert "result_state" in prompt
+
+
+def test_ui_shaped_success_proof_with_check_is_accepted(client, tmp_path):
+    """BUG-2: Payload wie das gefixte Formular (ein Check mit Ergebnis) muss
+    akzeptiert werden — vorher scheiterte selbst das UI-eigene Formular (checks=[])."""
+    proj = _write_project(tmp_path)
+    run = _dispatch(client, proj)
+    fid = run["feature_id"]
+    proof = {
+        "package_id": "PROJ-101.1", "role": "architect", "result_state": "success",
+        "artifacts": ["features/PROJ-101-x.md"],
+        "checks": [{"name": "Abschlussprüfung", "result": "manuell verifiziert"}],
+        "open_limitations": None,
+    }
+    r = client.post(f"/coordinator/features/{fid}/packages/PROJ-101.1/complete", json=proof)
+    assert r.status_code == 200, r.text
+    by_id = {p["package_id"]: p for p in r.json()["packages"]}
+    assert by_id["PROJ-101.1"]["status"] == "erfolgreich"
+
+
+def test_resume_attempts_include_automatic_watchdog_reanimation(client, tmp_path):
+    """BUG-3: automatische Watchdog-Reanimation (PROJ-27/45) muss in resume_attempts
+    sichtbar sein, nicht nur manuelle „erneut versuchen"-Klicks."""
+    proj = _write_project(tmp_path)
+    run = _dispatch(client, proj)
+    pkg = next(p for p in run["packages"] if p["package_id"] == "PROJ-101.1")
+    runtime = client.app.state.manager.get(pkg["session_id"])
+    runtime.liveness.auto_attempts = 2  # simuliert zwei automatische Reanimationen
+    fid = run["feature_id"]
+    r = client.get(f"/coordinator/features/{fid}")
+    by_id = {p["package_id"]: p for p in r.json()["packages"]}
+    assert by_id["PROJ-101.1"]["resume_attempts"] == 2
+
+
+def test_feature_plan_warns_on_overlapping_parallel_write_scope(tmp_path, monkeypatch):
+    """BUG-5: Backend + Frontend laufen ohne Abhängigkeit zueinander parallel — bei
+    überlappendem write_scope muss der Plan warnen statt die Kollision zu verschweigen."""
+    monkeypatch.setattr(settings, "allowed_roots", [str(tmp_path)])
+    proj = _write_project(tmp_path)
+    plan = build_feature_plan(proj, "PROJ-101")
+    by_id = {p["package_id"]: p for p in plan["items"]}
+    backend_pkg = next(p for p in by_id.values() if p["role"] == "backend")
+    frontend_pkg = next(p for p in by_id.values() if p["role"] == "frontend")
+    backend_pkg["write_scope"] = ["shared/"]
+    frontend_pkg["write_scope"] = ["shared/x.py"]
+    from app.engine.coordinator import _collision_warnings
+    warnings = _collision_warnings(list(by_id.values()))
+    assert any(backend_pkg["package_id"] in w and frontend_pkg["package_id"] in w for w in warnings)
+
+
+def test_feature_plan_unrecognized_status_gets_distinct_warning(tmp_path, monkeypatch):
+    """BUG-4: ein nicht erkannter Status darf nicht wie „fertig" (deployed) aussehen —
+    unklare Spezifikation braucht eine eindeutige Klärungs-Warnung."""
+    monkeypatch.setattr(settings, "allowed_roots", [str(tmp_path)])
+    proj = _write_project(
+        tmp_path, _HEADER + "| PROJ-101 | X | P1 | Frobnicated | — | [Spec](a.md) |\n",
+    )
+    plan = build_feature_plan(proj, "PROJ-101")
+    assert plan["items"] == []
+    assert any("nicht erkannten Status" in w for w in plan["warnings"])

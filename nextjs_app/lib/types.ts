@@ -179,6 +179,11 @@ export interface Session {
   child_session_ids: string[];
   /** PROJ-22: Vault-Pointer auf das API-Vertrag-Artefakt (kein Volltext-Duplikat). */
   contract_pointer: string | null;
+  /** PROJ-79: True, wenn diese Koordinator-Session eine Feature-Ausführung leitet
+   *  (interne Arbeitspakete statt allgemeiner Ticket-Flotte). */
+  is_feature_run?: boolean;
+  /** PROJ-79: Eltern-Feature dieser Session („PROJ-101"), falls is_feature_run. */
+  feature_id?: string | null;
   /** PROJ-22 (M3): am Koordinator eingereihte, noch nicht gestartete Tickets (IDs) —
    *  rücken automatisch nach, sobald ein Engine-Slot frei wird. Optional (additiv). */
   queued_ticket_ids?: string[];
@@ -1463,6 +1468,81 @@ export interface CoordinatorFleet {
   contract_pointer: string | null;
   /** M3: bei vollem Engine-Slot eingereihte Tickets (IDs) — rücken automatisch nach. */
   queued: string[];
+}
+
+// --- PROJ-79: Featurezentrierter Koordinator ---------------------------------
+
+/** Ein internes Arbeitspaket eines Feature-Laufs (nur innerhalb des Eltern-Features
+ *  gültig, z. B. „PROJ-101.2"). Spiegelt backend FeaturePlanItem. */
+export interface FeaturePlanItem {
+  package_id: string; // „PROJ-101.2"
+  title: string;
+  role: string | null;
+  skill: string | null;
+  engine: string;
+  model: string | null;
+  order: number;
+  dependencies: string[]; // package_ids
+  blocked: boolean;
+  blocked_reason: string | null;
+  /** Betroffene Dateien/Verzeichnisse — Schreibbereich-Claim (Kollisionsschutz). */
+  write_scope: string[];
+  /** Erforderlicher Abschlussbeleg-Typ: backend|frontend|qa|architecture|other. */
+  required_proof: string;
+}
+
+/** Antwort von POST /coordinator/feature-plan — interner Verteilungsplan VOR dem
+ *  Dispatch (Human-in-the-Loop). */
+export interface FeaturePlan {
+  project_path: string;
+  feature_id: string;
+  feature_title: string;
+  items: FeaturePlanItem[];
+  warnings: string[];
+}
+
+/** Strukturierter Abschlussbeleg eines Arbeitspakets (PROJ-79). */
+export interface CompletionProof {
+  package_id: string | null;
+  role: string | null;
+  result_state: "success" | "failed";
+  artifacts: string[];
+  checks: Record<string, unknown>[];
+  open_limitations: string | null;
+}
+
+/** Live-Zustand eines internen Arbeitspakets (Feature-Ausführungs-Ansicht). */
+export interface FeaturePackageRead {
+  package_id: string;
+  title: string;
+  role: string | null;
+  skill: string | null;
+  engine: string;
+  model: string | null;
+  status: "wartet" | "bereit" | "läuft" | "erfolgreich" | "fehlgeschlagen" | "übersprungen";
+  dependencies: string[];
+  write_scope: string[];
+  required_proof: string;
+  session_id: string | null;
+  resume_attempts: number;
+  last_safe_state: string | null;
+  proof: CompletionProof | null;
+}
+
+/** Gesamtsicht einer Feature-Ausführung (Elternkopf + Pakete + Blockierung). */
+export interface FeatureRun {
+  feature_id: string;
+  status: "planung" | "läuft" | "pausiert" | "blockiert" | "fertig" | "abgebrochen";
+  coordinator: Session;
+  packages: FeaturePackageRead[];
+  paused: boolean;
+  revision: number;
+  /** Genau eine offene Blockierungs-Decision-Card (oder null). */
+  blocker: {
+    package_id: string;
+    last_safe_state: string | null;
+    cause: string;
+  } | null;
 }
 
 // --- PROJ-25: Auth (JWT) + owner-Scope -------------------------------------
