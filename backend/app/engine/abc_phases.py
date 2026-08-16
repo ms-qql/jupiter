@@ -15,6 +15,7 @@ ABC_PHASES: tuple[str, ...] = (
     "brainstorm",
     "requirements",
     "architecture",
+    "review-architecture",
     "frontend",
     "backend",
     "qa",
@@ -32,6 +33,7 @@ SKILL_TO_PHASE: dict[str, str] = {
     "abc-brainstorm": "brainstorm",
     "abc-requirements": "requirements",
     "abc-architecture": "architecture",
+    "abc-review-architecture": "review-architecture",
     "abc-frontend": "frontend",
     "abc-backend": "backend",
     "abc-qa": "qa",
@@ -55,6 +57,7 @@ PHASE_TO_MODEL: dict[str, str] = {
     "brainstorm": "opus",
     "requirements": "opus",
     "architecture": "opus",
+    "review-architecture": "sonnet",
     "frontend": "sonnet",
     "backend": "sonnet",
     "qa": "sonnet",
@@ -66,7 +69,7 @@ PHASE_TO_MODEL: dict[str, str] = {
 # abc-Phase. „Deployed" → None (fertig). Status-Werte case-/whitespace-normalisiert.
 STATUS_TO_NEXT_PHASE: dict[str, str | None] = {
     "planned": "architecture",
-    "architected": "frontend",
+    "architected": "review-architecture",
     "in progress": "backend",
     "in review": "qa",
     "approved": "deploy",

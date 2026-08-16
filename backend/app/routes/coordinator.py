@@ -8,7 +8,9 @@ stehen vor der dynamischen ``/{coordinator_id}``-Gruppe.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from ..deps import CurrentUser, get_current_user
 
 from ..engine.coordinator import (
     CoordinatorNotFoundError,
@@ -144,7 +146,11 @@ async def coordinator_feature_dispatch(payload: FeatureDispatchRequest, request:
     items = [it.model_dump() for it in payload.items]
     try:
         return await _feature_service(request).feature_dispatch(
-            payload.project_path, payload.feature_id, items
+            payload.project_path,
+            payload.feature_id,
+            items,
+            permission_mode=payload.permission_mode,
+            token_savings=payload.token_savings,
         )
     except DispatchDeniedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -160,6 +166,19 @@ async def coordinator_feature_dispatch(payload: FeatureDispatchRequest, request:
 async def coordinator_feature_run(feature_id: str, request: Request) -> dict:
     try:
         return _feature_service(request).feature_run(feature_id)
+    except FeatureNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/features/runs/{coordinator_id}", status_code=204, response_model=None)
+async def coordinator_feature_delete(
+    coordinator_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> None:
+    runtime = request.app.state.manager.get(coordinator_id)
+    if runtime is None or runtime.state.owner != user.user_id:
+        raise HTTPException(status_code=404, detail="Feature-Ausführung nicht gefunden.")
+    try:
+        await _feature_service(request).feature_delete(coordinator_id)
     except FeatureNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

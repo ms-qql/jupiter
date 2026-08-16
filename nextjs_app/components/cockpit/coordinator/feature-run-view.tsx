@@ -6,7 +6,7 @@
 // Session-Poll); Mutationen rufen /coordinator/features/{id}/*.
 
 import { useEffect, useState } from "react";
-import { Pause, Play, CheckCircle2, XCircle, RotateCcw, Hand } from "lucide-react";
+import { Pause, Play, CheckCircle2, XCircle, RotateCcw, Hand, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
@@ -20,10 +20,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ApiError, completePackage, featureDecision, getFeatureRun, setFeaturePaused } from "@/lib/api";
+import { ApiError, completePackage, deleteFeatureRun, featureDecision, getFeatureRun, setFeaturePaused } from "@/lib/api";
 import { statusMeta } from "@/lib/status";
 import type { FeaturePackageRead, FeatureRun } from "@/lib/types";
 import { Ampel } from "../ampel";
+import { ConfirmDialog } from "../confirm-dialog";
 
 /** Gesamtzustand der Feature-Ausführung → Ampelfarbe. */
 function runMeta(status: FeatureRun["status"]): { ampel: "green" | "amber" | "red"; label: string } {
@@ -46,14 +47,17 @@ function runMeta(status: FeatureRun["status"]): { ampel: "green" | "amber" | "re
 export function FeatureRunView({
   featureId,
   coordinator,
+  onDeleted,
 }: {
   featureId: string;
   /** Die Koordinator-Session aus dem globalen Poll (für Name/Link). */
   coordinator: FeatureRun["coordinator"];
+  onDeleted?: () => void;
 }) {
   const [run, setRun] = useState<FeatureRun | null>(null);
   const [busy, setBusy] = useState(false);
   const [completeFor, setCompleteFor] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   useEffect(() => {
     if (!featureId) return;
@@ -108,6 +112,21 @@ export function FeatureRunView({
     }
   }
 
+  async function removeRun() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await deleteFeatureRun(coordinator.session_id);
+      toast.success("Feature-Ausführung gelöscht.");
+      setDeleteOpen(false);
+      onDeleted?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Löschen fehlgeschlagen");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const meta = run ? runMeta(run.status) : { ampel: "amber" as const, label: "…" };
   const done = run?.packages.filter((p) => p.status === "erfolgreich").length ?? 0;
   const total = run?.packages.length ?? 0;
@@ -148,6 +167,10 @@ export function FeatureRunView({
           <Button variant="outline" size="sm" onClick={togglePause} disabled={busy || (run?.status === "fertig" || run?.status === "abgebrochen")}>
             {run?.paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
             {run?.paused ? "Fortsetzen" : "Pausieren"}
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)} disabled={busy}>
+            <Trash2 className="size-3.5" />
+            Löschen
           </Button>
         </div>
       </header>
@@ -200,6 +223,14 @@ export function FeatureRunView({
           ))
         )}
       </div>
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={(next) => !busy && setDeleteOpen(next)}
+        title="Feature-Ausführung löschen?"
+        description="Der Koordinator und alle Paket-Sessions werden gestoppt und aus dem Cockpit entfernt. Session-Logs im Vault bleiben erhalten."
+        loading={busy}
+        onConfirm={() => void removeRun()}
+      />
     </section>
   );
 }

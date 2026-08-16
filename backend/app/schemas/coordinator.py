@@ -6,6 +6,8 @@ eigenes Persistenz-Schema (vgl. Tech-Design Abschnitt 0).
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ..config import MAX_INPUT_CHARS
@@ -123,6 +125,8 @@ class FeatureDispatchRequest(BaseModel):
     project_path: str = Field(..., min_length=1)
     feature_id: str = Field(..., min_length=1, max_length=16)
     items: list[FeaturePlanItem] = Field(..., min_length=1)
+    permission_mode: Literal["default", "acceptEdits", "bypassPermissions"] = "bypassPermissions"
+    token_savings: Literal["standard", "on", "off"] = "on"
 
 
 class CompletionProof(BaseModel):
@@ -150,6 +154,8 @@ class FeaturePackageRead(BaseModel):
     skill: str | None = None
     engine: str
     model: str | None = None
+    permission_mode: str = "bypassPermissions"
+    token_savings: Literal["standard", "on", "off"] = "on"
     status: str  # wartet|bereit|läuft|erfolgreich|fehlgeschlagen|übersprungen
     dependencies: list[str] = []
     write_scope: list[str] = []

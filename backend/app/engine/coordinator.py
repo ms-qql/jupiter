@@ -25,8 +25,10 @@ from datetime import datetime, timezone
 from . import abc_phases
 from ..config import settings
 from .launcher import parse_index_features
-from .manager import SessionLimitError, SessionManager, SessionRuntime, validate_project_path
+from .manager import ACTIVE_STATES, SessionLimitError, SessionManager, SessionRuntime, validate_project_path
 from .policy import DENY, policy_store
+from .registry import engine_registry
+from .savings import SavingsChoice
 from .vault import VaultService
 
 # Synthetischer „Tool"-Name, unter dem die Trust-Policy (PROJ-10) den Dispatch-Akt
@@ -39,6 +41,7 @@ PHASE_TO_ROLE: dict[str, str] = {
     "brainstorm": "coordinator",
     "requirements": "architect",
     "architecture": "architect",
+    "review-architecture": "architect",
     "frontend": "frontend",
     "backend": "backend",
     "qa": "qa",
@@ -406,6 +409,7 @@ class CoordinatorService:
 # Rollenbezogener Abschlussbeleg-Typ je Phase.
 _PHASE_PROOF: dict[str, str] = {
     "architecture": "architecture",
+    "review-architecture": "architecture",
     "backend": "backend",
     "frontend": "frontend",
     "qa": "qa",
@@ -423,11 +427,12 @@ _ROLE_WRITE_SCOPE: dict[str, list[str]] = {
 # Paket-Ausführungsrang (architektur → backend/frontend parallel → qa → deploy → doc).
 _PACKAGE_RANK: dict[str, int] = {
     "architecture": 1,
-    "backend": 2,
-    "frontend": 2,
-    "qa": 3,
-    "deploy": 4,
-    "document": 5,
+    "review-architecture": 2,
+    "backend": 3,
+    "frontend": 3,
+    "qa": 4,
+    "deploy": 5,
+    "document": 6,
 }
 # Paketstatus.
 PK_WAIT, PK_READY, PK_RUN, PK_DONE, PK_FAIL, PK_SKIP, PK_MANUAL = (
@@ -532,7 +537,7 @@ def build_feature_plan(project_path: str, feature_id: str) -> dict:
 
     # Ausführungs-Reihenfolge (architektur → backend/frontend parallel → qa → …),
     # unabhängig von der ABC_PHASES-Reihenfolge (frontend vor backend).
-    exec_order = [p for p in ("architecture", "backend", "frontend", "qa", "deploy", "document")
+    exec_order = [p for p in ("architecture", "review-architecture", "backend", "frontend", "qa", "deploy", "document")
                   if p in phases]
     by_phase: dict[str, dict] = {}
     for i, phase in enumerate(exec_order, start=1):
@@ -561,13 +566,16 @@ def build_feature_plan(project_path: str, feature_id: str) -> dict:
     # Abhängigkeiten: architektur zuerst; backend+frontend parallel danach; qa wartet
     # auf beide; deploy/document warten auf qa.
     arch = by_phase.get("architecture")
+    architecture_review = by_phase.get("review-architecture")
     backend = by_phase.get("backend")
     frontend = by_phase.get("frontend")
     qa = by_phase.get("qa")
     for pkg in by_phase.values():
         phase = pkg["title"].split(" — ")[0]
-        if phase in ("backend", "frontend") and arch:
+        if phase == "review-architecture" and arch:
             pkg["dependencies"].append(arch["package_id"])
+        if phase in ("backend", "frontend") and architecture_review:
+            pkg["dependencies"].append(architecture_review["package_id"])
         if phase == "qa":
             if backend:
                 pkg["dependencies"].append(backend["package_id"])
@@ -638,7 +646,15 @@ class FeatureCoordinatorService:
 
     # --- Dispatch ----------------------------------------------------------
 
-    async def feature_dispatch(self, project_path: str, feature_id: str, items: list[dict]) -> dict:
+    async def feature_dispatch(
+        self,
+        project_path: str,
+        feature_id: str,
+        items: list[dict],
+        *,
+        permission_mode: str = "bypassPermissions",
+        token_savings: SavingsChoice = "on",
+    ) -> dict:
         """Freigegebenen Feature-Plan dispatchen → eine Feature-Lauf-Koordinator-Session
         + die bereiten internen Arbeitspakete als Kind-Sessions."""
         real = validate_project_path(project_path)
@@ -648,6 +664,15 @@ class FeatureCoordinatorService:
             raise DispatchDeniedError(
                 decision.reason or "Dispatch ist durch die Trust-Policy untersagt."
             )
+        self._validate_packages(items)
+
+        for runtime in self._manager.list():
+            if (
+                runtime.state.is_feature_run
+                and runtime.state.feature_id == num
+                and runtime.state.project_path == real
+            ):
+                return self._run_dict(runtime)
 
         label = os.path.basename(real) or real
         coordinator = await self._manager.create(
@@ -657,10 +682,11 @@ class FeatureCoordinatorService:
                 "internen Arbeitspakete, weise fehlende Abschlussbelege zurück und eskaliere "
                 "nur ein unauflösbares Scheitern als Decision Card."
             ),
-            model="opus",
             role=self.ROLE,
             project_name=f"{label} · PROJ-{num}",
             engine="claude",
+            permission_mode=permission_mode,
+            token_savings=token_savings,
         )
         coordinator.state.is_feature_run = True
         coordinator.state.feature_id = num
@@ -675,6 +701,8 @@ class FeatureCoordinatorService:
             pkg.setdefault("resume_attempts", 0)
             pkg.setdefault("last_safe_state", None)
             pkg.setdefault("proof", None)
+            pkg["permission_mode"] = permission_mode
+            pkg["token_savings"] = token_savings
             packages.append(pkg)
         coordinator.state.feature_packages = packages
         coordinator.state.feature_plan = {
@@ -690,10 +718,44 @@ class FeatureCoordinatorService:
     def _plan_title(items: list[dict]) -> str:
         return items[0]["title"].split(" — ")[0] if items else ""
 
+    @staticmethod
+    def _validate_packages(items: list[dict]) -> None:
+        """Reject an engine/model mismatch before creating any session."""
+        for item in items:
+            engine = item.get("engine") or "claude"
+            profile = engine_registry.get(engine)
+            model = item.get("model") or (profile.default_model if profile else None)
+            if profile is None or not profile.is_session_engine:
+                raise ValueError(f"Engine '{engine}' ist keine steuerbare Session-Engine.")
+            if model and not profile.valid_model(model):
+                raise ValueError(
+                    f"Paket {item.get('package_id', '?')}: Modell '{model}' passt nicht zu Engine "
+                    f"'{profile.key}'. Erlaubt: {profile.models}."
+                )
+
     # --- Live-Sicht --------------------------------------------------------
 
     def feature_run(self, feature_id: str) -> dict:
         return self._run_dict(self._require_feature(feature_id))
+
+    async def feature_delete(self, coordinator_id: str) -> None:
+        """Stoppt und entfernt einen Feature-Lauf samt Paket-Sessions."""
+        coordinator = self._manager.get(coordinator_id)
+        if coordinator is None or not coordinator.state.is_feature_run:
+            raise FeatureNotFoundError("Feature-Ausführung nicht gefunden.")
+        async with _feature_lock(coordinator_id):
+            session_ids = [
+                pkg["session_id"]
+                for pkg in coordinator.state.feature_packages or []
+                if pkg.get("session_id")
+            ] + [coordinator_id]
+            for session_id in session_ids:
+                runtime = self._manager.get(session_id)
+                if runtime is not None and runtime.state.status in ACTIVE_STATES:
+                    await self._manager.stop(session_id)
+            for session_id in session_ids:
+                if self._manager.get(session_id) is not None:
+                    await self._manager.delete(session_id)
 
     def _require_feature(self, feature_id: str) -> SessionRuntime:
         num = _norm_feature_id(feature_id)
@@ -821,6 +883,8 @@ class FeatureCoordinatorService:
             role=pkg.get("role"),
             project_name=f"{label} · {pkg['package_id']}",
             engine=pkg.get("engine") or "claude",
+            permission_mode=pkg.get("permission_mode") or "bypassPermissions",
+            token_savings=pkg.get("token_savings") or "on",
             parent_coordinator_id=coordinator.state.session_id,
             ticket_id=f"PROJ-{num}",
             contract_pointer=coordinator.state.contract_pointer,
@@ -964,6 +1028,8 @@ class FeatureCoordinatorService:
                 "skill": p.get("skill"),
                 "engine": p.get("engine") or "claude",
                 "model": p.get("model"),
+                "permission_mode": p.get("permission_mode") or "bypassPermissions",
+                "token_savings": p.get("token_savings") or "on",
                 "status": p["status"],
                 "dependencies": list(p.get("dependencies", [])),
                 "write_scope": list(p.get("write_scope", [])),

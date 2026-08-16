@@ -173,6 +173,7 @@ export const ABC_PHASES: AbcPhaseMeta[] = [
   { key: "brainstorm", label: "Brainstorm", short: "BS" },
   { key: "requirements", label: "Requirements", short: "Req" },
   { key: "architecture", label: "Architecture", short: "Arch" },
+  { key: "review-architecture", label: "Architecture Review", short: "Rev" },
   { key: "frontend", label: "Frontend", short: "FE" },
   { key: "backend", label: "Backend", short: "BE" },
   { key: "qa", label: "QA", short: "QA" },

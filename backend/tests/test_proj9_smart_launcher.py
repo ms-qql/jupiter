@@ -34,12 +34,12 @@ INDEX_SAMPLE = """# Feature Index
     "status,phase",
     [
         ("Planned", "architecture"),
-        ("Architected", "frontend"),
+        ("Architected", "review-architecture"),
         ("In Progress", "backend"),
         ("In Review", "qa"),
         ("Approved", "deploy"),
         ("Deployed", None),
-        ("  architected ", "frontend"),   # case-/whitespace-tolerant
+        ("  architected ", "review-architecture"),   # case-/whitespace-tolerant
         ("Unfug", None),                    # unbekannt → None
     ],
 )
@@ -120,14 +120,14 @@ def test_suggest_continue_first_picks_most_advanced_open(project):
     assert sug["abc_erkannt"] is True
     # PROJ-2 (Architected) ist weiter als PROJ-3 (Planned) → Empfehlung (weitermachen).
     assert sug["empfehlung"]["id"] == "PROJ-2"
-    assert sug["empfehlung"]["phase"] == "frontend"
-    assert sug["empfehlung"]["skill"] == "abc-frontend"
+    assert sug["empfehlung"]["phase"] == "review-architecture"
+    assert sug["empfehlung"]["skill"] == "abc-review-architecture"
     assert sug["empfehlung"]["modell"] == "sonnet"
-    assert sug["empfehlung"]["initial_prompt"] == "/abc-frontend 2"
+    assert sug["empfehlung"]["initial_prompt"] == "/abc-review-architecture 2"
     # Default-Felder spiegeln die Empfehlung (für „Vorschlag übernehmen").
-    assert sug["naechste_phase"] == "frontend"
-    assert sug["skill"] == "abc-frontend"
-    assert sug["initial_prompt"] == "/abc-frontend 2"
+    assert sug["naechste_phase"] == "review-architecture"
+    assert sug["skill"] == "abc-review-architecture"
+    assert sug["initial_prompt"] == "/abc-review-architecture 2"
     # Restliche offene Features als Alternativen (deployed PROJ-1 fällt raus),
     # jede mit EIGENEN abgeleiteten Feldern.
     assert [a["id"] for a in sug["alternativen"]] == ["PROJ-3"]
@@ -241,7 +241,7 @@ def test_rest_suggestion_endpoint(project):
     body = resp.json()
     assert body["abc_erkannt"] is True
     assert body["empfehlung"]["id"] == "PROJ-2"  # Architected > Planned (Fortsetzen-First)
-    assert body["initial_prompt"] == "/abc-frontend 2"
+    assert body["initial_prompt"] == "/abc-review-architecture 2"
 
 
 def test_rest_suggestion_path_outside_roots_returns_400(tmp_path, monkeypatch):

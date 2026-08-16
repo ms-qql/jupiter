@@ -52,15 +52,18 @@ def test_feature_plan_derives_packages(tmp_path, monkeypatch):
     plan = build_feature_plan(proj, "PROJ-101")
     ids = [p["package_id"] for p in plan["items"]]
     assert ids == [
-        "PROJ-101.1", "PROJ-101.2", "PROJ-101.3", "PROJ-101.4", "PROJ-101.5", "PROJ-101.6",
+        "PROJ-101.1", "PROJ-101.2", "PROJ-101.3", "PROJ-101.4", "PROJ-101.5", "PROJ-101.6", "PROJ-101.7",
     ]
     by_id = {p["package_id"]: p for p in plan["items"]}
     assert by_id["PROJ-101.1"]["required_proof"] == "architecture"
+    assert by_id["PROJ-101.2"]["skill"] == "abc-review-architecture"
+    assert by_id["PROJ-101.2"]["model"] == "sonnet"
     assert by_id["PROJ-101.2"]["dependencies"] == ["PROJ-101.1"]
-    assert by_id["PROJ-101.3"]["dependencies"] == ["PROJ-101.1"]
-    assert set(by_id["PROJ-101.4"]["dependencies"]) == {"PROJ-101.2", "PROJ-101.3"}
-    assert by_id["PROJ-101.4"]["required_proof"] == "qa"
-    assert by_id["PROJ-101.2"]["write_scope"] == ["backend/"]
+    assert by_id["PROJ-101.3"]["dependencies"] == ["PROJ-101.2"]
+    assert by_id["PROJ-101.4"]["dependencies"] == ["PROJ-101.2"]
+    assert set(by_id["PROJ-101.5"]["dependencies"]) == {"PROJ-101.3", "PROJ-101.4"}
+    assert by_id["PROJ-101.5"]["required_proof"] == "qa"
+    assert by_id["PROJ-101.3"]["write_scope"] == ["backend/"]
 
 
 def test_feature_plan_unknown_feature_raises(tmp_path, monkeypatch):
@@ -126,6 +129,25 @@ def test_feature_dispatch_starts_only_ready_packages(client, tmp_path):
     assert by_id["PROJ-101.1"]["status"] == "läuft"
     assert by_id["PROJ-101.2"]["status"] == "wartet"
     assert by_id["PROJ-101.3"]["status"] == "wartet"
+    assert by_id["PROJ-101.1"]["permission_mode"] == "bypassPermissions"
+    assert by_id["PROJ-101.1"]["token_savings"] == "on"
+
+
+def test_feature_dispatch_is_idempotent(client, tmp_path):
+    proj = _write_project(tmp_path)
+    first = _dispatch(client, proj)
+    second = _dispatch(client, proj)
+    assert second["coordinator"]["session_id"] == first["coordinator"]["session_id"]
+    assert len([r for r in client.app.state.manager.list() if r.state.is_feature_run]) == 1
+
+
+def test_feature_delete_stops_and_removes_packages(client, tmp_path):
+    proj = _write_project(tmp_path)
+    run = _dispatch(client, proj)
+    coordinator_id = run["coordinator"]["session_id"]
+    response = client.delete(f"/coordinator/features/runs/{coordinator_id}")
+    assert response.status_code == 204, response.text
+    assert client.app.state.manager.list() == []
 
 
 def test_feature_run_get_and_pause(client, tmp_path):
@@ -155,7 +177,16 @@ def test_feature_complete_proof_unlocks_dependents(client, tmp_path):
     by_id = {p["package_id"]: p for p in r.json()["packages"]}
     assert by_id["PROJ-101.1"]["status"] == "erfolgreich"
     assert by_id["PROJ-101.2"]["status"] == "läuft"
-    assert by_id["PROJ-101.3"]["status"] == "läuft"
+    assert by_id["PROJ-101.3"]["status"] == "wartet"
+
+
+def test_feature_dispatch_rejects_mismatched_engine_model_before_creating_run(client, tmp_path):
+    proj = _write_project(tmp_path)
+    plan = client.post("/coordinator/feature-plan", json={"project_path": proj, "feature_id": "PROJ-101"}).json()
+    plan["items"][0].update({"engine": "claude", "model": "not-a-claude-model"})
+    response = client.post("/coordinator/feature-dispatch", json={"project_path": proj, "feature_id": "PROJ-101", "items": plan["items"]})
+    assert response.status_code == 400
+    assert client.app.state.manager.list() == []
 
 
 def test_feature_abort_sets_status(client, tmp_path):

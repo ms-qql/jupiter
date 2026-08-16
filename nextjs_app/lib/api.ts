@@ -118,6 +118,7 @@ import type {
   FeaturePlan,
   FeaturePlanItem,
   FeatureRun,
+  PermissionMode,
   CompletionProof,
   TextFileRead,
   TextFileWrite,
@@ -1730,10 +1731,12 @@ export function dispatchFeature(
   projectPath: string,
   featureId: string,
   items: FeaturePlanItem[],
+  permissionMode: PermissionMode,
+  tokenSavings: TokenSavingsChoice,
 ): Promise<FeatureRun> {
   return request<FeatureRun>("/coordinator/feature-dispatch", {
     method: "POST",
-    body: JSON.stringify({ project_path: projectPath, feature_id: featureId, items }),
+    body: JSON.stringify({ project_path: projectPath, feature_id: featureId, items, permission_mode: permissionMode, token_savings: tokenSavings }),
   });
 }
 
@@ -1745,6 +1748,14 @@ export function getFeatureRun(
   return request<FeatureRun>(`/coordinator/features/${encodeURIComponent(featureId)}`, {
     signal,
   });
+}
+
+/** Feature-Ausführung inklusive Koordinator- und Paket-Sessions stoppen und entfernen. */
+export function deleteFeatureRun(coordinatorId: string): Promise<void> {
+  return request<void>(
+    `/coordinator/features/runs/${encodeURIComponent(coordinatorId)}`,
+    { method: "DELETE" },
+  );
 }
 
 /** Feature-Ausführung pausieren/fortsetzen. */

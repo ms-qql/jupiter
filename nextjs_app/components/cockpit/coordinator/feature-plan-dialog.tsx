@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -34,7 +34,7 @@ import {
   getEngines,
   getFeaturePlan,
 } from "@/lib/api";
-import type { EngineRead, FeaturePlan, FeaturePlanItem } from "@/lib/types";
+import type { EngineRead, FeaturePlan, FeaturePlanItem, PermissionMode, TokenSavingsChoice } from "@/lib/types";
 
 export function FeaturePlanDialog({
   open,
@@ -58,6 +58,8 @@ export function FeaturePlanDialog({
   const [overrides, setOverrides] = useState<
     Record<string, { engine: string; model: string | null }>
   >({});
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("bypassPermissions");
+  const [tokenSavings, setTokenSavings] = useState<TokenSavingsChoice>("on");
 
   useEffect(() => {
     if (!open || !projectPath || !featureId) return;
@@ -97,6 +99,14 @@ export function FeaturePlanDialog({
   function modelOf(item: FeaturePlanItem): string | null {
     return overrides[item.package_id]?.model ?? item.model;
   }
+  function selectedEngine(item: FeaturePlanItem): EngineRead | undefined {
+    return engineOptions.find((engine) => engine.key === engineOf(item));
+  }
+  function modelMismatch(item: FeaturePlanItem): boolean {
+    const engine = selectedEngine(item);
+    const model = modelOf(item);
+    return Boolean(engine && model && engine.models.length && !engine.models.includes(model));
+  }
 
   async function dispatch() {
     if (!plan || dispatchable.length === 0 || dispatching) return;
@@ -107,7 +117,7 @@ export function FeaturePlanDialog({
         engine: engineOf(it),
         model: modelOf(it),
       }));
-      const run = await dispatchFeature(plan.project_path, plan.feature_id, items);
+      const run = await dispatchFeature(plan.project_path, plan.feature_id, items, permissionMode, tokenSavings);
       toast.success(`Feature-Ausführung ${run.feature_id} gestartet`);
       onOpenChange(false);
       onDispatched(run.feature_id);
@@ -128,7 +138,7 @@ export function FeaturePlanDialog({
             Interne Arbeitspakete für{" "}
             <span className="font-mono">{featureId}</span> mit Rolle/Skill/Engine,
             Schreibbereich, Abschlussbeleg und Abhängigkeiten. Engine/Modell pro
-            Paket überschreibbar. Erst nach Freigabe startet die Ausführung.
+            Paket überschreibbar. Berechtigung und Token Savings gelten einmalig für alle Subsessions.
           </DialogDescription>
         </DialogHeader>
 
@@ -214,11 +224,12 @@ export function FeaturePlanDialog({
                           value={engineOf(item)}
                           onValueChange={(v) => {
                             if (!v) return;
+                            const engine = engineOptions.find((candidate) => candidate.key === v);
                             setOverrides((o) => {
                               const next = { ...o };
                               const value: { engine: string; model: string | null } = {
                                 engine: v,
-                                model: modelOf(item),
+                                model: engine?.default_model ?? engine?.models[0] ?? null,
                               };
                               next[item.package_id] = value;
                               return next;
@@ -239,24 +250,27 @@ export function FeaturePlanDialog({
                       </label>
                       <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
                         Modell
-                        <Input
+                        <Select
                           value={modelOf(item) ?? ""}
-                          onChange={(e) =>
-                            setOverrides((o) => {
-                              const next = { ...o };
-                              const value: { engine: string; model: string | null } = {
-                                engine: engineOf(item),
-                                model: e.target.value.trim() || null,
-                              };
-                              next[item.package_id] = value;
-                              return next;
-                            })
-                          }
-                          placeholder="—"
-                          className="h-8 w-32 font-mono"
-                        />
+                          onValueChange={(v) => v && setOverrides((o) => ({
+                            ...o,
+                            [item.package_id]: { engine: engineOf(item), model: v },
+                          }))}
+                        >
+                          <SelectTrigger className="h-8 w-32 font-mono"><SelectValue placeholder="—" /></SelectTrigger>
+                          <SelectContent>
+                            {(selectedEngine(item)?.models ?? []).map((model) => (
+                              <SelectItem key={model} value={model}>{model}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </label>
                     </div>
+                  )}
+                  {modelMismatch(item) && (
+                    <p className="mt-1 pl-8 text-[11px] text-amber-600 dark:text-amber-400">
+                      ⚠️ Dieses Modell gehört nicht zur gewählten Engine; vor dem Start korrigieren.
+                    </p>
                   )}
                   {item.blocked && item.blocked_reason && (
                     <p className="mt-1 pl-8 text-[11px] text-amber-600 dark:text-amber-400">
@@ -266,6 +280,23 @@ export function FeaturePlanDialog({
                 </li>
               ))}
             </ul>
+            <div className="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-2">
+              <label className="grid gap-1 text-xs"><Label>Berechtigung für alle Subsessions</Label>
+                <Select value={permissionMode} onValueChange={(v) => v && setPermissionMode(v as PermissionMode)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
+                    <SelectItem value="default">Standard</SelectItem><SelectItem value="acceptEdits">Edits automatisch</SelectItem><SelectItem value="bypassPermissions">Ohne Rückfragen (Bypass)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="grid gap-1 text-xs"><Label>Token Savings für alle Subsessions</Label>
+                <Select value={tokenSavings} onValueChange={(v) => v && setTokenSavings(v as TokenSavingsChoice)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
+                    <SelectItem value="on">An</SelectItem><SelectItem value="off">Aus</SelectItem><SelectItem value="standard">Globalen Standard verwenden</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+            </div>
+            {permissionMode === "bypassPermissions" && <p className="text-xs text-amber-600 dark:text-amber-400">⚠️ Vollautonom für alle Subsessions.</p>}
           </div>
         )}
 
@@ -275,7 +306,7 @@ export function FeaturePlanDialog({
           </Button>
           <Button
             onClick={dispatch}
-            disabled={dispatching || dispatchable.length === 0}
+            disabled={dispatching || dispatchable.length === 0 || (plan?.items.some(modelMismatch) ?? false)}
           >
             {dispatching
               ? "Starte Ausführung …"

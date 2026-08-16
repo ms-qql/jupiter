@@ -222,6 +222,7 @@ export type AbcPhase =
   | "brainstorm"
   | "requirements"
   | "architecture"
+  | "review-architecture"
   | "frontend"
   | "backend"
   | "qa"
@@ -1481,6 +1482,8 @@ export interface FeaturePlanItem {
   skill: string | null;
   engine: string;
   model: string | null;
+  permission_mode: PermissionMode;
+  token_savings: TokenSavingsChoice;
   order: number;
   dependencies: string[]; // package_ids
   blocked: boolean;

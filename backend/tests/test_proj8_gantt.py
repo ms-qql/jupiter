@@ -26,7 +26,7 @@ PROJECT = "/home/dev/projects/jupiter"
 
 def test_canonical_phase_order():
     assert abc_phases.ABC_PHASES == (
-        "brainstorm", "requirements", "architecture", "frontend",
+        "brainstorm", "requirements", "architecture", "review-architecture", "frontend",
         "backend", "qa", "deploy", "document",
     )
 

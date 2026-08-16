@@ -34,7 +34,7 @@ function readStoredProject(): string {
 }
 
 export function CoordinatorPanel() {
-  const { sessions } = useSessions();
+  const { sessions, refresh } = useSessions();
   const now = useNow();
   const [projectPath, setProjectPath] = useState(readStoredProject);
   const [mode, setMode] = useState<"feature" | "fleet">("fleet");
@@ -214,6 +214,7 @@ export function CoordinatorPanel() {
                 key={f.coordinator.session_id}
                 featureId={f.coordinator.feature_id}
                 coordinator={f.coordinator}
+                onDeleted={refresh}
               />
             ) : (
               <FleetView
