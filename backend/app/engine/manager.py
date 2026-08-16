@@ -380,6 +380,17 @@ class SessionState:
     savings_latency_ms: float | None = None
     # Ausschließlich der kontrollierte Golden-Runner darf diesen QA-Befund setzen.
     savings_pilot_safe: bool | None = None
+    # PROJ-79 — Featurezentrierter Koordinator. Eine Feature-Ausführung ist selbst eine
+    # Koordinator-Session (role="coordinator"); die internen Arbeitspakete laufen als
+    # Kind-Sessions wie bei PROJ-22. Alle Feature-Laufdaten liegen am Koordinator-State
+    # (additiv, nullable) und überleben so den bestehenden Vault-/State-Recovery-Pfad.
+    is_feature_run: bool = False
+    feature_id: str | None = None  # übergeordnetes „PROJ-X" (nur die reine Nummer)
+    feature_aborted: bool = False  # Lauf vom Nutzer abgebrochen (status „abgebrochen")
+    feature_plan: dict | None = None  # einmal freigegebener Plan (Paket-Liste etc.)
+    feature_packages: list[dict] = field(default_factory=list)  # interne Arbeitspakete
+    feature_revision: int = 0  # fortlaufende Revision → schützt gegen Doppelverarbeitung nach Restart
+    feature_blocker: dict | None = None  # genau eine offene Blockierungs-Decision-Card
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -445,6 +456,14 @@ class SessionState:
             "savings_pilot_task": self.savings_pilot_task,
             "savings_latency_ms": self.savings_latency_ms,
             "savings_pilot_safe": self.savings_pilot_safe,
+            # PROJ-79 — Feature-Lauf (nur gesetzt, wenn is_feature_run).
+            "is_feature_run": self.is_feature_run,
+            "feature_id": self.feature_id,
+            "feature_aborted": self.feature_aborted,
+            "feature_plan": self.feature_plan,
+            "feature_packages": list(self.feature_packages),
+            "feature_revision": self.feature_revision,
+            "feature_blocker": self.feature_blocker,
         }
 
 
@@ -1598,7 +1617,27 @@ class SessionManager:
             savings_pilot_task=row.get("savings_pilot_task"),
             savings_latency_ms=row.get("savings_latency_ms"),
             savings_pilot_safe=(bool(row["savings_pilot_safe"]) if row.get("savings_pilot_safe") is not None else None),
+            # PROJ-79: Feature-Lauf-Metadaten (aus dem Live-Index rekonstruiert).
+            is_feature_run=bool(row.get("is_feature_run") or False),
+            feature_id=row.get("feature_id"),
+            feature_aborted=bool(row.get("feature_aborted") or False),
+            feature_plan=self._json_field(row.get("feature_plan")),
+            feature_packages=self._json_field(row.get("feature_packages")) or [],
+            feature_revision=int(row.get("feature_revision") or 0),
+            feature_blocker=self._json_field(row.get("feature_blocker")),
         )
+
+    @staticmethod
+    def _json_field(value):
+        """JSON-Spalte des Live-Index → dict/list oder None (tolerant bei Alt-Daten)."""
+        if value is None or value == "":
+            return None
+        if isinstance(value, (dict, list)):
+            return value
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
 
     async def create(
         self,

@@ -81,6 +81,16 @@ COLUMNS: tuple[str, ...] = (
     "savings_pilot_task",
     "savings_latency_ms",
     "savings_pilot_safe",
+    # PROJ-79: Featurezentrierter Koordinator — Feature-Lauf-Metadaten (additiv, nullable).
+    # Ein Feature-Lauf ist selbst eine Koordinator-Session; die internen Arbeitspakete,
+    # der Plan, die Revision und die eine Blockierungs-Card überleben so den Neustart.
+    "is_feature_run",
+    "feature_id",
+    "feature_aborted",
+    "feature_plan",
+    "feature_packages",
+    "feature_revision",
+    "feature_blocker",
 )
 
 SCHEMA_SQL = """
@@ -124,7 +134,14 @@ CREATE TABLE IF NOT EXISTS session_index (
     savings_provenance    TEXT DEFAULT '[]',
     savings_pilot_task    TEXT,
     savings_latency_ms    REAL,
-    savings_pilot_safe    INTEGER
+    savings_pilot_safe    INTEGER,
+    is_feature_run        INTEGER DEFAULT 0,
+    feature_id            TEXT,
+    feature_aborted       INTEGER DEFAULT 0,
+    feature_plan          TEXT,
+    feature_packages      TEXT DEFAULT '[]',
+    feature_revision      INTEGER DEFAULT 0,
+    feature_blocker       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 
@@ -177,6 +194,13 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("savings_pilot_task", "TEXT"),
     ("savings_latency_ms", "REAL"),
     ("savings_pilot_safe", "INTEGER"),
+    ("is_feature_run", "INTEGER DEFAULT 0"),  # PROJ-79
+    ("feature_id", "TEXT"),  # PROJ-79
+    ("feature_aborted", "INTEGER DEFAULT 0"),  # PROJ-79
+    ("feature_plan", "TEXT"),  # PROJ-79 (JSON)
+    ("feature_packages", "TEXT DEFAULT '[]'"),  # PROJ-79 (JSON)
+    ("feature_revision", "INTEGER DEFAULT 0"),  # PROJ-79
+    ("feature_blocker", "TEXT"),  # PROJ-79 (JSON)
 )
 
 
@@ -281,9 +305,20 @@ class SqliteSessionIndexRepository:
             f"INSERT INTO session_index ({cols}) VALUES ({placeholders}) "
             f"ON CONFLICT(session_id) DO UPDATE SET {updates}"
         )
-        values = [row.get(c) for c in COLUMNS]
+        values = [self._col_value(row.get(c)) for c in COLUMNS]
         with self._connect() as conn:
             conn.execute(sql, values)
+
+    @staticmethod
+    def _col_value(value):
+        """SQLite versteht nur Primitiven — verschachtelte Felder (JSON-Spalten wie
+        ``feature_plan``/``feature_packages``/``feature_blocker``) als JSON serialisieren;
+        ``bool`` → ``int`` (SQLites INTEGER)."""
+        if value is None or isinstance(value, (str, int, float)):
+            return value
+        if isinstance(value, bool):
+            return int(value)
+        return json.dumps(value, ensure_ascii=False)
 
     def _list_all_sync(self) -> list[dict]:
         with self._connect() as conn:

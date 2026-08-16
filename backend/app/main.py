@@ -38,7 +38,7 @@ from .engine.auth import AuthService
 from .engine.base import EngineDriver
 from .engine.challenge import ChallengeService
 from .engine.consumers import consumer_registry
-from .engine.coordinator import CoordinatorService
+from .engine.coordinator import CoordinatorService, FeatureCoordinatorService
 from .engine.files import FileService
 from .engine.clipboard import ClipboardService
 from .engine.git_service import GitService
@@ -195,6 +195,7 @@ async def _coordinator_loop(app: FastAPI) -> None:
         try:
             await asyncio.sleep(interval)
             await app.state.coordinator.drain_all()
+            await app.state.feature_coordinator.schedule_feature_runs()
         except asyncio.CancelledError:
             break
         except Exception:  # noqa: BLE001 — Drain-Tick nie fatal (Loop überlebt).
@@ -400,6 +401,8 @@ def create_app(
     app.state.ui_check = UiCheckService(manager=app.state.manager)
     # PROJ-22: Multi-Agent-Dispatch — Koordinator über dem Session-Treiber + Vault-Vertrag.
     app.state.coordinator = CoordinatorService(app.state.manager, vault_service)
+    # PROJ-79: Featurezentrierter Koordinator — Feature-Ausführung über demselben Treiber.
+    app.state.feature_coordinator = FeatureCoordinatorService(app.state.manager, vault_service)
     # PROJ-23: Cross-Agent-Review — Challenge eines Artefakts durch eine andere Engine.
     app.state.challenge = ChallengeService(app.state.manager, vault_service)
     # PROJ-25: geschützte Router verlangen ein gültiges Token (Soft-Gate in

@@ -17,7 +17,10 @@ Typ bereit. Die Konflikt-Eskalation als Decision Card nutzt den vorhandenen Card
 """
 from __future__ import annotations
 
+import asyncio
 import os
+import uuid
+from datetime import datetime, timezone
 
 from . import abc_phases
 from .launcher import parse_index_features
@@ -387,4 +390,533 @@ class CoordinatorService:
             "paused": coordinator.state.coordinator_paused,
             "contract_pointer": coordinator.state.contract_pointer,
             "queued": [t.get("ticket_id") for t in coordinator.state.queued_tickets],
+        }
+
+
+# --- PROJ-79: Featurezentrierter Koordinator ---------------------------------
+#
+# Ein Feature-Lauf ist selbst eine Koordinator-Session (role="coordinator",
+# is_feature_run=True). Die internen Arbeitspakete laufen als Kind-Sessions (wie
+# PROJ-22) und werden am Koordinator-State persistiert — kein neuer Persistenz-Store.
+# Alle Zustandswechsel eines Laufs laufen durch ein pro Feature gehaltenes Transition-
+# Gate, damit parallel endende Kind-Sessions nicht gleichzeitig denselben Lauf
+# fortsetzen oder mehr als eine Blockierungs-Card erzeugen.
+
+# Rollenbezogener Abschlussbeleg-Typ je Phase.
+_PHASE_PROOF: dict[str, str] = {
+    "architecture": "architecture",
+    "backend": "backend",
+    "frontend": "frontend",
+    "qa": "qa",
+    "deploy": "other",
+    "document": "other",
+}
+# Vage Schreibbereich-Vermutung je Rolle (der Plan-Dialog zeigt sie zur Korrektur).
+_ROLE_WRITE_SCOPE: dict[str, list[str]] = {
+    "architect": ["features/"],
+    "backend": ["backend/"],
+    "frontend": ["nextjs_app/", "flutter_app/"],
+    "qa": ["backend/tests/", "nextjs_app/"],
+    "document": ["docs/", "features/"],
+}
+# Paket-Ausführungsrang (architektur → backend/frontend parallel → qa → deploy → doc).
+_PACKAGE_RANK: dict[str, int] = {
+    "architecture": 1,
+    "backend": 2,
+    "frontend": 2,
+    "qa": 3,
+    "deploy": 4,
+    "document": 5,
+}
+# Paketstatus.
+PK_WAIT, PK_READY, PK_RUN, PK_DONE, PK_FAIL, PK_SKIP, PK_MANUAL = (
+    "wartet", "bereit", "läuft", "erfolgreich", "fehlgeschlagen", "übersprungen", "manuell",
+)
+# Gesamtlaufstatus.
+RUN_PLANNING, RUN_RUNNING, RUN_PAUSED, RUN_BLOCKED, RUN_DONE, RUN_ABORTED = (
+    "planung", "läuft", "pausiert", "blockiert", "fertig", "abgebrochen",
+)
+
+# Pro Feature serialisiertes Transition-Gate (Einzel-Worker heute; persistierte
+# Revision schützt gegen Doppelverarbeitung nach Restart).
+_FEATURE_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _feature_lock(coordinator_id: str) -> asyncio.Lock:
+    lock = _FEATURE_LOCKS.get(coordinator_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _FEATURE_LOCKS[coordinator_id] = lock
+    return lock
+
+
+def _norm_feature_id(feature_id: str) -> str:
+    """„PROJ-101" → „101"; nackte Zahl bleibt."""
+    fid = feature_id.strip().upper()
+    if fid.startswith("PROJ-"):
+        fid = fid[len("PROJ-"):]
+    return fid
+
+
+def build_feature_plan(project_path: str, feature_id: str) -> dict:
+    """Interner Verteilungsplan für EIN Feature ``PROJ-X`` (read-only, kein Dispatch).
+
+    Leitet aus dem INDEX-Status die noch nötigen abc-Phasen ab und baut daraus die
+    internen Arbeitspakete samt Abhängigkeiten, Schreibbereichen und rollenbezogenen
+    Abschlussbelegen. Nicht benötigte Disziplinen entfernt der Nutzer im Plan-Dialog;
+    der Scheduler startet ohnehin nur freigegebene Pakete.
+    """
+    real = validate_project_path(project_path)
+    num = _norm_feature_id(feature_id)
+    index_path = os.path.join(real, "features", "INDEX.md")
+    warnings: list[str] = []
+    feature = None
+    if os.path.isfile(index_path):
+        try:
+            with open(index_path, encoding="utf-8") as fh:
+                features = parse_index_features(fh.read())
+        except OSError as exc:
+            warnings.append(f"INDEX.md nicht lesbar: {exc}")
+            features = []
+        for f in features:
+            if _norm_feature_id(f["id"]) == num:
+                feature = f
+                break
+    if feature is None:
+        raise ValueError(f"Feature PROJ-{num} nicht in features/INDEX.md gefunden.")
+
+    start_phase = abc_phases.next_phase_for_status(feature["status"])
+    if start_phase is None:
+        warnings.append(
+            f"PROJ-{num} hat Status „{feature['status']}” — keine offene Arbeit mehr."
+        )
+        phases: list[str] = []
+    else:
+        idx = abc_phases.ABC_PHASES.index(start_phase)
+        phases = list(abc_phases.ABC_PHASES[idx:])
+
+    # Ausführungs-Reihenfolge (architektur → backend/frontend parallel → qa → …),
+    # unabhängig von der ABC_PHASES-Reihenfolge (frontend vor backend).
+    exec_order = [p for p in ("architecture", "backend", "frontend", "qa", "deploy", "document")
+                  if p in phases]
+    by_phase: dict[str, dict] = {}
+    for i, phase in enumerate(exec_order, start=1):
+        role = PHASE_TO_ROLE.get(phase)
+        pkg = {
+            "package_id": f"PROJ-{num}.{i}",
+            "title": f"{phase} — PROJ-{num}",
+            "role": role,
+            "skill": abc_phases.skill_for_phase(phase),
+            "engine": "claude",
+            "model": abc_phases.model_for_phase(phase),
+            "order": _PACKAGE_RANK.get(phase, i),
+            "dependencies": [],
+            "blocked": False,
+            "blocked_reason": None,
+            "write_scope": list(_ROLE_WRITE_SCOPE.get(role or "", [])),
+            "required_proof": _PHASE_PROOF.get(phase, "other"),
+            "status": PK_WAIT,
+            "session_id": None,
+            "resume_attempts": 0,
+            "last_safe_state": None,
+            "proof": None,
+        }
+        by_phase[phase] = pkg
+
+    # Abhängigkeiten: architektur zuerst; backend+frontend parallel danach; qa wartet
+    # auf beide; deploy/document warten auf qa.
+    arch = by_phase.get("architecture")
+    backend = by_phase.get("backend")
+    frontend = by_phase.get("frontend")
+    qa = by_phase.get("qa")
+    for pkg in by_phase.values():
+        phase = pkg["title"].split(" — ")[0]
+        if phase in ("backend", "frontend") and arch:
+            pkg["dependencies"].append(arch["package_id"])
+        if phase == "qa":
+            if backend:
+                pkg["dependencies"].append(backend["package_id"])
+            if frontend:
+                pkg["dependencies"].append(frontend["package_id"])
+        if phase in ("deploy", "document") and qa:
+            pkg["dependencies"].append(qa["package_id"])
+
+    # Stabile Reihenfolge für den Plan-Dialog: Rang, dann Paket-Nummer.
+    items = sorted(by_phase.values(), key=lambda p: (p["order"], p["package_id"]))
+    for p in items:
+        p["order"] = items.index(p) + 1
+    return {
+        "project_path": real,
+        "feature_id": num,
+        "feature_title": feature["title"],
+        "items": items,
+        "warnings": warnings,
+    }
+
+
+class FeatureNotFoundError(Exception):
+    """Keine Feature-Lauf-Koordinator-Session für das angegebene PROJ-X."""
+
+
+class FeatureCoordinatorService:
+    """Featurezentrierter Koordinator über dem SessionManager (PROJ-79)."""
+
+    ROLE = "coordinator"
+
+    def __init__(self, manager: SessionManager, vault: VaultService) -> None:
+        self._manager = manager
+        self._vault = vault
+
+    # --- Plan --------------------------------------------------------------
+
+    def feature_plan(self, project_path: str, feature_id: str) -> dict:
+        return build_feature_plan(project_path, feature_id)
+
+    # --- Dispatch ----------------------------------------------------------
+
+    async def feature_dispatch(self, project_path: str, feature_id: str, items: list[dict]) -> dict:
+        """Freigegebenen Feature-Plan dispatchen → eine Feature-Lauf-Koordinator-Session
+        + die bereiten internen Arbeitspakete als Kind-Sessions."""
+        real = validate_project_path(project_path)
+        num = _norm_feature_id(feature_id)
+        decision = policy_store.evaluate(DISPATCH_ACTION, role=self.ROLE, project=real)
+        if decision.level == DENY:
+            raise DispatchDeniedError(
+                decision.reason or "Dispatch ist durch die Trust-Policy untersagt."
+            )
+
+        label = os.path.basename(real) or real
+        coordinator = await self._manager.create(
+            project_path=real,
+            initial_prompt=(
+                f"Du bist der Feature-Koordinator für PROJ-{num} (PROJ-79). Überwache die "
+                "internen Arbeitspakete, weise fehlende Abschlussbelege zurück und eskaliere "
+                "nur ein unauflösbares Scheitern als Decision Card."
+            ),
+            model="opus",
+            role=self.ROLE,
+            project_name=f"{label} · PROJ-{num}",
+            engine="claude",
+        )
+        coordinator.state.is_feature_run = True
+        coordinator.state.feature_id = num
+        # Pakete aus dem freigegebenen Plan übernehmen; nur nicht-blockierte starten.
+        packages = []
+        for it in items:
+            pkg = dict(it)
+            # Alle Pakete starten als „wartet"; der Scheduler befördert bereite (Vorgänger
+            # erledigt) selbstständig zu „bereit" und startet sie — keine Voreiligkeit.
+            pkg.setdefault("status", PK_WAIT)
+            pkg.setdefault("session_id", None)
+            pkg.setdefault("resume_attempts", 0)
+            pkg.setdefault("last_safe_state", None)
+            pkg.setdefault("proof", None)
+            packages.append(pkg)
+        coordinator.state.feature_packages = packages
+        coordinator.state.feature_plan = {
+            "feature_title": self._plan_title(items),
+            "items": [p["package_id"] for p in packages],
+        }
+        coordinator.state.feature_revision += 1
+
+        await self._schedule(coordinator)
+        return self._run_dict(coordinator)
+
+    @staticmethod
+    def _plan_title(items: list[dict]) -> str:
+        return items[0]["title"].split(" — ")[0] if items else ""
+
+    # --- Live-Sicht --------------------------------------------------------
+
+    def feature_run(self, feature_id: str) -> dict:
+        return self._run_dict(self._require_feature(feature_id))
+
+    def _require_feature(self, feature_id: str) -> SessionRuntime:
+        num = _norm_feature_id(feature_id)
+        for runtime in self._manager.list():
+            if runtime.state.is_feature_run and runtime.state.feature_id == num:
+                return runtime
+        raise FeatureNotFoundError(f"Keine Feature-Ausführung für PROJ-{num}.")
+
+    # --- Steuerung ---------------------------------------------------------
+
+    def feature_set_paused(self, feature_id: str, paused: bool) -> dict:
+        coordinator = self._require_feature(feature_id)
+        coordinator.state.coordinator_paused = paused
+        return self._run_dict(coordinator)
+
+    async def package_complete(self, feature_id: str, proof: dict) -> dict:
+        """Strukturierten Abschlussbeleg eines Pakets annehmen + prüfen. Erst nach
+        bestandener Prüfung gilt das Paket als erfolgreich und Folgepakete dürfen starten."""
+        coordinator = self._require_feature(feature_id)
+        async with _feature_lock(coordinator.state.session_id):
+            pkg = self._package(coordinator, proof.get("package_id"))
+            if pkg is None:
+                raise TicketNotFoundError(f"Kein Arbeitspaket {proof.get('package_id')}.")
+            validated = self._validate_proof(pkg, proof)
+            if validated is None:
+                raise ValueError("Abschlussbeleg unvollständig oder widersprüchlich.")
+            pkg["proof"] = validated
+            if validated.get("result_state") == "success":
+                pkg["status"] = PK_DONE
+            else:
+                pkg["status"] = PK_FAIL
+            coordinator.state.feature_revision += 1
+            if pkg["status"] == PK_FAIL:
+                await self._block(coordinator, pkg, "Abschlussbeleg meldet Fehlschlag.")
+            else:
+                await self._schedule(coordinator)
+        return self._run_dict(coordinator)
+
+    async def feature_decision(self, feature_id: str, action: str, package_id: str | None) -> dict:
+        """„retry" / „manual" / „abort" auf die eine Blockierungs-Card."""
+        coordinator = self._require_feature(feature_id)
+        async with _feature_lock(coordinator.state.session_id):
+            blocker = coordinator.state.feature_blocker
+            if action in ("retry", "manual") and blocker is None:
+                raise ValueError("Keine offene Blockierungsentscheidung für diesen Lauf.")
+            target_id = package_id or (blocker.get("package_id") if blocker else None)
+            if action == "retry":
+                pkg = self._package(coordinator, target_id)
+                if pkg is None:
+                    raise TicketNotFoundError(f"Kein Arbeitspaket {target_id}.")
+                pkg["status"] = PK_WAIT
+                pkg["proof"] = None
+                pkg["resume_attempts"] = pkg.get("resume_attempts", 0) + 1
+                coordinator.state.feature_blocker = None
+                self._resolve_blocker_card(coordinator)
+                coordinator.state.coordinator_paused = False  # Blockierung war ein Pausieren
+                coordinator.state.feature_revision += 1
+                await self._schedule(coordinator)
+            elif action == "manual":
+                pkg = self._package(coordinator, target_id)
+                if pkg is None:
+                    raise TicketNotFoundError(f"Kein Arbeitspaket {target_id}.")
+                pkg["status"] = PK_MANUAL
+                pkg["session_id"] = None
+                coordinator.state.feature_blocker = None
+                self._resolve_blocker_card(coordinator)
+                coordinator.state.feature_revision += 1
+                # Manual-Session wird vom Nutzer im Cockpit geöffnet; der Lauf bleibt pausiert,
+                # bis der Beleg über /complete eingespielt wird.
+                coordinator.state.coordinator_paused = True
+            elif action == "abort":
+                await self._abort(coordinator)
+            else:
+                raise ValueError(f"Unbekannte Aktion: {action}")
+        return self._run_dict(coordinator)
+
+    # --- Scheduler (Hintergrund-Tick) --------------------------------------
+
+    async def schedule_feature_runs(self) -> None:
+        """Für jede laufende Feature-Ausführung: bereite Pakete starten, terminale
+        Kind-Sessions auf Abschlussbeleg prüfen, Gesamtlauf abschließen."""
+        for runtime in self._manager.list():
+            if not runtime.state.is_feature_run:
+                continue
+            if runtime.state.coordinator_paused or runtime.state.feature_blocker:
+                continue
+            async with _feature_lock(runtime.state.session_id):
+                await self._schedule(runtime)
+                await self._reap_children(runtime)
+
+    async def _schedule(self, coordinator: SessionRuntime) -> None:
+        """Bereite Pakete starten (freie Slots), Gesamtlauf abschließen."""
+        num = coordinator.state.feature_id
+        real = coordinator.state.project_path
+        label = os.path.basename(real) or real
+        for pkg in coordinator.state.feature_packages:
+            if pkg["status"] in (PK_WAIT, PK_READY) and self._deps_done(coordinator, pkg):
+                pkg["status"] = PK_READY
+                if self._manager.active_count() >= self._manager.max_parallel_sessions:
+                    continue  # Slot frei → nächster Tick
+                await self._start_package(coordinator, real, label, pkg, num)
+        if all(p["status"] == PK_DONE for p in coordinator.state.feature_packages) \
+                and coordinator.state.feature_packages:
+            coordinator.state.feature_blocker = None
+            self._resolve_blocker_card(coordinator)
+
+    def _deps_done(self, coordinator: SessionRuntime, pkg: dict) -> bool:
+        by_id = {p["package_id"]: p for p in coordinator.state.feature_packages}
+        for dep in pkg.get("dependencies", []):
+            dep_pkg = by_id.get(dep)
+            if dep_pkg is None or dep_pkg["status"] != PK_DONE:
+                return False
+        return True
+
+    async def _start_package(
+        self, coordinator: SessionRuntime, real: str, label: str, pkg: dict, num: str
+    ) -> None:
+        skill = pkg.get("skill")
+        prompt = f"/{skill} {num}" if skill else f"Bearbeite Arbeitspaket {pkg['package_id']}."
+        child = await self._manager.create(
+            project_path=real,
+            initial_prompt=prompt,
+            model=pkg.get("model") or "sonnet",
+            role=pkg.get("role"),
+            project_name=f"{label} · {pkg['package_id']}",
+            engine=pkg.get("engine") or "claude",
+            parent_coordinator_id=coordinator.state.session_id,
+            ticket_id=f"PROJ-{num}",
+            contract_pointer=coordinator.state.contract_pointer,
+        )
+        pkg["session_id"] = child.state.session_id
+        pkg["status"] = PK_RUN
+        coordinator.state.child_session_ids.append(child.state.session_id)
+        coordinator.state.feature_revision += 1
+
+    async def _reap_children(self, coordinator: SessionRuntime) -> None:
+        """Terminale Kind-Sessions eines Pakets prüfen: mit gültigem Beleg → erfolgreich,
+        sonst → fehlgeschlagen + Blockierung (kein „Prozess beendet = fertig")."""
+        from .manager import DONE, ERROR  # lazily, um Import-Runde zu vermeiden
+
+        by_session: dict[str, dict] = {
+            p["session_id"]: p for p in coordinator.state.feature_packages if p.get("session_id")
+        }
+        for pkg in list(by_session.values()):
+            if pkg["status"] != PK_RUN:
+                continue
+            child = self._manager.get(pkg["session_id"])
+            if child is None:
+                pkg["status"] = PK_FAIL
+                pkg["last_safe_state"] = "Session nicht auffindbar."
+                await self._block(coordinator, pkg, "Kind-Session nicht auffindbar.")
+                continue
+            if child.state.status in (DONE, ERROR):
+                # Kein Abschlussbeleg → nicht als erfolgreich zählen (AC).
+                if pkg.get("proof") and pkg["proof"].get("result_state") == "success":
+                    pkg["status"] = PK_DONE
+                else:
+                    pkg["status"] = PK_FAIL
+                    pkg["last_safe_state"] = f"Session endete ({child.state.status}) ohne Beleg."
+                    await self._block(coordinator, pkg, pkg["last_safe_state"])
+
+    # --- Blockierung / Abschlussbeleg --------------------------------------
+
+    @staticmethod
+    def _validate_proof(pkg: dict, proof: dict) -> dict | None:
+        """Rollenbezogenen Abschlussbeleg grob prüfen. None = unvollständig/widersprüchlich."""
+        if proof.get("package_id") != pkg["package_id"]:
+            return None
+        if proof.get("result_state") not in ("success", "failed"):
+            return None
+        if proof.get("result_state") == "success":
+            # Pflicht: Artefakte + mindestens eine Prüfung mit Ergebnis.
+            if not proof.get("artifacts"):
+                return None
+            checks = proof.get("checks") or []
+            if not any(c.get("result") for c in checks):
+                return None
+        return proof
+
+    async def _block(self, coordinator: SessionRuntime, pkg: dict, cause: str) -> None:
+        """Gesamtlauf atomar pausieren + genau eine persistierte Blockierungs-Card."""
+        coordinator.state.coordinator_paused = True
+        coordinator.state.feature_blocker = {
+            "package_id": pkg["package_id"],
+            "cause": cause,
+            "last_safe_state": pkg.get("last_safe_state"),
+            "decision_id": str(uuid.uuid4()),
+        }
+        coordinator.state.feature_revision += 1
+        self._add_blocker_card(coordinator, pkg, cause)
+
+    def _add_blocker_card(self, coordinator: SessionRuntime, pkg: dict, cause: str) -> None:
+        from .decisions import OPEN, PendingDecision
+
+        decision_id = coordinator.state.feature_blocker["decision_id"]
+        card = PendingDecision(
+            decision_id=decision_id,
+            session_id=coordinator.state.session_id,
+            tool_name="FeatureCoordinator",
+            action=f"Arbeitspaket {pkg['package_id']} nicht fortsetzbar — Entscheidung nötig",
+            excerpt=cause,
+            rationale=(
+                f"PROJ-{coordinator.state.feature_id}: {pkg['package_id']} konnte nach "
+                f"ausgeschöpfter Wiederaufnahme nicht mit Abschlussbeleg abgeschlossen werden."
+            ),
+            context={
+                "feature_id": coordinator.state.feature_id,
+                "package_id": pkg["package_id"],
+                "role": pkg.get("role"),
+                "last_safe_state": pkg.get("last_safe_state"),
+            },
+            state=OPEN,
+            card_type="feature_blocker",
+            tool_input={"actions": ["retry", "manual", "abort"]},
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        coordinator.pending[decision_id] = card
+
+    def _resolve_blocker_card(self, coordinator: SessionRuntime) -> None:
+        blocker = coordinator.state.feature_blocker
+        if blocker is None:
+            return
+        card = coordinator.pending.get(blocker.get("decision_id"))
+        if card is not None:
+            card.state = "obsolete"
+
+    async def _abort(self, coordinator: SessionRuntime) -> None:
+        for sid in list(coordinator.state.child_session_ids):
+            child = self._manager.get(sid)
+            if child is not None and child.state.status not in ("done", "error", "aborted"):
+                try:
+                    await self._manager.stop(sid)
+                except Exception:  # noqa: BLE001
+                    pass
+        coordinator.state.feature_blocker = None
+        self._resolve_blocker_card(coordinator)
+        coordinator.state.feature_aborted = True
+        coordinator.state.feature_revision += 1
+
+    # --- intern ------------------------------------------------------------
+
+    def _package(self, coordinator: SessionRuntime, package_id: str | None) -> dict | None:
+        if not package_id:
+            return None
+        for p in coordinator.state.feature_packages:
+            if p["package_id"] == package_id:
+                return p
+        return None
+
+    def _run_dict(self, coordinator: SessionRuntime) -> dict:
+        packages = [
+            {
+                "package_id": p["package_id"],
+                "title": p["title"],
+                "role": p.get("role"),
+                "skill": p.get("skill"),
+                "engine": p.get("engine") or "claude",
+                "model": p.get("model"),
+                "status": p["status"],
+                "dependencies": list(p.get("dependencies", [])),
+                "write_scope": list(p.get("write_scope", [])),
+                "required_proof": p.get("required_proof", "other"),
+                "session_id": p.get("session_id"),
+                "resume_attempts": p.get("resume_attempts", 0),
+                "last_safe_state": p.get("last_safe_state"),
+                "proof": p.get("proof"),
+            }
+            for p in coordinator.state.feature_packages
+        ]
+        if coordinator.state.feature_blocker:
+            status = RUN_BLOCKED
+        elif coordinator.state.feature_aborted:
+            status = RUN_ABORTED
+        elif coordinator.state.coordinator_paused:
+            status = RUN_PAUSED
+        elif packages and all(p["status"] == PK_DONE for p in packages):
+            status = RUN_DONE
+        elif packages:
+            status = RUN_RUNNING
+        else:
+            status = RUN_PLANNING
+        return {
+            "feature_id": coordinator.state.feature_id or "",
+            "status": status,
+            "coordinator": coordinator.to_read(),
+            "packages": packages,
+            "paused": coordinator.state.coordinator_paused,
+            "revision": coordinator.state.feature_revision,
+            "blocker": coordinator.state.feature_blocker,
         }

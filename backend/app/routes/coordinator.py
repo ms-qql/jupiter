@@ -14,15 +14,23 @@ from ..engine.coordinator import (
     CoordinatorNotFoundError,
     CoordinatorService,
     DispatchDeniedError,
+    FeatureCoordinatorService,
+    FeatureNotFoundError,
     TicketNotFoundError,
 )
 from ..engine.manager import EngineUnavailableError, SessionLimitError
 from ..schemas.coordinator import (
+    CompletionProof,
     ContractRequest,
     CoordinatorFleet,
     CoordinatorPlan,
     CoordinatorPlanRequest,
     DispatchRequest,
+    FeatureDecisionRequest,
+    FeatureDispatchRequest,
+    FeaturePlan,
+    FeaturePlanRequest,
+    FeatureRun,
     PauseRequest,
     ReassignRequest,
 )
@@ -33,6 +41,10 @@ router = APIRouter(prefix="/coordinator", tags=["coordinator"])
 
 def _service(request: Request) -> CoordinatorService:
     return request.app.state.coordinator
+
+
+def _feature_service(request: Request) -> FeatureCoordinatorService:
+    return request.app.state.feature_coordinator
 
 
 @router.post("/plan", response_model=CoordinatorPlan)
@@ -110,5 +122,85 @@ async def coordinator_contract(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (PermissionError, OSError) as exc:  # Vault nicht schreibbar
         raise HTTPException(status_code=503, detail=f"Vertrag nicht geschrieben (Vault): {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- PROJ-79: Featurezentrierter Koordinator ---------------------------------
+
+
+@router.post("/feature-plan", response_model=FeaturePlan)
+async def coordinator_feature_plan(payload: FeaturePlanRequest, request: Request) -> dict:
+    """Internen Verteilungsplan für EIN Feature PROJ-X erzeugen (startet NICHTS)."""
+    try:
+        return _feature_service(request).feature_plan(payload.project_path, payload.feature_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/feature-dispatch", response_model=FeatureRun, status_code=201)
+async def coordinator_feature_dispatch(payload: FeatureDispatchRequest, request: Request) -> dict:
+    """Freigegebenen Feature-Plan dispatchen → Feature-Ausführung (Koordinator + Pakete)."""
+    items = [it.model_dump() for it in payload.items]
+    try:
+        return await _feature_service(request).feature_dispatch(
+            payload.project_path, payload.feature_id, items
+        )
+    except DispatchDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except SessionLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except EngineUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/features/{feature_id}", response_model=FeatureRun)
+async def coordinator_feature_run(feature_id: str, request: Request) -> dict:
+    try:
+        return _feature_service(request).feature_run(feature_id)
+    except FeatureNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/features/{feature_id}/pause", response_model=FeatureRun)
+async def coordinator_feature_pause(
+    feature_id: str, payload: PauseRequest, request: Request
+) -> dict:
+    try:
+        return _feature_service(request).feature_set_paused(feature_id, payload.paused)
+    except FeatureNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/features/{feature_id}/decision", response_model=FeatureRun)
+async def coordinator_feature_decision(
+    feature_id: str, payload: FeatureDecisionRequest, request: Request
+) -> dict:
+    try:
+        return await _feature_service(request).feature_decision(
+            feature_id, payload.action, payload.package_id
+        )
+    except FeatureNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/features/{feature_id}/packages/{package_id}/complete", response_model=FeatureRun)
+async def coordinator_package_complete(
+    feature_id: str, package_id: str, payload: CompletionProof, request: Request
+) -> dict:
+    proof = payload.model_dump()
+    proof["package_id"] = package_id  # Pfad schlägt Vorrang vor Body
+    try:
+        return await _feature_service(request).package_complete(feature_id, proof)
+    except FeatureNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

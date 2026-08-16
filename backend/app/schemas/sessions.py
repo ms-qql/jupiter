@@ -174,6 +174,10 @@ class SessionRead(BaseModel):
     savings_pilot_task: str | None = None
     savings_latency_ms: float | None = None
     savings_pilot_safe: bool | None = None
+    # PROJ-79 — Featurezentrierter Koordinator: eine Feature-Ausführung ist selbst eine
+    # Koordinator-Session; diese Felder gruppieren die Kind-Sessions im Cockpit.
+    is_feature_run: bool = False
+    feature_id: str | None = None
 
 
 class PermissionHookRequest(BaseModel):
