@@ -34,9 +34,31 @@ import { useOrchestrationApps } from "./use-orchestration-apps";
 import { useMicroApps } from "./use-microapps";
 import { useMicroAppStatuses } from "./use-microapp-status";
 import { useNow, useSessions } from "./sessions-provider";
-import { useWorkspace } from "./workspace-provider";
+import { useWorkspace, type Pane, type PaneIndex } from "./workspace-provider";
 
 const RAIL_LIMIT = 10;
+
+/** Sitzt die Session-ID im aktiven Pane? Im Workspace-Fall ist das genau
+ *  der Pane, dem die URL folgt. */
+function isActiveSession(
+  panes: [Pane, Pane],
+  activeIndex: PaneIndex,
+  id: string,
+): boolean {
+  const p = panes[activeIndex];
+  return p?.kind === "session" && p.id === id;
+}
+
+/** Sitzt die Session-ID im anderen Pane (also sichtbar, aber nicht aktiv)? */
+function isSecondarySession(
+  panes: [Pane, Pane],
+  activeIndex: PaneIndex,
+  id: string,
+): boolean {
+  const other = (activeIndex === 0 ? 1 : 0) as PaneIndex;
+  const p = panes[other];
+  return p?.kind === "session" && p.id === id;
+}
 
 function sortForRail(sessions: Session[]): Session[] {
   return [...sessions].sort((a, b) => {
@@ -49,7 +71,7 @@ function sortForRail(sessions: Session[]): Session[] {
 export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
   const { sessions, initialLoading, error } = useSessions();
   const pathname = usePathname();
-  const { openIds, activeId } = useWorkspace();
+  const { panes, activeIndex } = useWorkspace();
   const now = useNow();
   const [showArchived, setShowArchived] = useState(false);
   const { visibleItems } = useSidebarPrefs();
@@ -237,8 +259,8 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
                     key={s.session_id}
                     session={s}
                     now={now}
-                    active={activeId === s.session_id}
-                    secondOpen={openIds.length > 1 && openIds.includes(s.session_id) && activeId !== s.session_id}
+                    active={isActiveSession(panes, activeIndex, s.session_id)}
+                    secondOpen={isSecondarySession(panes, activeIndex, s.session_id)}
                     onNavigate={onItemClick}
                   />
                 ))
@@ -266,8 +288,8 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
                         key={s.session_id}
                         session={s}
                         now={now}
-                        active={activeId === s.session_id}
-                        secondOpen={openIds.length > 1 && openIds.includes(s.session_id) && activeId !== s.session_id}
+                        active={isActiveSession(panes, activeIndex, s.session_id)}
+                        secondOpen={isSecondarySession(panes, activeIndex, s.session_id)}
                         onNavigate={onItemClick}
                       />
                     ))}

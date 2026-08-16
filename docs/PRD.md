@@ -85,7 +85,8 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-74 | Bugfix: Backend-Neustart orphaniert lebende tmux-Sessions unnötig (rehydrate() ignoriert echte Prozess-Liveness) | P1 | Engine-Layer / Persistenz / Resume | Deployed |
 | PROJ-75 | Bugfix-Verifikation: PROJ-72-Transkript-Replay nach wiederholtem Resume in Produktion nicht restlos ausgeschlossen | P1 | Engine-Layer / Persistenz / Resume | Planned |
 | PROJ-76 | Textdateien im Fileexplorer bearbeiten | P1 | Arbeitsraum / Dateien / Editor | Architected |
-| PROJ-78 | Zwei Session-Ansichten mit Entwurfs-Schutz | P1 | Cockpit / Session-Arbeitsraum | Architected |
+| PROJ-77 | masterskill-creator — agenten-unabhängige Master-Skills in Hal + Pointer-Stubs je CLI | P1 | Skills / Agenten-Portabilität | Architected |
+| PROJ-78 | Session-Arbeitsbereich mit Zwei-Ansichten und Dateien | P1 | Cockpit / Session-Arbeitsraum / Dateien | Planned |
 
 ---
 

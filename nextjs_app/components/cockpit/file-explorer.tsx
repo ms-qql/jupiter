@@ -8,29 +8,23 @@
 // PROJ-28: Drei-Spalten-Layout analog Doku-Reader (PROJ-7) — Cockpit-Sidebar
 // (über CockpitShell) · schmales Datei-Panel · große Inhalts-Ansicht. Auswahl
 // einer Datei rendert ihre Vorschau rechts (FilePreview).
+//
+// PROJ-78: das Listing-Panel ist in FileWorkspace ausgelagert, damit der
+// Workspace es als zweiten Pane einbetten kann. Diese Komponente behält
+// Header, Toolbar, Vorschau/Editor und den Ungespeichert-Dialog.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
   ArrowUp,
-  BrainCircuit,
-  ClipboardPaste,
-  Copy,
-  Download,
-  File as FileIcon,
-  Folder,
   FolderPlus,
-  Pencil,
   RefreshCw,
-  TextCursor,
-  Trash2,
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -43,33 +37,13 @@ import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { FilePreview } from "@/components/cockpit/file-preview";
 import { TextFileEditor } from "@/components/cockpit/text-file-editor";
 import { ActiveSessionPanel } from "@/components/cockpit/active-session-panel";
-import { ResizableAside } from "@/components/cockpit/resizable-aside";
 import { BranchBadge } from "@/components/cockpit/branch-panel";
-import {
-  ApiError,
-  deleteFiles,
-  downloadFile,
-  downloadZip,
-  getClipboardDir,
-  listDir,
-  listFileRoots,
-  makeDir,
-  renameFile,
-} from "@/lib/api";
+import { FileWorkspace } from "@/components/cockpit/file-workspace";
+import { ApiError, getClipboardDir, listFileRoots, listDir, makeDir } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import type { DirListing, FileEntry, RootEntry } from "@/lib/types";
+import type { FileEntry } from "@/lib/types";
 import { useFileUpload } from "./use-file-upload";
-
-// Fixer Pfad des Hal-Vaults (settings.vault_root) — kein eigener Root, aber
-// per Sprungmarke wie Clipboard sofort erreichbar.
-const HAL_PATH = "/home/dev/tools/Hal";
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function parentOf(path: string): string {
   const trimmed = path.replace(/\/+$/, "");
@@ -78,92 +52,46 @@ function parentOf(path: string): string {
 }
 
 export function FileExplorer() {
-  const [roots, setRoots] = useState<RootEntry[]>([]);
+  // Pfad liegt hier, damit Header (Hoch, Refresh, Pfad, BranchBadge) und
+  // FileWorkspace synchron bleiben. FileWorkspace ist controlled und
+  // emittiert Pfad-Wechsel via `onPathChange`.
   const [path, setPath] = useState<string | null>(null);
-  const [listing, setListing] = useState<DirListing | null>(null);
-  const [clipboardPath, setClipboardPath] = useState<string | null>(null);
+  const [roots, setRoots] = useState<{ path: string; label: string }[]>([]);
+  // Refresh-Schlüssel: monoton steigend, löst einen Reload in FileWorkspace
+  // aus (z. B. nach Upload / Neuer Ordner). Erweitert wird er auch, wenn
+  // FileExplorer den Pfad bereits kennt und die Liste neu braucht.
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Preview/Editor-Staat (Inline-Preview rechts, Texte bearbeiten).
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  // PROJ-28: auf schmalen Breiten Panel ⇄ Ansicht umschalten (nie beide quetschen).
-  const [mobilePane, setMobilePane] = useState<"list" | "view">("list");
-  const dropActive = useRef(false);
-  const [dragOver, setDragOver] = useState(false);
-  // PROJ-76: Editor-Modus.
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const dirtyRef = useRef(false);
   const saveRef = useRef<(() => Promise<void>) | null>(null);
   const [savingUnsaved, setSavingUnsaved] = useState(false);
-  // Ungespeichert-Dialog: pending-Aktion wird ausgeführt, sobald der Nutzer
-  // Speichern/Verwerfen wählt; Abbrechen = null.
   const [unsavedAction, setUnsavedAction] = useState<(() => void) | null>(null);
+  // PROJ-28: auf schmalen Breiten Panel ⇄ Ansicht umschalten (nie beide quetschen).
+  const [mobilePane, setMobilePane] = useState<"list" | "view">("list");
 
   const { upload, uploading } = useFileUpload(path ?? undefined);
 
-  // Einmalig: Roots + Clipboard-Ordner laden, ersten Root öffnen.
+  // Roots + Clipboard-Ordner initial laden, damit die Toolbar den Pfad
+  // bereits kennt, bevor FileWorkspace eingebunden ist.
+  const [initialError, setInitialError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     Promise.all([listFileRoots(), getClipboardDir()])
-      .then(([r, clip]) => {
+      .then(([r]) => {
         if (!active) return;
         setRoots(r);
-        setClipboardPath(clip.path);
         setPath((prev) => prev ?? r[0]?.path ?? null);
       })
       .catch((e) =>
-        active && setError(e instanceof ApiError ? e.message : "Nicht erreichbar"),
+        active && setInitialError(e instanceof ApiError ? e.message : "Nicht erreichbar"),
       );
     return () => {
       active = false;
     };
   }, []);
-
-  // Nach Mutationen (Upload/mkdir/rename/delete) neu laden — ohne Spinner-Flackern.
-  const refresh = useCallback(async () => {
-    if (!path) return;
-    try {
-      setListing(await listDir(path));
-      setError(null);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Ordner nicht lesbar");
-      setListing(null);
-    }
-  }, [path]);
-
-  // Laden bei Pfadwechsel — setState nur in den Promise-Callbacks (kein sync setState im Effect).
-  useEffect(() => {
-    if (!path) return;
-    setSelected(new Set());
-    let active = true;
-    listDir(path)
-      .then((d) => {
-        if (!active) return;
-        setListing(d);
-        setError(null);
-        setLoading(false);
-      })
-      .catch((e) => {
-        if (!active) return;
-        setError(e instanceof ApiError ? e.message : "Ordner nicht lesbar");
-        setListing(null);
-        setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [path]);
-
-  const handleUpload = useCallback(
-    async (files: File[]) => {
-      const entries = await upload(files);
-      if (entries.length) {
-        toast.success(`${entries.length} Datei(en) hochgeladen`);
-        void refresh();
-      }
-    },
-    [upload, refresh],
-  );
 
   // PROJ-76: Browser-Reload/Tab-Schließen mit ungespeicherten Änderungen.
   useEffect(() => {
@@ -177,6 +105,16 @@ export function FileExplorer() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
+  const refresh = () => setRefreshKey((k) => k + 1);
+
+  const handleUpload = async (files: File[]) => {
+    const entries = await upload(files);
+    if (entries.length) {
+      toast.success(`${entries.length} Datei(en) hochgeladen`);
+      refresh();
+    }
+  };
+
   // Paste (Screenshot/Datei) → Upload in den aktuellen Ordner.
   useEffect(() => {
     function onPaste(e: ClipboardEvent) {
@@ -188,7 +126,8 @@ export function FileExplorer() {
     }
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [handleUpload]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path]);
 
   async function handleNewFolder() {
     if (!path) return;
@@ -196,60 +135,9 @@ export function FileExplorer() {
     if (!name) return;
     try {
       await makeDir(path, name);
-      void refresh();
+      refresh();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Ordner anlegen fehlgeschlagen");
-    }
-  }
-
-  async function handleRename(entry: FileEntry) {
-    const next = window.prompt("Neuer Name:", entry.name)?.trim();
-    if (!next || next === entry.name) return;
-    try {
-      await renameFile(entry.path, next);
-      if (selectedPath === entry.path) setSelectedPath(null); // toter Verweis vermeiden
-      void refresh();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Umbenennen fehlgeschlagen");
-    }
-  }
-
-  async function handleDelete(entry: FileEntry) {
-    const what = entry.kind === "dir" ? "Ordner (inkl. Inhalt)" : "Datei";
-    if (!window.confirm(`${what} „${entry.name}" wirklich löschen?`)) return;
-    try {
-      const res = await deleteFiles([entry.path]);
-      if (res.failed.length) toast.error("Löschen fehlgeschlagen");
-      if (selectedPath === entry.path) setSelectedPath(null); // Ansicht auf Empty-State
-      void refresh();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Löschen fehlgeschlagen");
-    }
-  }
-
-  async function handleDeleteSelected() {
-    const paths = Array.from(selected);
-    if (!paths.length) return;
-    if (!window.confirm(`${paths.length} Element(e) wirklich löschen?`)) return;
-    try {
-      const res = await deleteFiles(paths);
-      if (res.failed.length) toast.error("Löschen fehlgeschlagen");
-      if (selectedPath && paths.includes(selectedPath)) setSelectedPath(null);
-      setSelected(new Set());
-      void refresh();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Löschen fehlgeschlagen");
-    }
-  }
-
-  async function handleDownloadSelected() {
-    const paths = Array.from(selected);
-    if (!paths.length) return;
-    try {
-      await downloadZip(paths);
-      setSelected(new Set());
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Download fehlgeschlagen");
     }
   }
 
@@ -258,7 +146,10 @@ export function FileExplorer() {
     toast[ok ? "success" : "error"](ok ? "Pfad kopiert" : "Kopieren nicht möglich");
   }
 
-  function openDir(p: string) {
+  // FileWorkspace ruft diese Funktionen auf, wenn der Nutzer eine Datei
+  // anklickt. Wir müssen dabei aber den Ungespeichert-Guard (PROJ-76) und
+  // die mobilePane-Umschaltung übernehmen.
+  function openListingDir(p: string) {
     function go() {
       setSelectedPath(null);
       setEditingPath(null);
@@ -298,16 +189,34 @@ export function FileExplorer() {
   }
 
   const canGoUp = path !== null && !roots.some((r) => r.path === path);
-  // Ausgewählte Datei aus der aktuellen Liste ableiten → gelöscht/umbenannt/weg-
-  // navigiert ⇒ automatisch Empty-State, kein toter Verweis.
+
+  // Auswahl-Datei aus aktiv geladenem Listing ableiten — wir laden das
+  // Listing bei Bedarf einmal hier, damit ein gelöschter/umbenannter Pfad
+  // nicht zu einem toten Verweis im Preview-Panel führt. Die Liste wird
+  // zusätzlich an path und refreshKey gehängt, damit „Hoch/Refresh/Neu/
+  // Upload" exakt dieselbe Datenquelle wie FileWorkspace sehen.
+  const [previewListing, setPreviewListing] = useState<{ entries: FileEntry[] } | null>(null);
+  useEffect(() => {
+    if (!path) return;
+    let active = true;
+    listDir(path)
+      .then((d) => active && setPreviewListing(d))
+      .catch(() => {
+        // Fehler werden vom FileWorkspace angezeigt; hier nur stumm
+        // verwerfen, damit das Preview-Panel leer bleibt.
+      });
+    return () => {
+      active = false;
+    };
+  }, [path, refreshKey]);
   const selectedEntry =
     (selectedPath &&
-      listing?.entries.find((e) => e.path === selectedPath && e.kind === "file")) ||
+      previewListing?.entries.find((e) => e.path === selectedPath && e.kind === "file")) ||
     null;
 
   return (
     <div className="flex h-dvh flex-col">
-      {/* Header: Breadcrumb · Toolbar · Pfad · Theme */}
+      {/* Header: Back · H1 · Toolbar-Buttons · Pfad · BranchBadge · Theme */}
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
         <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
           ← Cockpit
@@ -315,14 +224,30 @@ export function FileExplorer() {
         <h1 className="text-sm font-semibold tracking-tight">📁 Dateien</h1>
 
         <div className="flex items-center gap-2">
-          <Button type="button" size="sm" variant="outline" disabled={!canGoUp}
-            onClick={() => path && openDir(parentOf(path))}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!canGoUp}
+            onClick={() => path && openListingDir(parentOf(path))}
+          >
             <ArrowUp className="size-4" /> Hoch
           </Button>
-          <Button type="button" size="sm" variant="outline" onClick={() => void refresh()}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={refresh}
+          >
             <RefreshCw className="size-4" />
           </Button>
-          <Button type="button" size="sm" variant="outline" onClick={handleNewFolder} disabled={!path}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={handleNewFolder}
+            disabled={!path}
+          >
             <FolderPlus className="size-4" /> Neuer Ordner
           </Button>
           <UploadButton onPick={handleUpload} uploading={uploading} />
@@ -344,201 +269,31 @@ export function FileExplorer() {
         </div>
       </header>
 
+      {initialError && (
+        <p className="border-b border-border bg-red-500/10 px-4 py-2 text-sm text-red-400">
+          {initialError}
+        </p>
+      )}
+
       <div className="flex min-h-0 flex-1">
-        {/* Spalte 2: Datei-/Verzeichnis-Panel */}
-        <ResizableAside
-          storageKey="dateien:list-width"
-          defaultWidth={320}
+        {/* Spalte 2: Datei-/Verzeichnis-Panel (PROJ-78: ausgelagert in FileWorkspace). */}
+        <div
           className={cn(
-            "w-full flex-col border-r border-border bg-card/40 md:flex",
+            "w-full md:flex",
             mobilePane === "list" ? "flex" : "hidden md:flex",
           )}
-          onDrop={(e) => {
-            const files = Array.from(e.dataTransfer.files);
-            if (files.length) {
-              e.preventDefault();
-              void handleUpload(files);
-            }
-            setDragOver(false);
-            dropActive.current = false;
-          }}
-          onDragOver={(e) => {
-            if (e.dataTransfer.types.includes("Files")) {
-              e.preventDefault();
-              if (!dropActive.current) {
-                dropActive.current = true;
-                setDragOver(true);
-              }
-            }
-          }}
-          onDragLeave={() => {
-            dropActive.current = false;
-            setDragOver(false);
-          }}
         >
-          {/* Root-Auswahl */}
-          <div className="flex flex-wrap items-center gap-2 border-b border-border p-2">
-            {roots.map((r) => (
-              <Button
-                key={r.path}
-                type="button"
-                size="sm"
-                variant={path?.startsWith(r.path) ? "default" : "outline"}
-                onClick={() => openDir(r.path)}
-              >
-                {r.label}
-              </Button>
-            ))}
-            {clipboardPath && (
-              <Button
-                type="button"
-                size="sm"
-                variant={path === clipboardPath ? "default" : "secondary"}
-                onClick={() => openDir(clipboardPath)}
-                title={clipboardPath}
-              >
-                <ClipboardPaste className="size-4" /> Clipboard
-              </Button>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              variant={path === HAL_PATH ? "default" : "secondary"}
-              onClick={() => openDir(HAL_PATH)}
-              title={HAL_PATH}
-            >
-              <BrainCircuit className="size-4" /> HAL
-            </Button>
-          </div>
-
-          {/* Mehrfachauswahl: alle markieren + gesammelt löschen. */}
-          {listing && listing.entries.length > 0 && (
-            <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs">
-              <label className="flex items-center gap-1.5 text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={selected.size === listing.entries.length}
-                  onChange={(e) =>
-                    setSelected(
-                      e.target.checked ? new Set(listing.entries.map((en) => en.path)) : new Set(),
-                    )
-                  }
-                />
-                Alle
-              </label>
-              {selected.size > 0 && (
-                <div className="ml-auto flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-6 px-2"
-                    onClick={() => void handleDownloadSelected()}
-                  >
-                    <Download className="size-3.5" /> {selected.size} herunterladen
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="destructive"
-                    className="h-6 px-2"
-                    onClick={() => void handleDeleteSelected()}
-                  >
-                    <Trash2 className="size-3.5" /> {selected.size} löschen
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Listing */}
-          <ScrollArea
-            className={cn("flex-1", dragOver && "bg-primary/5 ring-1 ring-inset ring-primary")}
-          >
-            {loading ? (
-              <p className="p-6 text-center text-sm text-muted-foreground">Lädt…</p>
-            ) : error ? (
-              <p className="p-6 text-center text-sm text-red-400">{error}</p>
-            ) : !listing || listing.entries.length === 0 ? (
-              <p className="p-6 text-center text-sm text-muted-foreground">
-                Leerer Ordner. Dateien hierher ziehen oder einfügen (Strg/Cmd+V).
-              </p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {listing.entries.map((entry) => (
-                  <li
-                    key={entry.path}
-                    className={cn(
-                      "group flex items-center gap-2 px-3 py-2 text-sm",
-                      entry.path === selectedPath && "bg-accent",
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.has(entry.path)}
-                      onChange={(e) =>
-                        setSelected((prev) => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.add(entry.path);
-                          else next.delete(entry.path);
-                          return next;
-                        })
-                      }
-                    />
-                    {entry.kind === "dir" ? (
-                      <button
-                        className="flex flex-1 items-center gap-2 truncate text-left hover:text-primary"
-                        onClick={() => openDir(entry.path)}
-                      >
-                        <Folder className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate" title={entry.name}>
-                          {entry.name}
-                        </span>
-                      </button>
-                    ) : (
-                      <button
-                        className="flex flex-1 items-center gap-2 truncate text-left hover:text-primary"
-                        onClick={() => selectFile(entry)}
-                      >
-                        <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate" title={entry.name}>
-                          {entry.name}
-                        </span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatBytes(entry.size)}
-                        </span>
-                      </button>
-                    )}
-                    <div className="flex items-center gap-1 text-muted-foreground opacity-0 group-hover:opacity-100">
-                      <IconBtn title="Pfad kopieren" onClick={() => void copyPath(entry.path)}>
-                        <Copy className="size-4" />
-                      </IconBtn>
-                      {entry.kind === "file" && (
-                        <IconBtn
-                          title="Herunterladen"
-                          onClick={() => void downloadFile(entry.path, entry.name)}
-                        >
-                          <Download className="size-4" />
-                        </IconBtn>
-                      )}
-                      {entry.editable && entry.kind === "file" && (
-                        <IconBtn title="Bearbeiten" onClick={() => editFile(entry)}>
-                          <Pencil className="size-4" />
-                        </IconBtn>
-                      )}
-                      <IconBtn title="Umbenennen" onClick={() => void handleRename(entry)}>
-                        <TextCursor className="size-4" />
-                      </IconBtn>
-                      <IconBtn title="Löschen" onClick={() => void handleDelete(entry)}>
-                        <Trash2 className="size-4" />
-                      </IconBtn>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </ScrollArea>
-        </ResizableAside>
+          <FileWorkspace
+            key={path ?? "__none__"}
+            storageKey="dateien:list-width"
+            defaultListWidth={320}
+            path={path}
+            onPathChange={openListingDir}
+            onOpenFile={selectFile}
+            onEditFile={editFile}
+            refreshKey={refreshKey}
+          />
+        </div>
 
         {/* Spalte 3: Inhalts-Ansicht */}
         <main
@@ -564,8 +319,10 @@ export function FileExplorer() {
                 entry={selectedEntry}
                 saveRef={saveRef}
                 onClose={() => setEditingPath(null)}
-                onDirtyChange={(d) => { dirtyRef.current = d; }}
-                onSaved={() => void refresh()}
+                onDirtyChange={(d) => {
+                  dirtyRef.current = d;
+                }}
+                onSaved={() => refresh()}
               />
             ) : selectedEntry ? (
               <FilePreview key={selectedEntry.path} entry={selectedEntry} />
@@ -625,27 +382,6 @@ export function FileExplorer() {
   );
 }
 
-function IconBtn({
-  title,
-  onClick,
-  children,
-}: {
-  title: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      className="rounded p-1 hover:bg-accent hover:text-foreground"
-    >
-      {children}
-    </button>
-  );
-}
-
 function UploadButton({
   onPick,
   uploading,
@@ -667,8 +403,13 @@ function UploadButton({
           e.target.value = "";
         }}
       />
-      <Button type="button" size="sm" variant="outline" disabled={uploading}
-        onClick={() => ref.current?.click()}>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={uploading}
+        onClick={() => ref.current?.click()}
+      >
         <Upload className="size-4" /> {uploading ? "Lädt…" : "Hochladen"}
       </Button>
     </>

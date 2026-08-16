@@ -30,7 +30,7 @@ import { SessionClipboardButton } from "@/components/cockpit/session-clipboard-b
 import { PushToTalkButton } from "@/components/cockpit/push-to-talk-button";
 import { useFileUpload } from "@/components/cockpit/use-file-upload";
 import { useNow } from "@/components/cockpit/sessions-provider";
-import { useWorkspace } from "@/components/cockpit/workspace-provider";
+import { useWorkspace, type PaneIndex } from "@/components/cockpit/workspace-provider";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { ApiError, getSession, sendInput, stopSession } from "@/lib/api";
 import {
@@ -44,7 +44,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { SessionDetail } from "@/lib/types";
 
-export function SessionView({ id }: { id: string }) {
+export function SessionView({ id, paneIndex }: { id: string; paneIndex: PaneIndex }) {
   const now = useNow();
   const { draft, setDraft, clearDraft, focus, close } = useWorkspace();
   const {
@@ -154,22 +154,14 @@ export function SessionView({ id }: { id: string }) {
 
   return (
     <div className="flex h-full flex-col p-4 md:p-6">
-      <div className="mb-3">
-        <Link
-          href="/"
-          className="text-sm text-muted-foreground hover:text-foreground"
-        >
-          ← Cockpit
-        </Link>
-      </div>
       <div className="mb-3 flex items-center justify-between">
-        {/* PROJ-78: Klick aktiviert diese Ansicht (Workspace) — Fokus setzen. */}
+        {/* PROJ-78: Klick aktiviert diese Ansicht (Workspace) — Aktiv machen. */}
         <button
           type="button"
-          onClick={() => focus(id)}
+          onClick={() => focus(paneIndex)}
           className="text-sm text-muted-foreground hover:text-foreground"
         >
-          ⇥ Ansicht fokussieren
+          ⇥ Aktiv machen
         </button>
         <button
           type="button"

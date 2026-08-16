@@ -90,7 +90,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-75 | Bugfix-Verifikation: PROJ-72-Transkript-Replay nach wiederholtem Resume in Produktion nicht restlos ausgeschlossen | P1 | Planned | PROJ-72, PROJ-63, PROJ-66, PROJ-70 | [Spec](PROJ-75-proj72-replay-produktionsverifikation.md) |
 | PROJ-76 | Textdateien im Fileexplorer bearbeiten | P1 | In Review | PROJ-11, PROJ-12, PROJ-28, PROJ-37 | [Spec](PROJ-76-textdateien-im-fileexplorer-bearbeiten.md) |
 | PROJ-77 | masterskill-creator — agenten-unabhängige Master-Skills in Hal + Pointer-Stubs je CLI | P1 | Approved | PROJ-50, PROJ-2 | [Spec](PROJ-77-masterskill-creator.md) |
-| PROJ-78 | Zwei Session-Ansichten mit Entwurfs-Schutz | P1 | Approved | PROJ-3, PROJ-14 | [Spec](PROJ-78-zwei-session-ansichten.md) |
+| PROJ-78 | Session-Arbeitsbereich mit Zwei-Ansichten und Dateien | P1 | Approved | PROJ-3, PROJ-14, PROJ-11 | [Spec](PROJ-78-zwei-session-ansichten.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
