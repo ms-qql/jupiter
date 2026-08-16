@@ -970,5 +970,55 @@ App-Code und ist grün.
   laufzeitspezifische Zustandsübergänge betrafen, die sich am zuverlässigsten
   im echten Browser verifizieren lassen.
 
+## Post-Deploy Hotfix (2026-08-16, nach Prod-Feedback auf v0.27.43)
+
+Live-Feedback vom Nutzer nach dem ersten Deploy: Trennlinie nicht bedienbar,
+„Dateien" lässt eine Session „wegspringen". Beide Punkte waren echte Bugs,
+die trotz 7 QA-Runden nicht auffielen, weil sie nur im echten Browser-DOM
+sichtbar werden — genau die Einschränkung, die jede QA-Runde als offenes
+Risiko dokumentiert hatte.
+
+### BUG-12 (Critical): SplitDivider falsch positioniert — nach statt zwischen den Panes
+- **Datei:** `app/(cockpit)/sessions/[id]/page.tsx` (Render-Reihenfolge im
+  Workspace-Container)
+- **Ursache:** `{panes.map(...)}` rendert beide `PaneSlot`s zuerst; `{twoPanes
+  && <SplitDivider .../>}` stand danach als DRITTES Flex-Item im selben
+  `flex-row`-Container — also rechts NEBEN beiden Panes statt DAZWISCHEN.
+  Keiner der 7 QA-Durchgänge fand das, weil Unit-Tests nur die Pane-Logik
+  (`computeOpenPanes` etc.) prüfen, nicht die JSX-Reihenfolge/DOM-Position.
+- **Impact:** Trennlinie de facto unbedienbar/nicht auffindbar — Nutzer hatte
+  keine Möglichkeit, die Panes zu verschieben.
+- **Fix:** Rendering umgestellt auf explizites `Fragment` pro Pane-Index; der
+  `SplitDivider` wird jetzt VOR `PaneSlot` mit `index === 1` eingefügt, sitzt
+  also strukturell zwischen Pane 0 und Pane 1.
+
+### BUG-13 (High): Kein sichtbares Merkmal für den aktiven Pane
+- **Datei:** `app/(cockpit)/sessions/[id]/page.tsx` (`PaneSlot`)
+- **Ursache:** `toggleFiles()` ersetzt spec-konform NUR den nicht-aktiven
+  Pane — aber die zwei Panes sahen bei zwei offenen Sessions optisch
+  identisch aus (kein Unterschied zwischen aktiv/inaktiv). Für den Nutzer
+  wirkte es dadurch zufällig, welche der beiden Sessions beim Öffnen von
+  „Dateien" verschwindet — genau das meldete Nutzer-Feedback als „springt
+  komplett weg".
+- **Fix:** Aktiver Pane bekommt bei `twoPanes` eine sichtbare
+  `border-t-2 border-t-primary`-Markierung (inaktiver Pane: transparente
+  Border, kein Layout-Sprung). Macht vor dem Klick auf „Dateien" erkennbar,
+  welche Ansicht bestehen bleibt.
+
+**Verifiziert:** `npx tsc --noEmit` clean, `npm run build` erfolgreich,
+`npm run test` 203/203 grün, `npm run lint` unverändert (nur die 3
+vorbestehenden, featurefremden Fehler). Kein Live-Browser-Test durch mich
+selbst möglich (weiterhin keine Test-Credentials) — Verifikation basiert auf
+genauer Nachverfolgung der tatsächlichen JSX-Render-Reihenfolge, dem Punkt,
+an dem alle bisherigen Code-Reviews vorbeigesehen hatten.
+
 ## Deployment
-_To be added by /deploy_
+- **Production URL:** https://jupiter.auxevo.tech
+- **Deployed:** 2026-08-16 · **Version:** 0.27.43 (Erst-Deploy) → **0.27.44**
+  (Hotfix BUG-12/13)
+- **Host:** Dev-VPS, host-native systemd (`jupiter-backend`, `jupiter-frontend`),
+  GitHub-Webhook-Auto-Deploy auf Push nach `main`
+- Was ausgeliefert wurde: Zwei-Pane-Session-Workspace (bis zu zwei parallele
+  Sessions), Datei-Arbeitsfläche als Pane, Dateivollansicht, Composer-Entwurf
+  pro Session. **v0.27.43 hatte bekannte Bugs:** Trennlinie nicht bedienbar
+  (BUG-12), kein visuelles Aktiv-Merkmal (BUG-13) — mit v0.27.44 behoben.

@@ -11,7 +11,7 @@
 // aber gemountet (kein State-Verlust). Beim Schließen der Vollansicht
 // kehrt der vorherige Pane-Zustand unverändert wieder.
 
-import { use, useEffect, useRef, useState } from "react";
+import { Fragment, use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, FileIcon, FolderIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -133,7 +133,7 @@ export default function SessionDetailPage({
   const mobileTablist = twoPanes;
 
   return (
-    <div className="flex h-dvh flex-col">
+    <div className="relative flex h-dvh flex-col">
       {/* Workspace-Toolbar: Back · Dateien-Toggle · Zurück zu Dateien. */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         <Link
@@ -218,33 +218,34 @@ export default function SessionDetailPage({
         }
       >
         {panes.map((pane, idx) => (
-          <PaneSlot
-            key={`${idx}-${pane?.kind ?? "empty"}-${pane?.kind === "session" ? pane.id : ""}`}
-            pane={pane}
-            index={idx as PaneIndex}
-            activeIndex={activeIndex}
-            twoPanes={twoPanes}
-            singlePane={singlePane}
-            fileFullscreen={fileFullscreen}
-            filePath={filePath}
-            fileRefreshKey={fileRefreshKey}
-            fileCanGoUp={canGoUp}
-            fileUploading={fileUploading}
-            onFilePathChange={setFilePath}
-            onFileOpen={handleOpenFile}
-            onFileUpload={handleFileUpload}
-            onFileNewFolder={handleNewFolder}
-            onFileRefresh={() => setFileRefreshKey((k) => k + 1)}
-          />
+          <Fragment key={`${idx}-${pane?.kind ?? "empty"}-${pane?.kind === "session" ? pane.id : ""}`}>
+            {idx === 1 && twoPanes && (
+              <SplitDivider
+                containerRef={containerRef}
+                ratio={splitRatio}
+                onChange={liveSetSplit}
+                onCommit={setSplitRatio}
+              />
+            )}
+            <PaneSlot
+              pane={pane}
+              index={idx as PaneIndex}
+              activeIndex={activeIndex}
+              twoPanes={twoPanes}
+              singlePane={singlePane}
+              fileFullscreen={fileFullscreen}
+              filePath={filePath}
+              fileRefreshKey={fileRefreshKey}
+              fileCanGoUp={canGoUp}
+              fileUploading={fileUploading}
+              onFilePathChange={setFilePath}
+              onFileOpen={handleOpenFile}
+              onFileUpload={handleFileUpload}
+              onFileNewFolder={handleNewFolder}
+              onFileRefresh={() => setFileRefreshKey((k) => k + 1)}
+            />
+          </Fragment>
         ))}
-        {twoPanes && (
-          <SplitDivider
-            containerRef={containerRef}
-            ratio={splitRatio}
-            onChange={liveSetSplit}
-            onCommit={setSplitRatio}
-          />
-        )}
       </div>
 
       {fileFullscreen && fullscreenEntry && (
@@ -332,6 +333,11 @@ function PaneSlot({
           "flex min-w-0 min-h-0 flex-col",
           singlePane && "mx-auto w-full max-w-4xl",
           twoPanes && !isActive && "hidden md:flex",
+          // Sichtbare Markierung, welcher Pane aktiv ist (= Ersetzungsziel
+          // für "Aktiv machen" / Sidebar-Öffnen; "Dateien" ersetzt den
+          // JEWEILS ANDEREN Pane) — ohne diese war für Nutzer nicht
+          // vorhersehbar, welche Ansicht beim Öffnen von Dateien verschwindet.
+          twoPanes && (isActive ? "border-t-2 border-t-primary" : "border-t-2 border-t-transparent"),
           hiddenByFullscreen && "hidden",
         )}
         style={paneWidth}
@@ -347,6 +353,7 @@ function PaneSlot({
         "flex min-w-0 min-h-0 flex-col",
         singlePane && "mx-auto w-full max-w-4xl",
         twoPanes && !isActive && "hidden md:flex",
+        twoPanes && (isActive ? "border-t-2 border-t-primary" : "border-t-2 border-t-transparent"),
         hiddenByFullscreen && "hidden",
       )}
       style={paneWidth}
