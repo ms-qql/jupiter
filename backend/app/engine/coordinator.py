@@ -222,9 +222,9 @@ class CoordinatorService:
         coordinator = await self._manager.create(
             project_path=real,
             initial_prompt=(
-                "Du bist der Koordinator dieser Flotte (PROJ-22). Überwache die "
-                "Spezialisten-Sessions, vermittle Vertrags-Konflikte anhand des "
-                "API-Vertrags und eskaliere nur Unlösbares als Decision Card."
+                "/abc-coordinate Du bist der Koordinator dieser Flotte (PROJ-22). "
+                "Überwache die Spezialisten-Sessions, vermittle Vertrags-Konflikte "
+                "anhand des API-Vertrags und eskaliere nur Unlösbares als Decision Card."
             ),
             model="opus",
             role=self.ROLE,
@@ -692,9 +692,9 @@ class FeatureCoordinatorService:
         coordinator = await self._manager.create(
             project_path=real,
             initial_prompt=(
-                f"Du bist der Feature-Koordinator für PROJ-{num} (PROJ-79). Überwache die "
-                "internen Arbeitspakete, weise fehlende Abschlussbelege zurück und eskaliere "
-                "nur ein unauflösbares Scheitern als Decision Card."
+                f"/abc-coordinate Du bist der Feature-Koordinator für PROJ-{num} (PROJ-79). "
+                "Überwache die internen Arbeitspakete, weise fehlende Abschlussbelege zurück "
+                "und eskaliere nur ein unauflösbares Scheitern als Decision Card."
             ),
             role=self.ROLE,
             project_name=f"{label} · PROJ-{num}",
