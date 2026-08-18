@@ -153,7 +153,46 @@ Keine neuen Pakete — weder Frontend noch Backend.
 Keine — alle Checklist-Punkte bestehen, keine Produktentscheidung offen.
 
 ## QA Test Results
-_To be added by /qa_
+**Getestet:** 2026-08-18 · **Branch:** main · **Commit:** 9287585
+
+### Acceptance Criteria
+| # | Kriterium | Status | Befund |
+|---|---|---|---|
+| 1 | Orchestration-Eintrag „Hermes" mit Label + Icon | ✅ PASS | `engines.yaml` enthält `hermes_dashboard` (Label „Hermes", `icon: hermes`); `ORCHESTRATION_ICONS["hermes"] = SendIcon` in `nextjs_app/lib/sidebar-config.ts:145` — kein Fallback auf `AppWindowIcon`. |
+| 2 | Klick öffnet Vollbild-iFrame `/orchestration/<key>` | ✅ PASS (Code) | Generischer Mechanismus unverändert seit PROJ-39-Review bestätigt (`page.tsx:34-41`, `embed-tab.tsx:17-94`); kein Live-Browsertest, da Projekt keine E2E/Playwright-Coverage hat (nur vitest-Unit-Tests, s. Memory). |
+| 3 | Dashboard als dauerhafter systemd-User-Service auf `127.0.0.1:9119` | ❌ FEHLT | `systemctl --user list-units` zeigt **keinen** Hermes-Service auf dem VPS. Deploy-Scope laut Tech Design, noch nicht ausgeführt. |
+| 4 | Nur hinter Jupiters Login (`forward_auth`), kein eigenes Passwort | ❌ FEHLT | Kein Caddy-Site-Block für `hermes.auxevo.tech` in `/etc/caddy/Caddyfile` (nur Paperclip/Wayland vorhanden). Deploy-Scope, noch nicht ausgeführt. |
+| 5 | Web-UI einmalig vorab gebaut, nicht-interaktiver Start | ❌ FEHLT | Dashboard-Prozess läuft nicht, Build nicht ausgeführt (Deploy-Scope). |
+| 6 | Erreichbar über https `hermes.auxevo.tech`, kein Mixed-Content | ❌ FEHLT | Keine DNS-/Caddy-Konfiguration vorhanden (Deploy-Scope). |
+| 7 | Toggelbar/sortierbar über Konfig-Panel (PROJ-38); Direkt-URL bei ausgeblendeter Sektion erreichbar | ✅ PASS (Code) | Generischer PROJ-38-Mechanismus, unverändert; greift automatisch für jeden Registry-Eintrag. |
+| 8 | „In neuem Tab öffnen"-Fallback immer sichtbar | ✅ PASS | `embed-tab.tsx:65`, unbedingt gerendert, generisch. |
+| 9 | Registry-Key kollidiert nicht mit CLI-Engine `hermes` | ✅ PASS | `engines.yaml:110-129` (`hermes`, `kind: engine`, `enabled: false`) vs. `engines.yaml:169-175` (`hermes_dashboard`, `kind: iframe`) — getrennte Keys bestätigt. |
+| 10 | Deutsche Texte/Labels | ✅ PASS | Label „Hermes" (Eigenname erlaubt), keine neuen UI-Strings sonst nötig. |
+
+**Ergebnis: 6 von 10 bestanden, 4 offen (alle Deploy-Scope: Infra-Kriterien 3–6).**
+
+### Regression / Automated Tests
+- `pytest backend/` (voller Lauf): **1290 passed, 4 failed, 1 xfailed** — die 4 Fehlschläge (`test_proj50_codex_abc.py`) sind **vorbestehend und unabhängig von PROJ-81** (Codex-Skill-Generator, PROJ-81 hat diese Datei nicht berührt; Arbeitsbaum war vor jeder Änderung bereits identisch zu `HEAD`). Kein Regressions-Fund.
+- `pytest backend/tests/test_proj18_engines.py backend/tests/test_proj51_engine_settings.py` (Registry-Kernpfad): **34 passed**, keine Regression.
+- `vitest run` (Frontend): 7 Fails, alle in `lib/status.test.ts` (`ABC_PHASES`/`phaseIndex`), `gantt-chart.test.tsx`, `feature-run-view.test.tsx` — **keine dieser Dateien berührt Sidebar/Orchestration/Icons**, vorbestehend, kein PROJ-81-Regressionsfund.
+- Kein Live-Browser-/E2E-Test möglich mangels Zugangsdaten und da Jupiter keine Playwright-Suite hat (s. Memory „Keine E2E-Coverage").
+
+### Security-Audit (Red-Team-Kurzcheck)
+- Kein neuer Endpoint, kein neues Auth-Verhalten im Anwendungscode — Angriffsfläche bleibt bei `GET /engines` (bestehend, bereits durch JWT geschützt, unverändert getestet in `test_proj18_engines.py`).
+- Registry-Loader hat **keine Duplicate-Key-Prüfung** beim Datei-Load (`registry.py:445-453`) — bestätigt kein Sicherheitsrisiko für PROJ-81 selbst (Kollision ausgeschlossen), aber ein latentes Risiko für künftige Registry-Einträge generell (außerhalb dieses Feature-Scopes, nicht PROJ-81-Bug).
+- Offene Infra-Punkte (3–6) sind selbst sicherheitsrelevant: bis Deploy erfolgt ist, existiert kein Dashboard-Zugriffspunkt — kein Expositionsrisiko vor Deploy, aber `forward_auth`-Korrektheit muss beim Deploy verifiziert werden (kein Login-Bypass über `hermes.auxevo.tech`).
+
+### Bugs
+Keine Code-Bugs gefunden. **4 offene Punkte sind fehlende Deploy-Scope-Arbeit** (keine Implementierungsfehler):
+- **High** — Kriterium 3 (systemd-Service) fehlt.
+- **High** — Kriterium 4 (`forward_auth`/Caddy) fehlt.
+- **High** — Kriterium 5 (Web-UI-Build) fehlt.
+- **High** — Kriterium 6 (DNS/https) fehlt.
+
+Diese vier sind laut Tech Design explizit dem Deploy-Schritt zugeordnet („Aufwand-Verteilung: Deploy/Infra = Hauptanteil") — kein Rücksprung zu Frontend/Backend nötig, sondern direkte Weiterleitung an `/abc-deploy`.
+
+### Production-Ready
+**NOT READY** — 4 offene High-Punkte, alle reines Deploy-Scope (kein Code-Fix nötig).
 
 ## Deployment
 _To be added by /deploy_
