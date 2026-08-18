@@ -352,3 +352,6 @@ primäre Einstieg.
 `test_proj79_feature_coordinator.py` (40 Tests) grün. `tsc --noEmit` zeigt keine neuen Fehler in den
 geänderten Dateien (7 vorbestehende Fehler in unbeteiligten `*.test.tsx`-Dateien, nicht Teil dieses
 Fixes).
+
+**Deploy:** Bump 0.27.47 · Push nach `origin/main` → `jupiter-webhook` baut Backend+Frontend neu,
+`jupiter-backend`/`jupiter-frontend` (systemd) übernehmen. Host-nativ, kein Dokploy.
