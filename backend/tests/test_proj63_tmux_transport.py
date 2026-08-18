@@ -237,6 +237,52 @@ async def test_oneshot_respawn_across_turns_appends_cumulative_log(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_env_secret_reaches_process_but_never_appears_in_pane_command(tmp_path):
+    """PROJ-80-BUG-1-Regression: ein via ``env=`` übergebenes Secret (z. B. das
+    Koordinator-Capability-Token) muss dem gespawnten Prozess als echte
+    Umgebungsvariable zur Verfügung stehen, darf aber NIRGENDS als Klartext-
+    Prozessargument auftauchen — weder im Pane-Kommandostring (früher: `env
+    K=V …`-Präfix, dauerhaft über `ps`/`/proc/<pid>/cmdline` sichtbar) noch in
+    den `tmux new-session`-Argumenten selbst. Die Trägerdatei muss außerdem
+    sofort nach dem Sourcen gelöscht sein."""
+    fake = tmp_path / "fake_env_reader.py"
+    fake.write_text(
+        "import os, json\n"
+        "print(json.dumps({'type': 'result', 'text': 'TOKEN:' + os.environ.get('SECRET_TOKEN', '')}))\n",
+        encoding="utf-8",
+    )
+    argv = [sys.executable, str(fake)]
+    secret = "s3cr3t-jwt-value-should-never-leak"
+    data_dir = tmp_path / "data"
+
+    transport = TmuxTransport("spike-env-secret", data_dir=str(data_dir))
+    try:
+        await transport.spawn(
+            argv, cwd=str(tmp_path), long_lived=False, env={"SECRET_TOKEN": secret}
+        )
+        rc = await transport.wait()
+        assert rc == 0
+        # Der Prozess hat das Secret tatsächlich als Env-Var gesehen.
+        assert f"TOKEN:{secret}" in transport.out_path.read_text("utf-8")
+
+        # Das Secret darf in KEINER tmux-Metadatenauskunft im Klartext auftauchen
+        # (Pane-Startkommando, das `ps`/`tmux list-panes` offenlegen würde).
+        rc_lp, out_lp, _ = await transport._tmux(
+            "list-panes", "-t", transport.tmux_session, "-F", "#{pane_start_command}",
+            check=False,
+        )
+        assert secret not in out_lp
+
+        # Die Env-Trägerdatei wurde nach dem Sourcen sofort gelöscht, liegt nicht
+        # mehr im Session-Datenverzeichnis herum.
+        leftover = list(data_dir.rglob("env-*.sh"))
+        assert leftover == []
+    finally:
+        await transport.kill()
+        transport.cleanup_files()
+
+
+@pytest.mark.asyncio
 async def test_oneshot_exit_code_captured_in_err_log(tmp_path):
     script = tmp_path / "fake_fail.py"
     script.write_text("import sys; sys.exit(3)\n", encoding="utf-8")

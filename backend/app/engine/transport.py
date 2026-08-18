@@ -48,6 +48,7 @@ import re
 import shlex
 import shutil
 import time
+import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -354,12 +355,6 @@ class TmuxTransport(Transport):
             )
         self._long_lived = long_lived
         self._dir.mkdir(parents=True, exist_ok=True)
-        # PROJ-80: zusätzliche Prozess-Umgebung (z. B. Koordinator-Capability-Token)
-        # als „env K=V …" Präfix vor das eigentliche Kommando setzen.
-        env_prefix = ""
-        if env:
-            parts = [f"env {shlex.quote(k)}={shlex.quote(v)}" for k, v in env.items()]
-            env_prefix = " ".join(parts) + " "
         # Regressionsfund (beim BUG-1-Fix aufgedeckt): eine "ist das der erste Spawn?"-
         # Prüfung über `self._dir.exists()` ist trügerisch, weil `prepare_prompt_file()`
         # (Oneshot-Prompt) das Verzeichnis bereits VOR diesem Aufruf anlegt — dadurch griff
@@ -378,13 +373,23 @@ class TmuxTransport(Transport):
 
         await self._ensure_no_stale_session()
 
+        # PROJ-80-BUG-1-Fix: zusätzliche Prozess-Umgebung (z. B. das Koordinator-
+        # Capability-Token) darf NIRGENDS als Klartext-Argument auftauchen — weder im
+        # Pane-Kommandostring (leakt dauerhaft über `ps`/`/proc/<pid>/cmdline` für die
+        # gesamte Session-Laufzeit) noch als `tmux new-session -e`-Flag (leakt transient
+        # über `ps` für den kurzlebigen tmux-Client-Aufruf). Stattdessen: einmalige
+        # 0600-Datei im session-eigenen (nicht dem Projekt-)Verzeichnis, von der Pane-
+        # Shell selbst eingelesen und SOFORT nach dem Sourcen gelöscht, bevor der
+        # eigentliche Befehl startet — die Werte erscheinen nur als Dateiinhalt, nie
+        # als Prozessargument.
+        env_file = self._write_env_file(env)
         if long_lived:
             if self._control_fifo.exists():
                 self._control_fifo.unlink()
             os.mkfifo(self._control_fifo)
-            cmd = self._pane_command_long_lived(argv, cwd=cwd, env_prefix=env_prefix)
+            cmd = self._pane_command_long_lived(argv, cwd=cwd, env_file=env_file)
         else:
-            cmd = self._pane_command_oneshot(argv, cwd=cwd, stdin_file=stdin_file, env_prefix=env_prefix)
+            cmd = self._pane_command_oneshot(argv, cwd=cwd, stdin_file=stdin_file, env_file=env_file)
 
         # BUG-1 (QA 2026-07-06): `new-session` gefolgt von einem SEPARATEN `set-option`-
         # Aufruf lässt ein Zeitfenster, in dem ein schnell fertiger Oneshot-Befehl (echte
@@ -518,29 +523,54 @@ class TmuxTransport(Transport):
                 "kill-session", "-t", self.tmux_session, check=False, retries=settings.tmux_cmd_retries
             )
 
-    def _pane_command_long_lived(self, argv: list[str], *, cwd: str, env_prefix: str = "") -> str:
+    def _write_env_file(self, env: dict[str, str] | None) -> str | None:
+        """PROJ-80-BUG-1-Fix: Secrets (z. B. Koordinator-Capability-Token) als 0600-Datei
+        statt als Prozessargument übergeben — nur der Dateiinhalt trägt den Wert, der
+        Pfad selbst ist unkritisch (wie `stdin_file`/`out_path`)."""
+        if not env:
+            return None
+        self._dir.mkdir(parents=True, exist_ok=True)
+        path = self._dir / f"env-{uuid.uuid4().hex}.sh"
+        body = "\n".join(f"export {shlex.quote(k)}={shlex.quote(v)}" for k, v in env.items())
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(body + "\n")
+        return str(path)
+
+    @staticmethod
+    def _source_env_prefix(env_file: str | None) -> str:
+        if not env_file:
+            return ""
+        quoted = shlex.quote(env_file)
+        # Sofort nach dem Sourcen löschen — die Datei liegt nie länger als bis zum
+        # ersten Pane-Start auf der Platte.
+        return f". {quoted} && rm -f {quoted} && "
+
+    def _pane_command_long_lived(self, argv: list[str], *, cwd: str, env_file: str | None = None) -> str:
         quoted_argv = " ".join(shlex.quote(a) for a in argv)
         quoted_cwd = shlex.quote(cwd)
         quoted_fifo = shlex.quote(str(self._control_fifo))
         quoted_out = shlex.quote(str(self.out_path))
         quoted_err = shlex.quote(str(self.err_path))
+        env_prefix = self._source_env_prefix(env_file)
         # `exec 9<>fifo` haelt selbst einen Writer-Handle offen -> der lesende
         # Prozess sieht nie EOF, nur weil ein externer (Backend-)Schreiber
         # zwischendurch schliesst (Kernbefund des Spikes).
         return (
-            f"cd {quoted_cwd} && exec 9<>{quoted_fifo} && "
-            f"{env_prefix}{quoted_argv} <&9 >> {quoted_out} 2>> {quoted_err}; "
+            f"cd {quoted_cwd} && {env_prefix}exec 9<>{quoted_fifo} && "
+            f"{quoted_argv} <&9 >> {quoted_out} 2>> {quoted_err}; "
             f"echo {EXIT_MARKER}:$? >> {quoted_err}"
         )
 
     def _pane_command_oneshot(
-        self, argv: list[str], *, cwd: str, stdin_file: str | None, env_prefix: str = ""
+        self, argv: list[str], *, cwd: str, stdin_file: str | None, env_file: str | None = None
     ) -> str:
         quoted_argv = " ".join(shlex.quote(a) for a in argv)
         quoted_cwd = shlex.quote(cwd)
         quoted_out = shlex.quote(str(self.out_path))
         quoted_err = shlex.quote(str(self.err_path))
         stdin_redirect = f"< {shlex.quote(stdin_file)}" if stdin_file else "< /dev/null"
+        env_prefix = self._source_env_prefix(env_file)
         return (
             f"cd {quoted_cwd} && {env_prefix}{quoted_argv} {stdin_redirect} >> {quoted_out} 2>> {quoted_err}; "
             f"echo {EXIT_MARKER}:$? >> {quoted_err}"

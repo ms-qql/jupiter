@@ -1,6 +1,6 @@
 # PROJ-80: Fortsetzbare Paket-Sessions für den Feature-Koordinator (Follow-up ohne Neustart)
 
-## Status: Architected
+## Status: Approved
 **Created:** 2026-08-17
 
 ## Problem / Motivation
@@ -254,7 +254,60 @@ zu streuen.
 - Bestehende Feature-Routen an den PROJ-25-Owner-Scope angebunden, damit der Capability-Pfad keinen offenen Altpfad neben sich behält.
 
 ## QA Test Results
-_To be added by /qa_
+**Tested:** 2026-08-18 · **Tester:** /abc-qa
+
+### Acceptance Criteria
+| # | Kriterium | Ergebnis |
+|---|---|---|
+| 1 | `POST /coordinator/features/{feature_id}/packages/{package_id}/followup` ruft `SessionManager.send_input()` auf der bestehenden `session_id` auf | ✅ PASS (`coordinator.py:package_followup`, `test_followup_sends_to_same_session`) |
+| 2 | Fehlende `session_id` → expliziter Fehler statt stillem Neustart | ✅ PASS (409, `test_followup_missing_session_rejected`) |
+| 3 | Abschlussbeleg-Vertrag respektiert: `proof`/`last_safe_state` vor dem Senden geleert, Status auf „läuft", atomarer Rollback bei Sendefehler | ✅ PASS (`test_followup_requires_fresh_proof_afterwards`) |
+| 4 | Offene Decision Card blockiert Follow-up genauso wie neue Paket-Starts | ✅ PASS (`test_followup_blocked_by_open_decision_card`) |
+| 5 | Koordinator-Session bekommt eng geschnittenes Capability-Token (nur `feature_plan`/`feature_dispatch`/`decision`/`package_complete`/`package_followup`/`feature_read`), injiziert nur über die Prozessumgebung | ✅ PASS (BUG-1 behoben — Scope/Ausstellung `auth.py:issue_coordinator_capability`, `deps.py:_resolve_feature_principal`; Injektion jetzt leckfrei über Trägerdatei, siehe unten) |
+| 6 | Cockpit zeigt Kontext-Resume vs. Erststart je Paket | ✅ PASS (`contextStatusMeta()` + Badge in `PackageRow`) |
+| 7 | Bestehende PROJ-79-Abläufe bleiben funktionsfähig | ✅ PASS (BUG-2 behoben — voller Backend-Testlauf jetzt nur noch 4 vorbestehende, PROJ-80-unabhängige Fehlschläge; Frontend-Abweichungen ebenfalls vorbestehend, siehe Regressionsbefund unten) |
+
+### Bugs
+
+**BUG-1 (Critical, Security) — BEHOBEN 2026-08-18:** Koordinator-Capability-JWT leakte über Prozesslisting im Tmux-Transport-Pfad.
+- `backend/app/engine/transport.py` (`TmuxTransport.spawn`, `_pane_command_long_lived`, `_pane_command_oneshot`): das injizierte `LaunchSpec.env` wurde nicht als echte Prozessumgebung übergeben, sondern als `env K=V …`-Präfix in den Shell-Kommandostring der Tmux-Pane geschrieben.
+- `claude` ist per `backend/config/transport.yaml` (`engine_overrides.claude: tmux`) standardmäßig Tmux-Transport, und `feature_dispatch()` startet den Koordinator immer mit `engine="claude"` — betraf also den Standardfall, nicht einen Rand-Pfad.
+- Auswirkung: Der volle Pane-Shell-Befehl inkl. `JUPITER_COORDINATOR_TOKEN=<jwt>` war für die gesamte Laufzeit der Session über `ps auxww` / `/proc/<pid>/cmdline` für jeden lokalen Prozess/Nutzer auf dem VPS lesbar.
+- Nicht durch Tests abgedeckt: `test_proj80_followup.py` läuft ausschließlich gegen `FakeDriver`, der Tmux-Pfad wurde nirgends exerciert.
+- **Fix:** Secrets laufen jetzt über eine einmalige 0600-Datei im session-eigenen `tmux_data_dir` (nicht dem Projekt-Arbeitsverzeichnis) — `TmuxTransport._write_env_file()` schreibt `export K=V`-Zeilen, die Pane-Shell sourct die Datei und löscht sie sofort danach (`. <datei> && rm -f <datei> && …`, vor `exec 9<>fifo`/dem eigentlichen Befehl). Der Secret-Wert erscheint dadurch nie als Prozessargument — weder im Pane-Kommandostring noch (verworfene Zwischenlösung) als `tmux new-session -e`-Flag, das transient über `ps` für den tmux-Client-Aufruf sichtbar gewesen wäre. Datei-*Pfad* ist unkritisch (wie `stdin_file`/`out_path`/`err_path` bereits gehandhabt).
+- **Neuer Regressionstest:** `backend/tests/test_proj63_tmux_transport.py::test_env_secret_reaches_process_but_never_appears_in_pane_command` — spawnt eine echte tmux-Session mit einem Secret, verifiziert (a) der Prozess sieht es als Env-Var, (b) `tmux list-panes -F '#{pane_start_command}'` enthält das Secret NICHT, (c) die Trägerdatei ist nach dem Start bereits gelöscht.
+- **Verifiziert:** `pytest backend/tests/test_proj63_tmux_transport.py -q` → 14 passed (inkl. des neuen Tests). Voller Backend-Testlauf (`pytest backend/tests -q`, 288s) → **4 failed, 1289 passed, 1 xfailed** — die 4 verbleibenden sind die bereits dokumentierte, unabhängige PROJ-50-Prompt-Drift/Skill-Generator-Testschuld (siehe unten), kein neuer Fallout durch diesen Fix.
+
+**BUG-2 (Critical, Regression) — BEHOBEN 2026-08-18:** `GenericCliDriver._spawn()` stürzte bei jedem Direct-Transport-Turn ab.
+- Ursache 1: `backend/app/engine/generic_cli_driver.py:181` nutzte `proc_env = {**os.environ, **(spec.env or {})}`, aber die Datei importierte `os` nirgends (nur `asyncio`, `json`) → `NameError: name 'os' is not defined`.
+- Ursache 2 (durch den ersten Fix aufgedeckt): dieselbe Zeile referenzierte den Parameter `spec`, den `_spawn(self, argv, cwd, *, prompt=None)` gar nicht entgegennimmt — der Aufrufer trägt den Spec-Zustand in `self._spec` (siehe Verwendung eine Zeile darunter in `_spawn_tmux`). Ohne diesen zweiten Fix wäre nur der Fehlertyp von `NameError: name 'os'` zu `NameError: name 'spec'` gewechselt.
+- Betraf jede GenericCliDriver-Session (Codex, OpenCode) im Direct-Transport-Modus — dem Default des Treibers selbst (`LaunchSpec.transport = "direct"`).
+- Im vollen Backend-Testlauf (`pytest backend/tests`, 308s) traten dadurch 11 von 20 Fehlschlägen auf, verteilt über `test_proj48_codex.py`, `test_proj57_opencode.py`, `test_proj58_opencode_stdin_race.py`, `test_proj60_opencode_silent_hang.py`, `test_proj62_opencode_leeres_transkript.py`, `test_proj63_generic_cli_tmux.py::test_default_transport_is_direct_without_explicit_opt_in`.
+- Brach direkt das PROJ-80-eigene Nicht-Regressions-Kriterium („Bestehende … Abläufe bleiben unverändert funktionsfähig") sowie PROJ-56/57/58/60/62.
+- Nicht durch den in der Implementierungsnotiz zitierten Verifikationslauf abgedeckt (`test_proj80_followup.py` + `test_proj79_feature_coordinator.py` treffen `generic_cli_driver.py`s Direct-Spawn-Pfad nicht).
+- **Fix:** `import os` ergänzt; `spec.env` → `self._spec.env` (mit `None`-Guard) korrigiert (`generic_cli_driver.py:18,182`).
+- **Verifiziert:** `pytest backend/tests/test_proj48_codex.py backend/tests/test_proj57_opencode.py backend/tests/test_proj58_opencode_stdin_race.py backend/tests/test_proj60_opencode_silent_hang.py backend/tests/test_proj62_opencode_leeres_transkript.py backend/tests/test_proj63_generic_cli_tmux.py backend/tests/test_proj80_followup.py backend/tests/test_proj79_feature_coordinator.py -q` → 86 passed. Voller Backend-Testlauf (`pytest backend/tests -q`, 297s) → **5 failed, 1287 passed, 1 xfailed** (vorher 20 failed) — die 5 verbleibenden sind unabhängig von BUG-2 (Skill-Generator-Dateipfade, `codegraph init`-Erwartung, PROJ-50-Prompt-Drift, ein flakiger `test_proj14_ui_check.py`-Event-Loop-Fehler). BUG-2 vollständig behoben, kein neuer Fallout.
+
+**Verbleibende 4 Fehlschläge im vollen Backend-Testlauf (nach beiden Fixes):** nicht PROJ-80-verursacht — alle 4 in `test_proj50_codex_abc.py` (Prompt-Vorschlag-/Skill-Generator-Drift; der `test_feature_suggestion_prompt_variants`-Assert war bereits vor PROJ-80 identisch, verifiziert per `git show b9c5c94:backend/tests/test_proj50_codex_abc.py`). Nicht Teil dieses Bug-Berichts, aber vorhandene, eigenständige Testschuld.
+
+**Regressionsbefund (nicht PROJ-80, zur Sichtbarkeit dokumentiert):** 7 Frontend-Tests sind bereits vor PROJ-80 rot:
+- `lib/status.test.ts` + `components/cockpit/gantt-chart.test.tsx` (4×): `ABC_PHASES` hat 9 Einträge (inkl. „document"), Tests erwarten noch 8 — Drift stammt aus dem ursprünglichen PROJ-8-Commit (933685664), verifiziert per `git show <commit>:./lib/status.ts` vor PROJ-80.
+- `components/cockpit/coordinator/feature-run-view.test.tsx`: erwartet Text „Feature 101"/„Lade Feature-Ausführung", Komponente zeigt seit PROJ-79-Fix `b9c5c94` „Schwarm 101"/„Lade Schwarm …" — verifiziert per `git show b9c5c94:./…/feature-run-view.tsx` vor PROJ-80.
+- Empfehlung: eigenes Ticket für diese Testschuld, blockiert PROJ-80 nicht, sollte aber vor dem nächsten `/abc-qa`-Lauf grün sein, da die Regressionssuite aktuell keine Aussagekraft für diese Bereiche hat.
+
+### Automatisierte Tests
+- `python -m pytest backend/tests/test_proj80_followup.py backend/tests/test_proj79_feature_coordinator.py -q` → 30 passed.
+- `npm run test` (nextjs_app) → 205 Tests, 198 passed, 7 failed (siehe Regressionsbefund oben, keine PROJ-80-Ursache).
+- `python -m pytest backend/tests -q` (voller Backend-Testlauf, nach beiden Fixes, 288s) → **4 failed, 1289 passed, 1 xfailed** (vor den Fixes: 20 failed). Alle 4 verbleibenden sind vorbestehende, PROJ-80-unabhängige PROJ-50-Testschuld.
+- `pytest backend/tests/test_proj63_tmux_transport.py -q` → 14 passed (inkl. `test_env_secret_reaches_process_but_never_appears_in_pane_command`).
+
+### Security-Audit (Red-Team)
+- Capability-Token-Scope (Aktion/`feature_id`/`coordinator_id`/`owner`) serverseitig geprüft (`deps.py:_resolve_feature_principal`) — Missbrauch für fremdes Feature/fremde Aktion abgelehnt (`test_followup_wrong_feature_capability_rejected`, `test_capability_cannot_plan_another_feature`, `test_followup_wrong_action_capability_rejected`). ✅
+- Owner-Scope auf allen Feature-Routen einheitlich (kein ungeschützter Altpfad neben dem Capability-Gate). ✅
+- Token-Injektion selbst: BUG-1 behoben, mit dediziertem Regressionstest abgesichert. ✅
+
+### Production-Ready Empfehlung
+**READY** — BUG-1 (Critical/Security) und BUG-2 (Critical/Regression) sind behoben und regressionsgetestet. Alle Acceptance-Criteria erfüllt. Offen bleibt nur vorbestehende, PROJ-80-unabhängige Testschuld (7 Frontend-Tests aus PROJ-8/PROJ-79, 4 Backend-Tests aus PROJ-50) — empfohlen als eigenes Ticket, kein Deploy-Blocker für PROJ-80.
 
 ## Backend Implementation
 **Implemented:** 2026-08-18

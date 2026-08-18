@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from .adapters import get_adapter
 from .base import EngineDriver, EventHandler, LaunchSpec, pid_alive
@@ -178,7 +179,7 @@ class GenericCliDriver(EngineDriver):
             await self._spawn_tmux(argv, cwd, prompt=prompt)
             return
         # PROJ-80: zusätzliche Prozess-Umgebung (z. B. Koordinator-Capability-Token) mergen.
-        proc_env = {**os.environ, **(spec.env or {})}
+        proc_env = {**os.environ, **(self._spec.env or {})} if self._spec else dict(os.environ)
         self._proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
