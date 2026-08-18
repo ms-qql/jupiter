@@ -345,6 +345,7 @@ class TmuxTransport(Transport):
         long_lived: bool = True,
         stdin_file: str | None = None,
         seek_to_end: bool = False,
+        env: dict[str, str] | None = None,
     ) -> None:
         if not tmux_available(self._tmux_bin):
             raise TransportError(
@@ -353,6 +354,12 @@ class TmuxTransport(Transport):
             )
         self._long_lived = long_lived
         self._dir.mkdir(parents=True, exist_ok=True)
+        # PROJ-80: zusätzliche Prozess-Umgebung (z. B. Koordinator-Capability-Token)
+        # als „env K=V …" Präfix vor das eigentliche Kommando setzen.
+        env_prefix = ""
+        if env:
+            parts = [f"env {shlex.quote(k)}={shlex.quote(v)}" for k, v in env.items()]
+            env_prefix = " ".join(parts) + " "
         # Regressionsfund (beim BUG-1-Fix aufgedeckt): eine "ist das der erste Spawn?"-
         # Prüfung über `self._dir.exists()` ist trügerisch, weil `prepare_prompt_file()`
         # (Oneshot-Prompt) das Verzeichnis bereits VOR diesem Aufruf anlegt — dadurch griff
@@ -375,9 +382,9 @@ class TmuxTransport(Transport):
             if self._control_fifo.exists():
                 self._control_fifo.unlink()
             os.mkfifo(self._control_fifo)
-            cmd = self._pane_command_long_lived(argv, cwd=cwd)
+            cmd = self._pane_command_long_lived(argv, cwd=cwd, env_prefix=env_prefix)
         else:
-            cmd = self._pane_command_oneshot(argv, cwd=cwd, stdin_file=stdin_file)
+            cmd = self._pane_command_oneshot(argv, cwd=cwd, stdin_file=stdin_file, env_prefix=env_prefix)
 
         # BUG-1 (QA 2026-07-06): `new-session` gefolgt von einem SEPARATEN `set-option`-
         # Aufruf lässt ein Zeitfenster, in dem ein schnell fertiger Oneshot-Befehl (echte
@@ -511,7 +518,7 @@ class TmuxTransport(Transport):
                 "kill-session", "-t", self.tmux_session, check=False, retries=settings.tmux_cmd_retries
             )
 
-    def _pane_command_long_lived(self, argv: list[str], *, cwd: str) -> str:
+    def _pane_command_long_lived(self, argv: list[str], *, cwd: str, env_prefix: str = "") -> str:
         quoted_argv = " ".join(shlex.quote(a) for a in argv)
         quoted_cwd = shlex.quote(cwd)
         quoted_fifo = shlex.quote(str(self._control_fifo))
@@ -522,12 +529,12 @@ class TmuxTransport(Transport):
         # zwischendurch schliesst (Kernbefund des Spikes).
         return (
             f"cd {quoted_cwd} && exec 9<>{quoted_fifo} && "
-            f"{quoted_argv} <&9 >> {quoted_out} 2>> {quoted_err}; "
+            f"{env_prefix}{quoted_argv} <&9 >> {quoted_out} 2>> {quoted_err}; "
             f"echo {EXIT_MARKER}:$? >> {quoted_err}"
         )
 
     def _pane_command_oneshot(
-        self, argv: list[str], *, cwd: str, stdin_file: str | None
+        self, argv: list[str], *, cwd: str, stdin_file: str | None, env_prefix: str = ""
     ) -> str:
         quoted_argv = " ".join(shlex.quote(a) for a in argv)
         quoted_cwd = shlex.quote(cwd)
@@ -535,7 +542,7 @@ class TmuxTransport(Transport):
         quoted_err = shlex.quote(str(self.err_path))
         stdin_redirect = f"< {shlex.quote(stdin_file)}" if stdin_file else "< /dev/null"
         return (
-            f"cd {quoted_cwd} && {quoted_argv} {stdin_redirect} >> {quoted_out} 2>> {quoted_err}; "
+            f"cd {quoted_cwd} && {env_prefix}{quoted_argv} {stdin_redirect} >> {quoted_out} 2>> {quoted_err}; "
             f"echo {EXIT_MARKER}:$? >> {quoted_err}"
         )
 

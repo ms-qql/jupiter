@@ -649,9 +649,21 @@ class FeatureCoordinatorService:
 
     ROLE = "coordinator"
 
-    def __init__(self, manager: SessionManager, vault: VaultService) -> None:
+    # PROJ-80: eng geschnittene Capability-Aktionen, die ein Koordinator-Token
+    # erlaubt (kein Vollzugriff auf das Nutzerkonto).
+    CAPABILITY_ACTIONS = (
+        "feature_plan",
+        "feature_dispatch",
+        "decision",
+        "package_complete",
+        "package_followup",
+        "feature_read",
+    )
+
+    def __init__(self, manager: SessionManager, vault: VaultService, auth=None) -> None:
         self._manager = manager
         self._vault = vault
+        self._auth = auth
 
     # --- Plan --------------------------------------------------------------
 
@@ -668,6 +680,7 @@ class FeatureCoordinatorService:
         *,
         permission_mode: str = "bypassPermissions",
         token_savings: SavingsChoice = "on",
+        owner: str | None = None,
     ) -> dict:
         """Freigegebenen Feature-Plan dispatchen → eine Feature-Lauf-Koordinator-Session
         + die bereiten internen Arbeitspakete als Kind-Sessions."""
@@ -689,6 +702,10 @@ class FeatureCoordinatorService:
                 return self._run_dict(runtime)
 
         label = os.path.basename(real) or real
+        # PROJ-80: dem Koordinator ein eng geschnittenes Capability-Token in die
+        # Prozess-Umgebung injizieren, damit er Follow-up/Dispatch-Callbacks tätigen
+        # kann — ohne ein Nutzer-Access-Token oder Geheimnis im Prompt/Transkript.
+        coordinator_id = str(uuid.uuid4())
         coordinator = await self._manager.create(
             project_path=real,
             initial_prompt=(
@@ -701,6 +718,9 @@ class FeatureCoordinatorService:
             engine="claude",
             permission_mode=permission_mode,
             token_savings=token_savings,
+            session_id=coordinator_id,
+            owner=owner or settings.default_owner,
+            coordinator_env=self._coordinator_env(coordinator_id, num, owner or settings.default_owner),
         )
         coordinator.state.is_feature_run = True
         coordinator.state.feature_id = num
@@ -731,6 +751,24 @@ class FeatureCoordinatorService:
     @staticmethod
     def _plan_title(items: list[dict]) -> str:
         return items[0]["title"].split(" — ")[0] if items else ""
+
+    def _coordinator_env(
+        self, coordinator_id: str, feature_id: str, owner: str
+    ) -> dict[str, str] | None:
+        """PROJ-80: Capability-Token + API-URL als Prozess-Umgebung für die Koordinator-Session.
+
+        Ohne ``auth`` (z. B. in reinen Unit-Tests ohne Auth-Dienst) wird bewusst
+        ``None`` geliefert — die Session läuft dann ohne injizierten Token.
+        """
+        if self._auth is None:
+            return None
+        token = self._auth.issue_coordinator_capability(
+            coordinator_id, feature_id, owner, list(self.CAPABILITY_ACTIONS)
+        )
+        return {
+            "JUPITER_COORDINATOR_TOKEN": token,
+            "JUPITER_API_URL": settings.coordinator_api_url,
+        }
 
     @staticmethod
     def _validate_packages(items: list[dict]) -> None:
@@ -806,6 +844,58 @@ class FeatureCoordinatorService:
                 await self._block(coordinator, pkg, "Abschlussbeleg meldet Fehlschlag.")
             else:
                 await self._schedule(coordinator)
+        return self._run_dict(coordinator)
+
+    async def package_followup(self, feature_id: str, package_id: str, instruction: str) -> dict:
+        """PROJ-80: Folge-Instruktion an ein bereits gestartetes Paket.
+
+        Adressiert dieselbe Paket-Session per ``session_id`` und setzt sie mit ihrem
+        vorhandenen Kontext fort — kein neuer, kontextloser Prozess. Lehnt ab, wenn
+        das Paket nicht abgeschlossen ist, manuell übernommen wurde, eine offene
+        Decision Card blockiert oder keine Session (mehr) existiert.
+        """
+        coordinator = self._require_feature(feature_id)
+        async with _feature_lock(coordinator.state.session_id):
+            if coordinator.state.feature_blocker is not None:
+                raise DispatchDeniedError(
+                    "Feature-Lauf ist blockiert (offene Decision Card) — Follow-up gesperrt."
+                )
+            pkg = self._package(coordinator, package_id)
+            if pkg is None:
+                raise TicketNotFoundError(f"Kein Arbeitspaket {package_id}.")
+            if pkg["status"] == PK_MANUAL:
+                raise RuntimeError(
+                    "Paket wird manuell bearbeitet — kein automatischer Follow-up möglich."
+                )
+            if pkg["status"] != PK_DONE:
+                raise ValueError(
+                    f"Paket {package_id} ist nicht abgeschlossen (Status "
+                    f"'{pkg['status']}') — Follow-up nur auf abgeschlossenen Paketen."
+                )
+            session_id = pkg.get("session_id")
+            child = self._manager.get(session_id) if session_id else None
+            if child is None:
+                raise RuntimeError(
+                    "Paket-Session nicht auffindbar (nie gestartet oder aufgeräumt) — "
+                    "kein Follow-up möglich."
+                )
+            # Vor dem Senden: Beleg + sicheren Zustand leeren, Paket auf „läuft".
+            prev_proof = pkg.get("proof")
+            prev_safe = pkg.get("last_safe_state")
+            prev_status = pkg["status"]
+            pkg["proof"] = None
+            pkg["last_safe_state"] = None
+            pkg["status"] = PK_RUN
+            coordinator.state.feature_revision += 1
+            try:
+                await self._manager.send_input(session_id, instruction)
+            except Exception:
+                # Atomar zurücksetzen: kein stiller Halbzustand nach fehlgeschlagenem Senden.
+                pkg["proof"] = prev_proof
+                pkg["last_safe_state"] = prev_safe
+                pkg["status"] = prev_status
+                coordinator.state.feature_revision += 1
+                raise
         return self._run_dict(coordinator)
 
     async def feature_decision(self, feature_id: str, action: str, package_id: str | None) -> dict:
@@ -899,6 +989,7 @@ class FeatureCoordinatorService:
             engine=pkg.get("engine") or "claude",
             permission_mode=pkg.get("permission_mode") or "bypassPermissions",
             token_savings=pkg.get("token_savings") or "on",
+            owner=coordinator.state.owner,
             parent_coordinator_id=coordinator.state.session_id,
             ticket_id=f"PROJ-{num}",
             contract_pointer=coordinator.state.contract_pointer,
@@ -1055,6 +1146,13 @@ class FeatureCoordinatorService:
                 "resume_attempts": p.get("resume_attempts", 0) + self._auto_attempts(p),
                 "last_safe_state": p.get("last_safe_state"),
                 "proof": p.get("proof"),
+                # PROJ-80: sichtbarer Kontextmodus des letzten Turns (PROJ-56) —
+                # „mit Kontext" (Resume) vs. None (Erststart).
+                "context_status": (
+                    child.state.context_status
+                    if (child := self._manager.get(p.get("session_id"))) is not None
+                    else None
+                ),
             }
             for p in coordinator.state.feature_packages
         ]

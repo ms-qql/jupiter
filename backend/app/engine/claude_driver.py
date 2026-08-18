@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 
 from ..config import settings
 from .base import EngineDriver, EventHandler, LaunchSpec, pid_alive
@@ -122,9 +123,13 @@ class ClaudeCodeDriver(EngineDriver):
         if self._transport_mode == "tmux":
             await self._spawn_tmux(argv, spec)
         else:
+            # PROJ-80: zusätzliche Prozess-Umgebung (z. B. Koordinator-Capability-Token)
+            # in die bestehende Umgebung mergen, damit der Subprozess sie sieht.
+            proc_env = {**os.environ, **(spec.env or {})}
             self._proc = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=spec.project_path,
+                env=proc_env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -151,7 +156,7 @@ class ClaudeCodeDriver(EngineDriver):
         self._transport_obj = TmuxTransport(spec.session_id)
         try:
             await self._transport_obj.spawn(
-                argv, cwd=spec.project_path, long_lived=True,
+                argv, cwd=spec.project_path, long_lived=True, env=spec.env,
                 # PROJ-72: Claude bindet sich stets ans Ende seiner session-skopierten
                 # Append-Log. Bei einem echten Erststart ist sie leer; existiert bereits
                 # Inhalt, ist er live/aus der DB im Transkript abgebildet und darf nie

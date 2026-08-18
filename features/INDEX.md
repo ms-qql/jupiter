@@ -92,7 +92,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-77 | masterskill-creator — agenten-unabhängige Master-Skills in Hal + Pointer-Stubs je CLI | P1 | Approved | PROJ-50, PROJ-2 | [Spec](PROJ-77-masterskill-creator.md) |
 | PROJ-78 | Session-Arbeitsbereich mit Zwei-Ansichten und Dateien | P1 | Approved | PROJ-3, PROJ-14, PROJ-11 | [Spec](PROJ-78-zwei-session-ansichten.md) |
 | PROJ-79 | Featurezentrierter Koordinator mit autonomem Abschluss | P1 | Approved | PROJ-22, PROJ-4, PROJ-16, PROJ-27, PROJ-33, PROJ-45, PROJ-17 | [Spec](PROJ-79-featurezentrierter-koordinator.md) |
-| PROJ-80 | Fortsetzbare Paket-Sessions für den Feature-Koordinator (Follow-up ohne Neustart) | P1 | Architected | PROJ-79, PROJ-56, PROJ-58, PROJ-59, PROJ-60, PROJ-62, PROJ-48, PROJ-57 | [Spec](PROJ-80-paket-session-followup-feature-koordinator.md) |
+| PROJ-80 | Fortsetzbare Paket-Sessions für den Feature-Koordinator (Follow-up ohne Neustart) | P1 | In Progress | PROJ-79, PROJ-56, PROJ-58, PROJ-59, PROJ-60, PROJ-62, PROJ-48, PROJ-57 | [Spec](PROJ-80-paket-session-followup-feature-koordinator.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

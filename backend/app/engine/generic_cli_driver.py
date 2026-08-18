@@ -177,9 +177,12 @@ class GenericCliDriver(EngineDriver):
         if self._transport_mode == "tmux":
             await self._spawn_tmux(argv, cwd, prompt=prompt)
             return
+        # PROJ-80: zusätzliche Prozess-Umgebung (z. B. Koordinator-Capability-Token) mergen.
+        proc_env = {**os.environ, **(spec.env or {})}
         self._proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
+            env=proc_env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -206,7 +209,8 @@ class GenericCliDriver(EngineDriver):
             stdin_file = self._transport_obj.prepare_prompt_file(data)
         try:
             await self._transport_obj.spawn(
-                argv, cwd=cwd, long_lived=False, stdin_file=stdin_file
+                argv, cwd=cwd, long_lived=False, stdin_file=stdin_file,
+                env=self._spec.env if self._spec else None,
             )
         except TransportError as exc:
             await self._emit(StreamEvent("system", "error", {"message": str(exc)}))

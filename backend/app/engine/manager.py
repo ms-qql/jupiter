@@ -385,6 +385,10 @@ class SessionState:
     # Kind-Sessions wie bei PROJ-22. Alle Feature-Laufdaten liegen am Koordinator-State
     # (additiv, nullable) und überleben so den bestehenden Vault-/State-Recovery-Pfad.
     is_feature_run: bool = False
+    # PROJ-80: zusätzliche Prozess-Umgebung (z. B. das Koordinator-Capability-Token) — nur
+    # im RAM (nicht persistiert), da das Token signiert und kurzlebig ist. Wird bei
+    # create()/_resume() in den Subprozess durchgereicht.
+    env: dict[str, str] | None = None
     feature_id: str | None = None  # übergeordnetes „PROJ-X" (nur die reine Nummer)
     feature_aborted: bool = False  # Lauf vom Nutzer abgebrochen (status „abgebrochen")
     feature_plan: dict | None = None  # einmal freigegebener Plan (Paket-Liste etc.)
@@ -1658,6 +1662,8 @@ class SessionManager:
         token_savings: SavingsChoice = "standard",
         savings_pilot_task: str | None = None,
         savings_pilot_safe: bool | None = None,
+        coordinator_env: dict[str, str] | None = None,
+        session_id: str | None = None,
     ) -> SessionRuntime:
         # PROJ-18: Engine-Profil auflösen (Default = eingebaute Claude-Engine). iFrame/
         # Launch-Einträge sind KEINE steuerbaren Sessions → klar ablehnen.
@@ -1707,7 +1713,7 @@ class SessionManager:
         plan = self._cache_manager.plan(savings.prompt, extra_system_prompt)
         effective = plan.prompt
 
-        session_id = str(uuid.uuid4())
+        session_id = session_id or str(uuid.uuid4())
         state = SessionState(
             session_id=session_id,
             owner=owner or settings.default_owner,
@@ -1734,6 +1740,7 @@ class SessionManager:
             savings_provenance=list(savings.provenance),
             savings_pilot_task=savings_pilot_task,
             savings_pilot_safe=savings_pilot_safe,
+            env=coordinator_env,  # PROJ-80
         )
         # PROJ-50: abc-Workflow auf Engines OHNE Claude-PreToolUse-Skill-Signal
         # (generic_cli/Codex). Codex liefert kein Skill-Stream-Event (Spike), daher:
@@ -1791,6 +1798,7 @@ class SessionManager:
             # Engines kennen keinen PreToolUse-Hook → keine Settings-JSON.
             settings_json=self._hook_settings() if profile.is_claude else None,
             transport=state.transport,  # PROJ-63
+            env=state.env,  # PROJ-80
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -1944,6 +1952,7 @@ class SessionManager:
             resume_id=resume_id,
             settings_json=self._hook_settings() if is_claude else None,
             transport=state.transport,  # PROJ-63: derselbe Transport wie beim Erststart.
+            env=state.env,  # PROJ-80
         )
         try:
             await driver.start(spec, runtime.handle_event)

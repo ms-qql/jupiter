@@ -402,7 +402,9 @@ def create_app(
     # PROJ-22: Multi-Agent-Dispatch — Koordinator über dem Session-Treiber + Vault-Vertrag.
     app.state.coordinator = CoordinatorService(app.state.manager, vault_service)
     # PROJ-79: Featurezentrierter Koordinator — Feature-Ausführung über demselben Treiber.
-    app.state.feature_coordinator = FeatureCoordinatorService(app.state.manager, vault_service)
+    app.state.feature_coordinator = FeatureCoordinatorService(
+        app.state.manager, vault_service, app.state.auth
+    )
     # PROJ-23: Cross-Agent-Review — Challenge eines Artefakts durch eine andere Engine.
     app.state.challenge = ChallengeService(app.state.manager, vault_service)
     # PROJ-25: geschützte Router verlangen ein gültiges Token (Soft-Gate in
@@ -434,7 +436,9 @@ def create_app(
     app.include_router(peppermint.webhook_router)  # PROJ-67: eigener Secret-Check
     app.include_router(peppermint.router, dependencies=auth_gate)  # PROJ-67
     app.include_router(ui_check.router, dependencies=auth_gate)  # PROJ-14
-    app.include_router(coordinator.router, dependencies=auth_gate)
+    # PROJ-80: Feature-Routen akzeptieren zusätzlich eng geschnittene
+    # Koordinator-Capabilities; ihr eigener Gate prüft weiter Owner und Aktion.
+    app.include_router(coordinator.router)
     app.include_router(challenge.router, dependencies=auth_gate)
     app.include_router(terminal.router, dependencies=auth_gate)
     app.include_router(registry.router, dependencies=auth_gate)  # PROJ-26: Marktplatz/Registry

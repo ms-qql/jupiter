@@ -18,11 +18,13 @@ Der ``owner`` kommt damit **immer serverseitig** — entweder aus dem Token oder
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Awaitable, Callable
 
 from fastapi import Depends, Header, HTTPException, Request
 
 from .config import settings
 from .engine.auth import AuthError, AuthService
+from .engine.coordinator import FeatureNotFoundError, _norm_feature_id
 
 
 @dataclass(frozen=True)
@@ -64,3 +66,117 @@ async def get_current_user(
     if await auth.has_users():
         raise HTTPException(status_code=401, detail="Nicht angemeldet — gültiges Token erforderlich.")
     return CurrentUser(user_id=settings.default_owner, username=settings.default_owner, anonymous=True)
+
+
+# --- PROJ-80: einheitliches Owner-/Capability-Gate für Feature-Routen ---------
+
+
+@dataclass(frozen=True)
+class FeaturePrincipal:
+    """Aufgelöste Berechtigung für eine Feature-Lauf-Aktion.
+
+    ``kind`` ist ``"capability"`` (Koordinator-Session via eng geschnittenem
+    Token), ``"user"`` (angemeldeter Nutzer) oder ``"anonymous"`` (Single-User
+    vor dem Bootstrap).
+    """
+
+    owner: str
+    kind: str
+    coordinator_id: str | None = None
+    feature_id: str | None = None
+
+
+async def _resolve_feature_principal(
+    feature_id: str | None,
+    action: str,
+    require_existing: bool,
+    request: Request,
+    authorization: str | None,
+    auth: AuthService,
+) -> FeaturePrincipal:
+    """Einheitliches Gate für die Feature-Koordinator-Routen.
+
+    Akzeptiert entweder einen gültigen Koordinator-Capability-Token (eng
+    geschnitten auf ``feature_id`` + ``action`` + ``owner``) ODER einen
+    normalen Access-Token (Owner-Scope gegen den existierenden Feature-Lauf)
+    ODER — vor dem Bootstrap/Owner-Loss — anonyme Single-User-Nutzung.
+
+    ``feature_id`` ist optional: Routen ohne Lauf-Bezug (Plan/Dispatch) übergeben
+    ``None`` und werden nur auf die ``action`` geprüft (kein Feature-Scope).
+    """
+    token = _bearer_token(authorization)
+    num = _norm_feature_id(feature_id) if feature_id else None
+    if token:
+        # 1) Capability-Token (Koordinator-Session)
+        cap = None
+        try:
+            cap = auth.resolve_capability(token)
+        except AuthError:
+            cap = None
+        if cap is not None:
+            if action not in cap.actions:
+                raise HTTPException(
+                    status_code=403, detail="Capability-Token deckt Aktion '%s' nicht ab." % action
+                )
+            if num is not None:
+                if cap.feature_id != num:
+                    raise HTTPException(
+                        status_code=403, detail="Capability-Token gehört zu einem anderen Feature-Lauf."
+                    )
+                if require_existing:
+                    coordinator = _require_feature_run(request, num)
+                    if coordinator.state.session_id != cap.coordinator_id:
+                        raise HTTPException(
+                            status_code=403, detail="Capability-Token gehört zu einem anderen Lauf."
+                        )
+                    if coordinator.state.owner != cap.owner:
+                        raise HTTPException(status_code=403, detail="Capability-Owner stimmt nicht überein.")
+            return FeaturePrincipal(
+                owner=cap.owner,
+                kind="capability",
+                coordinator_id=cap.coordinator_id,
+                feature_id=cap.feature_id,
+            )
+        # 2) normaler Access-Token (Browser/Nutzer)
+        try:
+            ident = auth.resolve_access(token)
+        except AuthError as exc:
+            raise HTTPException(status_code=401, detail=exc.message) from exc
+        owner = ident.user_id
+        if num is not None and require_existing:
+            coordinator = _require_feature_run(request, num)
+            if coordinator.state.owner != owner:
+                raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Feature-Lauf.")
+        return FeaturePrincipal(owner=owner, kind="user")
+    # 3) kein Token
+    if await auth.has_users():
+        raise HTTPException(status_code=401, detail="Nicht angemeldet — gültiges Token erforderlich.")
+    return FeaturePrincipal(owner=settings.default_owner, kind="anonymous")
+
+
+def _require_feature_run(request: Request, num: str):
+    svc = request.app.state.feature_coordinator
+    try:
+        return svc._require_feature(num)
+    except FeatureNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def feature_access(action: str, *, require_existing: bool = True) -> Callable[..., Awaitable[FeaturePrincipal]]:
+    """Factory für eine ``Depends``-fähige Feature-Gate-Abhängigkeit.
+
+    ``action`` ist der Capability-Name (z. B. ``"package_followup"``);
+    ``require_existing=False`` für Routen ohne existierenden Lauf (Plan/Dispatch).
+    """
+
+    async def _dep(
+        feature_id: str | None = None,
+        request: Request = None,
+        authorization: str | None = Header(default=None),
+        auth: AuthService = Depends(get_auth_service),
+    ) -> FeaturePrincipal:
+        return await _resolve_feature_principal(
+            feature_id, action, require_existing, request, authorization, auth
+        )
+
+    return _dep

@@ -46,6 +46,20 @@ class TokenIdentity:
     username: str
 
 
+@dataclass(frozen=True)
+class CapabilityIdentity:
+    """Aus einem gültigen Koordinator-Capability-Token aufgelöste Rechte (PROJ-80).
+
+    Das Token ist eng geschnitten: nur die aufgelisteten ``actions`` auf GENAU
+    einem ``feature_id`` + ``coordinator_id`` für einen bestimmten ``owner``.
+    """
+
+    coordinator_id: str
+    feature_id: str
+    owner: str
+    actions: list[str]
+
+
 def _hash_password(password: str) -> str:
     # bcrypt deckelt bei 72 Byte — defensiv kürzen (UTF-8), sonst wirft bcrypt 4.x.
     pw = password.encode("utf-8")[:72]
@@ -119,6 +133,47 @@ class AuthService:
         if not sub:
             raise AuthError("Token ohne Subjekt.", code="credentials")
         return TokenIdentity(user_id=str(sub), username=str(claims.get("username") or sub))
+
+    # --- PROJ-80: eng geschnittenes Koordinator-Capability-Token -------------
+
+    def issue_coordinator_capability(
+        self, coordinator_id: str, feature_id: str, owner: str, actions: list[str]
+    ) -> str:
+        """Signiertes, NICHT persistiertes Capability-Token für eine Koordinator-Session.
+
+        Berechtigt ausschließlich die genannten ``actions`` auf ``feature_id`` +
+        ``coordinator_id`` für ``owner``. Laufzeit = Access-Token-TTL (nicht länger).
+        """
+        expires = _now() + timedelta(minutes=self._settings.access_token_ttl_minutes)
+        return self._encode(
+            {
+                "sub": owner,
+                "type": "coordinator_capability",
+                "coordinator_id": coordinator_id,
+                "feature_id": feature_id,
+                "owner": owner,
+                "actions": list(actions),
+            },
+            expires,
+        )
+
+    def resolve_capability(self, token: str) -> CapabilityIdentity:
+        """Capability-Token → Rechte. Wirft :class:`AuthError` (401-würdig) sonst."""
+        claims = self._decode(token)
+        if claims.get("type") != "coordinator_capability":
+            raise AuthError("Falscher Token-Typ.", code="credentials")
+        cid = claims.get("coordinator_id")
+        fid = claims.get("feature_id")
+        owner = claims.get("owner")
+        actions = claims.get("actions") or []
+        if not (cid and fid and owner):
+            raise AuthError("Capability-Token unvollständig.", code="credentials")
+        return CapabilityIdentity(
+            coordinator_id=str(cid),
+            feature_id=str(fid),
+            owner=str(owner),
+            actions=[str(a) for a in actions],
+        )
 
     # --- Status / Bootstrap -----------------------------------------------
 

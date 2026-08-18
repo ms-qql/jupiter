@@ -40,6 +40,13 @@ def _write_project(tmp_path, body: str = _PROJ79_INDEX) -> str:
 def client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setattr(settings, "allowed_roots", [str(tmp_path)])
     app = create_app(driver_factory=lambda: FakeDriver())
+    # Einheitlich Single-User/Bootstrap-Verhalten erzwingen, damit die Feature-
+    # Routen (vor dem Auth-Gate) anonym erreichbar bleiben — unabhängig davon,
+    # ob die geteilte Dev-DB bereits einen Account enthält.
+    async def _no_users():
+        return False
+
+    monkeypatch.setattr(app.state.auth, "has_users", _no_users)
     return TestClient(app)
 
 

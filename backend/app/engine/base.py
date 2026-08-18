@@ -64,6 +64,10 @@ class LaunchSpec:
     # ``ClaudeCodeDriver`` ignoriert es bewusst (bleibt bis zum eigenen Rollout-Schritt
     # ausschließlich "direct").
     transport: str = "direct"
+    # PROJ-80: zusätzliche Prozess-Umgebungsvariablen (z. B. das eng geschnittene
+    # Koordinator-Capability-Token). Werden in den Subprozess gemergt (bestehende
+    # ``os.environ`` bleiben erhalten). Optional, None = nichts hinzufügen.
+    env: dict[str, str] | None = None
 
 
 class EngineDriver(ABC):

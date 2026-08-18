@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..deps import CurrentUser, get_current_user
+from ..deps import CurrentUser, FeaturePrincipal, feature_access, get_current_user
 
 from ..engine.coordinator import (
     CoordinatorNotFoundError,
@@ -33,6 +33,7 @@ from ..schemas.coordinator import (
     FeaturePlan,
     FeaturePlanRequest,
     FeatureRun,
+    FollowupRequest,
     PauseRequest,
     ReassignRequest,
 )
@@ -49,8 +50,15 @@ def _feature_service(request: Request) -> FeatureCoordinatorService:
     return request.app.state.feature_coordinator
 
 
+def _check_capability_feature(principal: FeaturePrincipal, feature_id: str) -> None:
+    if principal.kind == "capability" and principal.feature_id != feature_id.removeprefix("PROJ-"):
+        raise HTTPException(status_code=403, detail="Capability-Token gehört zu einem anderen Feature-Lauf.")
+
+
 @router.post("/plan", response_model=CoordinatorPlan)
-async def coordinator_plan(payload: CoordinatorPlanRequest, request: Request) -> dict:
+async def coordinator_plan(
+    payload: CoordinatorPlanRequest, request: Request, _: CurrentUser = Depends(get_current_user)
+) -> dict:
     """Verteilungsplan erzeugen — startet NICHTS (Human-in-the-Loop)."""
     try:
         return _service(request).plan(payload.project_path)
@@ -59,7 +67,9 @@ async def coordinator_plan(payload: CoordinatorPlanRequest, request: Request) ->
 
 
 @router.post("/dispatch", response_model=CoordinatorFleet, status_code=201)
-async def coordinator_dispatch(payload: DispatchRequest, request: Request) -> dict:
+async def coordinator_dispatch(
+    payload: DispatchRequest, request: Request, _: CurrentUser = Depends(get_current_user)
+) -> dict:
     """Freigegebenen Plan dispatchen → Koordinator + Spezialisten-Sessions."""
     items = [it.model_dump() for it in payload.items]
     try:
@@ -75,7 +85,9 @@ async def coordinator_dispatch(payload: DispatchRequest, request: Request) -> di
 
 
 @router.get("/{coordinator_id}/fleet", response_model=CoordinatorFleet)
-async def coordinator_fleet(coordinator_id: str, request: Request) -> dict:
+async def coordinator_fleet(
+    coordinator_id: str, request: Request, _: CurrentUser = Depends(get_current_user)
+) -> dict:
     try:
         return _service(request).fleet(coordinator_id)
     except CoordinatorNotFoundError as exc:
@@ -83,7 +95,10 @@ async def coordinator_fleet(coordinator_id: str, request: Request) -> dict:
 
 
 @router.post("/{coordinator_id}/pause", response_model=CoordinatorFleet)
-async def coordinator_pause(coordinator_id: str, payload: PauseRequest, request: Request) -> dict:
+async def coordinator_pause(
+    coordinator_id: str, payload: PauseRequest, request: Request,
+    _: CurrentUser = Depends(get_current_user),
+) -> dict:
     try:
         return _service(request).set_paused(coordinator_id, payload.paused)
     except CoordinatorNotFoundError as exc:
@@ -92,7 +107,8 @@ async def coordinator_pause(coordinator_id: str, payload: PauseRequest, request:
 
 @router.post("/{coordinator_id}/reassign", response_model=CoordinatorFleet)
 async def coordinator_reassign(
-    coordinator_id: str, payload: ReassignRequest, request: Request
+    coordinator_id: str, payload: ReassignRequest, request: Request,
+    _: CurrentUser = Depends(get_current_user),
 ) -> dict:
     try:
         return await _service(request).reassign(
@@ -116,7 +132,8 @@ async def coordinator_reassign(
 
 @router.post("/{coordinator_id}/contract", response_model=VaultWriteResult)
 async def coordinator_contract(
-    coordinator_id: str, payload: ContractRequest, request: Request
+    coordinator_id: str, payload: ContractRequest, request: Request,
+    _: CurrentUser = Depends(get_current_user),
 ) -> dict:
     try:
         return _service(request).set_contract(coordinator_id, payload.body, payload.title)
@@ -132,25 +149,36 @@ async def coordinator_contract(
 
 
 @router.post("/feature-plan", response_model=FeaturePlan)
-async def coordinator_feature_plan(payload: FeaturePlanRequest, request: Request) -> dict:
+async def coordinator_feature_plan(
+    payload: FeaturePlanRequest,
+    request: Request,
+    principal: FeaturePrincipal = Depends(feature_access("feature_plan", require_existing=False)),
+) -> dict:
     """Internen Verteilungsplan für EIN Feature PROJ-X erzeugen (startet NICHTS)."""
     try:
+        _check_capability_feature(principal, payload.feature_id)
         return _feature_service(request).feature_plan(payload.project_path, payload.feature_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/feature-dispatch", response_model=FeatureRun, status_code=201)
-async def coordinator_feature_dispatch(payload: FeatureDispatchRequest, request: Request) -> dict:
+async def coordinator_feature_dispatch(
+    payload: FeatureDispatchRequest,
+    request: Request,
+    principal: FeaturePrincipal = Depends(feature_access("feature_dispatch", require_existing=False)),
+) -> dict:
     """Freigegebenen Feature-Plan dispatchen → Feature-Ausführung (Koordinator + Pakete)."""
     items = [it.model_dump() for it in payload.items]
     try:
+        _check_capability_feature(principal, payload.feature_id)
         return await _feature_service(request).feature_dispatch(
             payload.project_path,
             payload.feature_id,
             items,
             permission_mode=payload.permission_mode,
             token_savings=payload.token_savings,
+            owner=principal.owner,
         )
     except DispatchDeniedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -163,7 +191,11 @@ async def coordinator_feature_dispatch(payload: FeatureDispatchRequest, request:
 
 
 @router.get("/features/{feature_id}", response_model=FeatureRun)
-async def coordinator_feature_run(feature_id: str, request: Request) -> dict:
+async def coordinator_feature_run(
+    feature_id: str,
+    request: Request,
+    _: FeaturePrincipal = Depends(feature_access("feature_read")),
+) -> dict:
     try:
         return _feature_service(request).feature_run(feature_id)
     except FeatureNotFoundError as exc:
@@ -185,7 +217,8 @@ async def coordinator_feature_delete(
 
 @router.post("/features/{feature_id}/pause", response_model=FeatureRun)
 async def coordinator_feature_pause(
-    feature_id: str, payload: PauseRequest, request: Request
+    feature_id: str, payload: PauseRequest, request: Request,
+    _: FeaturePrincipal = Depends(feature_access("feature_pause")),
 ) -> dict:
     try:
         return _feature_service(request).feature_set_paused(feature_id, payload.paused)
@@ -195,7 +228,8 @@ async def coordinator_feature_pause(
 
 @router.post("/features/{feature_id}/decision", response_model=FeatureRun)
 async def coordinator_feature_decision(
-    feature_id: str, payload: FeatureDecisionRequest, request: Request
+    feature_id: str, payload: FeatureDecisionRequest, request: Request,
+    _: FeaturePrincipal = Depends(feature_access("decision")),
 ) -> dict:
     try:
         return await _feature_service(request).feature_decision(
@@ -211,7 +245,8 @@ async def coordinator_feature_decision(
 
 @router.post("/features/{feature_id}/packages/{package_id}/complete", response_model=FeatureRun)
 async def coordinator_package_complete(
-    feature_id: str, package_id: str, payload: CompletionProof, request: Request
+    feature_id: str, package_id: str, payload: CompletionProof, request: Request,
+    _: FeaturePrincipal = Depends(feature_access("package_complete")),
 ) -> dict:
     proof = payload.model_dump()
     proof["package_id"] = package_id  # Pfad schlägt Vorrang vor Body
@@ -223,3 +258,29 @@ async def coordinator_package_complete(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/features/{feature_id}/packages/{package_id}/followup",
+    response_model=FeatureRun,
+    status_code=200,
+)
+async def coordinator_package_followup(
+    feature_id: str, package_id: str, payload: FollowupRequest, request: Request,
+    _: FeaturePrincipal = Depends(feature_access("package_followup")),
+) -> dict:
+    """PROJ-80: Folge-Instruktion an ein abgeschlossenes Paket — dieselbe Session, Kontext-erhaltend."""
+    try:
+        return await _feature_service(request).package_followup(
+            feature_id, package_id, payload.instruction
+        )
+    except FeatureNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DispatchDeniedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

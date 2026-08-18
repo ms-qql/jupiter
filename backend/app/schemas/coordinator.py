@@ -164,6 +164,9 @@ class FeaturePackageRead(BaseModel):
     resume_attempts: int = 0
     last_safe_state: str | None = None
     proof: CompletionProof | None = None
+    # PROJ-80: sichtbarer Kontextmodus des letzten Turns (aus SessionState.context_status,
+    # PROJ-56) — „mit Kontext" (Resume) vs. None (Erststart). Null = Erststart.
+    context_status: str | None = None
 
 
 class FeatureRun(BaseModel):
@@ -183,3 +186,15 @@ class FeatureDecisionRequest(BaseModel):
 
     action: str = Field(..., pattern=r"^(retry|manual|abort)$")
     package_id: str | None = Field(default=None, description="Zielpaket (retry/manual).")
+
+
+class FollowupRequest(BaseModel):
+    """Folge-Instruktion an ein bereits gestartetes Paket (PROJ-80).
+
+    Adressiert dieselbe Paket-Session per ``session_id`` und setzt sie mit ihrem
+    vorhandenen Kontext fort — kein neuer, kontextloser Prozess.
+    """
+
+    instruction: str = Field(
+        ..., min_length=1, max_length=MAX_INPUT_CHARS, description="Freitext-Instruktion."
+    )

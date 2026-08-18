@@ -457,6 +457,10 @@ class Settings(BaseSettings):
     # interne Notiz nach Peppermint zurückschreibt.
     peppermint_db_path: str = str(Path.home() / "jupiter-data" / "peppermint_dashboard.db")
     peppermint_base_url: str = "http://100.125.96.77:3009/"
+    # PROJ-80: Basis-URL der eigenen API, die in die Koordinator-Session-Umgebung
+    # injiziert wird (zusammen mit dem Capability-Token), damit der Koordinator
+    # seine Feature-Follow-up-/Dispatch-Callbacks adressieren kann.
+    coordinator_api_url: str = "http://localhost:8000"
     # Server-seitige Auth. Bevorzugt wird Login -> Session-Token; `peppermint_token`
     # ist nur ein Fallback für manuell bereitgestellte Session/Bearer-Tokens.
     peppermint_login_email: str = ""

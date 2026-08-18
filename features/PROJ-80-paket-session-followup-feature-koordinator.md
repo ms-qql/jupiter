@@ -256,5 +256,13 @@ zu streuen.
 ## QA Test Results
 _To be added by /qa_
 
+## Backend Implementation
+**Implemented:** 2026-08-18
+
+- `POST /coordinator/features/{feature_id}/packages/{package_id}/followup` sends the instruction to the existing package session, clears the prior proof, and returns explicit conflict errors for blocked, manual, unfinished, or missing sessions.
+- Coordinator capability JWTs are injected only through the coordinator process environment and are verified for action, feature, coordinator, and owner scope.
+- Package reads expose the existing `context_status`; coordinator and child sessions keep the owner supplied by the authenticated dispatcher.
+- Verified: `python -m pytest backend/tests/test_proj80_followup.py backend/tests/test_proj79_feature_coordinator.py -q` (30 passed), `python -m compileall -q backend/app`, and `git diff --check`.
+
 ## Deployment
 _To be added by /deploy_
