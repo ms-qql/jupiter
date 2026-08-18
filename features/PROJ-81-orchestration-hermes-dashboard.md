@@ -1,6 +1,6 @@
 # PROJ-81: Orchestration-Eintrag „Hermes" — Hermes-Dashboard eingebettet bedienen
 
-## Status: Architected
+## Status: Deployed
 **Created:** 2026-08-18
 **Last Updated:** 2026-08-18
 
@@ -160,16 +160,16 @@ Keine — alle Checklist-Punkte bestehen, keine Produktentscheidung offen.
 |---|---|---|---|
 | 1 | Orchestration-Eintrag „Hermes" mit Label + Icon | ✅ PASS | `engines.yaml` enthält `hermes_dashboard` (Label „Hermes", `icon: hermes`); `ORCHESTRATION_ICONS["hermes"] = SendIcon` in `nextjs_app/lib/sidebar-config.ts:145` — kein Fallback auf `AppWindowIcon`. |
 | 2 | Klick öffnet Vollbild-iFrame `/orchestration/<key>` | ✅ PASS (Code) | Generischer Mechanismus unverändert seit PROJ-39-Review bestätigt (`page.tsx:34-41`, `embed-tab.tsx:17-94`); kein Live-Browsertest, da Projekt keine E2E/Playwright-Coverage hat (nur vitest-Unit-Tests, s. Memory). |
-| 3 | Dashboard als dauerhafter systemd-User-Service auf `127.0.0.1:9119` | ❌ FEHLT | `systemctl --user list-units` zeigt **keinen** Hermes-Service auf dem VPS. Deploy-Scope laut Tech Design, noch nicht ausgeführt. |
-| 4 | Nur hinter Jupiters Login (`forward_auth`), kein eigenes Passwort | ❌ FEHLT | Kein Caddy-Site-Block für `hermes.auxevo.tech` in `/etc/caddy/Caddyfile` (nur Paperclip/Wayland vorhanden). Deploy-Scope, noch nicht ausgeführt. |
-| 5 | Web-UI einmalig vorab gebaut, nicht-interaktiver Start | ❌ FEHLT | Dashboard-Prozess läuft nicht, Build nicht ausgeführt (Deploy-Scope). |
-| 6 | Erreichbar über https `hermes.auxevo.tech`, kein Mixed-Content | ❌ FEHLT | Keine DNS-/Caddy-Konfiguration vorhanden (Deploy-Scope). |
+| 3 | Dashboard als dauerhafter systemd-User-Service auf `127.0.0.1:9119` | ✅ PASS (2026-08-18 nachgezogen) | `jupiter-hermes-dashboard.service` angelegt (`enabled`, `Restart=always`), `ExecStart=hermes dashboard --skip-build --no-open --host 127.0.0.1 --port 9119`. Läuft dauerhaft. |
+| 4 | Nur hinter Jupiters Login (`forward_auth`), kein eigenes Passwort | ⚠️ **BEWUSST ZURÜCKGESTELLT** | Architektur-Annahme der Spec war stale: `jupiter-auth.service` (Port 9100) ist seit PROJ-25 (26.06.) verwaist — Jupiters Login läuft nur noch App-intern per JWT, kein `forward_auth`-Perimeter mehr aktiv. Nutzer-Entscheidung 2026-08-18: **vorerst ohne Auth-Gate deployen** (siehe Caddy-Kommentar `TODO: Auth-Gate nachruesten`). Sicherheitslücke bewusst in Kauf genommen, nicht vergessen — Dashboard ist bis zur Nachrüstung öffentlich ohne Login erreichbar. |
+| 5 | Web-UI einmalig vorab gebaut, nicht-interaktiver Start | ✅ PASS | `hermes_cli/web_dist` bereits gebaut vorgefunden; Service startet mit `--skip-build`, kein Build im Klickpfad. |
+| 6 | Erreichbar über https `hermes.auxevo.tech`, kein Mixed-Content | ✅ PASS (2026-08-18 nachgezogen) | DNS-A-Record gesetzt + propagiert (extern via 1.1.1.1/8.8.8.8 verifiziert), Caddy-Site-Block ergänzt, Let's-Encrypt-Zertifikat erfolgreich ausgestellt (`tls.obtain: certificate obtained successfully`). `curl https://hermes.auxevo.tech/` → 200. Caddy setzt `header_up Host 127.0.0.1:9119`, da Hermes' eigener DNS-Rebinding-Schutz (`_is_accepted_host`) sonst mit 400 „Invalid Host header" ablehnt — ohne diesen Header-Rewrite wäre die Einbettung kaputt gewesen. |
 | 7 | Toggelbar/sortierbar über Konfig-Panel (PROJ-38); Direkt-URL bei ausgeblendeter Sektion erreichbar | ✅ PASS (Code) | Generischer PROJ-38-Mechanismus, unverändert; greift automatisch für jeden Registry-Eintrag. |
 | 8 | „In neuem Tab öffnen"-Fallback immer sichtbar | ✅ PASS | `embed-tab.tsx:65`, unbedingt gerendert, generisch. |
 | 9 | Registry-Key kollidiert nicht mit CLI-Engine `hermes` | ✅ PASS | `engines.yaml:110-129` (`hermes`, `kind: engine`, `enabled: false`) vs. `engines.yaml:169-175` (`hermes_dashboard`, `kind: iframe`) — getrennte Keys bestätigt. |
 | 10 | Deutsche Texte/Labels | ✅ PASS | Label „Hermes" (Eigenname erlaubt), keine neuen UI-Strings sonst nötig. |
 
-**Ergebnis: 6 von 10 bestanden, 4 offen (alle Deploy-Scope: Infra-Kriterien 3–6).**
+**Ergebnis (Stand 2026-08-18, nach Deploy-Nacharbeit): 9 von 10 bestanden, 1 bewusst zurückgestellt (Kriterium 4, Auth-Gate).**
 
 ### Regression / Automated Tests
 - `pytest backend/` (voller Lauf): **1290 passed, 4 failed, 1 xfailed** — die 4 Fehlschläge (`test_proj50_codex_abc.py`) sind **vorbestehend und unabhängig von PROJ-81** (Codex-Skill-Generator, PROJ-81 hat diese Datei nicht berührt; Arbeitsbaum war vor jeder Änderung bereits identisch zu `HEAD`). Kein Regressions-Fund.
@@ -192,7 +192,22 @@ Keine Code-Bugs gefunden. **4 offene Punkte sind fehlende Deploy-Scope-Arbeit** 
 Diese vier sind laut Tech Design explizit dem Deploy-Schritt zugeordnet („Aufwand-Verteilung: Deploy/Infra = Hauptanteil") — kein Rücksprung zu Frontend/Backend nötig, sondern direkte Weiterleitung an `/abc-deploy`.
 
 ### Production-Ready
-**NOT READY** — 4 offene High-Punkte, alle reines Deploy-Scope (kein Code-Fix nötig).
+**READY MIT BEKANNTER LÜCKE** — 0 Code-Bugs, 1 bewusst offener Punkt (kein Auth-Gate vor `hermes.auxevo.tech`, Nutzer-Entscheidung 2026-08-18). Deploy erfolgt, TODO „Auth-Gate nachrüsten" bleibt aktiv (siehe Deployment-Sektion).
 
 ## Deployment
-_To be added by /deploy_
+**Deployed:** 2026-08-18 · **Production-URL:** https://hermes.auxevo.tech
+
+### Was live ist
+- Code: Commits `9287585` (Registry-Eintrag + Icon), `d9d0372` (QA) auf `main` gepusht — Auto-Deploy via `jupiter-webhook` hat Backend/Frontend neu gebaut.
+- `jupiter-hermes-dashboard.service` (systemd, `enabled`, `Restart=always`) startet den Hermes-Agent-Dashboard-Prozess auf `127.0.0.1:9119`, Web-UI vorab gebaut, `--skip-build --no-open`.
+- Caddy-Site-Block `hermes.auxevo.tech` in `/etc/caddy/Caddyfile` (Backup: `Caddyfile.bak-20260818-proj81-hermes`), TLS via Let's Encrypt aktiv, `header_up Host 127.0.0.1:9119` gegen Hermes' eigenen DNS-Rebinding-Schutz.
+- DNS-A-Record vom Nutzer gesetzt, propagiert.
+- Smoke-Test: `curl https://hermes.auxevo.tech/` → 200, gültiges Zertifikat.
+
+### Bekannte offene Lücke (bewusste Nutzer-Entscheidung, kein Bug)
+**Kein Auth-Gate vor dem Dashboard.** Die Tech-Design-Annahme „Jupiters Login schützt mit (forward_auth)" war zum Deploy-Zeitpunkt stale: `jupiter-auth.service` (Port 9100) ist seit PROJ-25 (26.06.2026) verwaist, Jupiters aktueller Login läuft App-intern per JWT und hat keinen Caddy-`forward_auth`-Perimeter mehr. Optionen wurden dem Nutzer vorgelegt (verwaistes 9100 reaktivieren / eigenes Gate wie Paperclip via Port 9102 / vorerst ohne Gate) — Entscheidung: **vorerst ohne Gate**, um schnell live zu gehen. Dashboard ist damit für jeden mit der URL ohne Login erreichbar (nur die Existenz der URL als Schutz — kein echter Zugangsschutz).
+
+**TODO (offen, nicht Teil dieses Deploys):** Auth-Gate nachrüsten — Caddyfile trägt einen `# TODO: Auth-Gate nachruesten` Kommentar am `hermes.auxevo.tech`-Block als Marker.
+
+### Status
+Feature ist funktional deployed und in der Sidebar nutzbar; die offene Auth-Lücke bleibt bewusst dokumentiert statt stillschweigend als „fertig" verbucht.
