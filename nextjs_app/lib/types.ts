@@ -1530,6 +1530,9 @@ export interface FeaturePackageRead {
   resume_attempts: number;
   last_safe_state: string | null;
   proof: CompletionProof | null;
+  /** PROJ-80: letzter Kontextmodus des Pakets (aus SessionState.context_status).
+   *  null = Erststart (nie fortgesetzt), sonst „mit Kontext" / „kontextlos …". */
+  context_status: string | null;
 }
 
 /** Gesamtsicht einer Feature-Ausführung (Elternkopf + Pakete + Blockierung). */

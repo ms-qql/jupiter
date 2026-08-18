@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ApiError, completePackage, deleteFeatureRun, featureDecision, getFeatureRun, setFeaturePaused } from "@/lib/api";
-import { statusMeta } from "@/lib/status";
+import { statusMeta, contextStatusMeta } from "@/lib/status";
 import type { FeaturePackageRead, FeatureRun } from "@/lib/types";
 import { Ampel } from "../ampel";
 import { ConfirmDialog } from "../confirm-dialog";
@@ -317,6 +317,13 @@ function PackageRow({
                 <span>{pkg.resume_attempts}× wiederaufgenommen</span>
               </>
             )}
+            <Badge
+              variant="outline"
+              className={`text-[10px] ${contextStatusMeta(pkg.context_status).className}`}
+              title={pkg.context_status ?? "Paket nie fortgesetzt (erster Start)"}
+            >
+              {contextStatusMeta(pkg.context_status).label}
+            </Badge>
           </div>
           {pkg.proof && (
             <p className="mt-1 pl-8 text-[11px] text-emerald-600 dark:text-emerald-400">

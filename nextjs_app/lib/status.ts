@@ -248,6 +248,36 @@ export function displayName(session: {
   return session.project_name?.trim() || projectName(session.project_path);
 }
 
+// PROJ-80: Kontextmodus eines Paket-Turns (aus SessionState.context_status) -------
+// Zeigt im Cockpit sichtbar, ob ein Paket mit Kontext fortgesetzt oder frisch
+// gestartet wurde. null = Erststart (nie fortgesetzt).
+
+export interface ContextStatusMeta {
+  label: string;
+  /** Tailwind-Klassen fürs Badge. */
+  className: string;
+}
+
+export function contextStatusMeta(status: string | null | undefined): ContextStatusMeta {
+  if (!status) {
+    return {
+      label: "Erststart",
+      className: "border-zinc-400/40 text-zinc-500 dark:text-zinc-400",
+    };
+  }
+  if (status.includes("mit Kontext")) {
+    return {
+      label: "mit Kontext",
+      className: "border-emerald-500/50 text-emerald-600 dark:text-emerald-400",
+    };
+  }
+  // „kontextlos (…)" — Resume versucht, aber ohne gespeicherten Verlauf.
+  return {
+    label: "kontextlos",
+    className: "border-amber-500/50 text-amber-600 dark:text-amber-400",
+  };
+}
+
 /** Kompakte Laufzeit/Relativzeit, z. B. „4m", „2h", „gerade eben". */
 export function formatDuration(fromIso: string, nowMs: number): string {
   const start = Date.parse(fromIso);

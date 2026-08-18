@@ -264,5 +264,16 @@ _To be added by /qa_
 - Package reads expose the existing `context_status`; coordinator and child sessions keep the owner supplied by the authenticated dispatcher.
 - Verified: `python -m pytest backend/tests/test_proj80_followup.py backend/tests/test_proj79_feature_coordinator.py -q` (30 passed), `python -m compileall -q backend/app`, and `git diff --check`.
 
+## Frontend Implementation
+**Implemented:** 2026-08-18
+
+- `context_status: string | null` zu `FeaturePackageRead` (`nextjs_app/lib/types.ts`) ergänzt — spiegelt das bestehende `SessionState.context_status` aus PROJ-56.
+- `contextStatusMeta()` in `nextjs_app/lib/status.ts` mappt den Wert auf Badge-Label/-Farbe:
+  - `null` → „Erststart" (neutral),
+  - enthält „mit Kontext" → „mit Kontext" (grün),
+  - „kontextlos …" → „kontextlos" (amber, Resume ohne Verlauf).
+- `PackageRow` (`components/cockpit/coordinator/feature-run-view.tsx`) zeigt das Badge pro Paket mit `title` = Rohwert. Erfüllt AC: sichtbare Unterscheidung Kontext-Resume vs. Erststart.
+- Kein neuer Screen/Button nötig — reine Badge-Ergänzung an der bestehenden `PackageRow` (gemäß Tech-Design).
+
 ## Deployment
 _To be added by /deploy_
