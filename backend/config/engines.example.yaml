@@ -130,6 +130,19 @@ engines:
     url: https://excalidraw.com
     sandbox: "allow-scripts allow-same-origin allow-forms"
 
+  # PROJ-81: Hermes-Dashboard — iFrame-App in der „Orchestration"-Sektion (PROJ-39),
+  # eingebettet per Vollbild-Route /orchestration/hermes_dashboard. Läuft als
+  # systemd-User-Service auf 127.0.0.1:9119, davor Caddy mit Jupiters Login
+  # (forward_auth) — kein eigenes Hermes-Passwort. Key bewusst `hermes_dashboard`,
+  # da `hermes` bereits durch die (deaktivierte) Hermes-CLI-Engine belegt ist.
+  - key: hermes_dashboard
+    label: "Hermes"
+    kind: iframe
+    url: https://hermes.auxevo.tech
+    sandbox: "allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+    group: orchestration
+    icon: hermes
+
   # PROJ-40/PROJ-41: NATIVE Micro-App — direkt in Jupiter programmiert (kein iFrame).
   # Code liegt im Frontend unter components/microapps/<key>/ und wird per `key` in
   # lib/microapps-registry.ts registriert; hier stehen nur die Metadaten. Erste echte

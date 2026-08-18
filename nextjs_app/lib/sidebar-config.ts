@@ -15,6 +15,7 @@ import {
   PaperclipIcon,
   PenToolIcon,
   RadioIcon,
+  SendIcon,
   ServerIcon,
   TerminalIcon,
   TicketIcon,
@@ -141,6 +142,7 @@ const ORCHESTRATION_ICONS: Record<string, LucideIcon> = {
   server: ServerIcon, // PROJ-42: VPS-Admin
   "brain-circuit": BrainCircuitIcon, // PROJ-55: Session-Kondensierung
   ticket: TicketIcon, // PROJ-67: Peppermint Dashboard
+  hermes: SendIcon, // PROJ-81: Hermes-Dashboard
 };
 
 /** Icon-Name (aus der Registry) → Komponente; Fallback ist ein neutrales App-Icon. */

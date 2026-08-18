@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-81
+**Next Available ID:** PROJ-82
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -93,6 +93,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-78 | Session-Arbeitsbereich mit Zwei-Ansichten und Dateien | P1 | Approved | PROJ-3, PROJ-14, PROJ-11 | [Spec](PROJ-78-zwei-session-ansichten.md) |
 | PROJ-79 | Featurezentrierter Koordinator mit autonomem Abschluss | P1 | Approved | PROJ-22, PROJ-4, PROJ-16, PROJ-27, PROJ-33, PROJ-45, PROJ-17 | [Spec](PROJ-79-featurezentrierter-koordinator.md) |
 | PROJ-80 | Fortsetzbare Paket-Sessions für den Feature-Koordinator (Follow-up ohne Neustart) | P1 | Approved | PROJ-79, PROJ-56, PROJ-58, PROJ-59, PROJ-60, PROJ-62, PROJ-48, PROJ-57 | [Spec](PROJ-80-paket-session-followup-feature-koordinator.md) |
+| PROJ-81 | Orchestration-Eintrag „Hermes" — Hermes-Dashboard eingebettet bedienen | P1 | Architected | PROJ-39, PROJ-38, PROJ-18 | [Spec](PROJ-81-orchestration-hermes-dashboard.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
