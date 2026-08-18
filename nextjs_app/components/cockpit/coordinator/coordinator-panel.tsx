@@ -37,7 +37,7 @@ export function CoordinatorPanel() {
   const { sessions, refresh } = useSessions();
   const now = useNow();
   const [projectPath, setProjectPath] = useState(readStoredProject);
-  const [mode, setMode] = useState<"feature" | "fleet">("fleet");
+  const [mode, setMode] = useState<"feature" | "fleet">("feature");
   const [featureId, setFeatureId] = useState("");
   const [featureOpen, setFeatureOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -224,6 +224,7 @@ export function CoordinatorPanel() {
                 now={now}
                 paused={f.coordinator.status === "waiting"}
                 engines={engines}
+                onDeleted={refresh}
               />
             ),
           )}

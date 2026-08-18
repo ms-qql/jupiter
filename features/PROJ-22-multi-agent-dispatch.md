@@ -331,3 +331,24 @@ Pfad-Scope, Fremd-Steuerung, Injection in INDEX-Parsing/Vault-Pfade, Input-Limit
 ## Deployment
 **Deployed:** 2026-06-25 · **Version:** 0.16.0 · **Tag:** v0.16.0 · **URL:** https://jupiter.auxevo.tech
 Host-native Dev-VPS (systemd + Caddy, kein Dokploy), Auto-Deploy via GitHub-Webhook auf `main`. Promotion `dev → main` als Sammel-Release (mit PROJ-23 + PROJ-43).
+
+## Bugfix (2026-08-18, abc-backoffice)
+**Ursache:** `FleetView` (Flotte-Kachel im Koordinator-Tab) bot nur Pausieren/Fortsetzen — kein
+Löschen. Anders als `FeatureRunView` (PROJ-79, „Schwarm") gab es für plain-Flotten keine
+DELETE-Route; alte/pausierte Flotten (u. a. Test-Läufe zu `PROJ-101`/`PROJ-234`) waren im Cockpit
+nicht entfernbar.
+**Fix:** `CoordinatorService.delete_fleet()` (`backend/app/engine/coordinator.py`, analog zu
+`FeatureCoordinatorService.feature_delete`) stoppt Koordinator + alle Kind-Sessions und entfernt sie
+aus dem Live-Index; neue Route `DELETE /coordinator/{coordinator_id}`
+(`backend/app/routes/coordinator.py`). Frontend: `deleteFleet()` in `nextjs_app/lib/api.ts`, Löschen-
+Button + `ConfirmDialog` in `FleetView` (`nextjs_app/components/cockpit/coordinator/fleet-view.tsx`),
+`onDeleted={refresh}` aus `coordinator-panel.tsx` durchgereicht. Session-Logs im Vault bleiben
+erhalten (gleiches Verhalten wie Schwarm-Löschen).
+**Zusatz:** Modus-Umschalter „Schwarm/Flotte" defaultet jetzt auf „Schwarm“ (`useState<"feature" |
+"fleet">("feature")` statt `"fleet"` in `coordinator-panel.tsx:40`) — Nutzerwunsch, Schwarm ist der
+primäre Einstieg.
+**Verifikation:** neuer Test `test_delete_fleet_stops_and_removes_children`
+(`backend/tests/test_proj22_coordinator.py`) grün; volle Suite `test_proj22_coordinator.py` +
+`test_proj79_feature_coordinator.py` (40 Tests) grün. `tsc --noEmit` zeigt keine neuen Fehler in den
+geänderten Dateien (7 vorbestehende Fehler in unbeteiligten `*.test.tsx`-Dateien, nicht Teil dieses
+Fixes).

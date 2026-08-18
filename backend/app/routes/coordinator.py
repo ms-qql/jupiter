@@ -94,6 +94,17 @@ async def coordinator_fleet(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.delete("/{coordinator_id}", status_code=204, response_model=None)
+async def coordinator_delete(
+    coordinator_id: str, request: Request, _: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Flotte (Koordinator + Spezialisten-Sessions) stoppen und entfernen (PROJ-101)."""
+    try:
+        await _service(request).delete_fleet(coordinator_id)
+    except CoordinatorNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/{coordinator_id}/pause", response_model=CoordinatorFleet)
 async def coordinator_pause(
     coordinator_id: str, payload: PauseRequest, request: Request,

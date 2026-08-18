@@ -368,6 +368,18 @@ class CoordinatorService:
             child.state.contract_pointer = pointer
         return {"path": result.path, "type": result.type, "created": result.created}
 
+    async def delete_fleet(self, coordinator_id: str) -> None:
+        """Stoppt und entfernt eine Flotte samt Spezialisten-Sessions (PROJ-101)."""
+        coordinator = self._require_coordinator(coordinator_id)
+        session_ids = [c.state.session_id for c in self._children(coordinator_id)] + [coordinator_id]
+        for session_id in session_ids:
+            runtime = self._manager.get(session_id)
+            if runtime is not None and runtime.state.status in ACTIVE_STATES:
+                await self._manager.stop(session_id)
+        for session_id in session_ids:
+            if self._manager.get(session_id) is not None:
+                await self._manager.delete(session_id)
+
     # --- intern ------------------------------------------------------------
 
     def _require_coordinator(self, coordinator_id: str) -> SessionRuntime:

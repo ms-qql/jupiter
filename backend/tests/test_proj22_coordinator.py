@@ -194,6 +194,15 @@ def test_fleet_endpoint_and_404(client: TestClient):
     assert client.get(f"/coordinator/{sid}/fleet").status_code == 404
 
 
+def test_delete_fleet_stops_and_removes_children(client: TestClient):
+    fleet = _dispatch(client)
+    cid = fleet["coordinator"]["session_id"]
+    r = client.delete(f"/coordinator/{cid}")
+    assert r.status_code == 204, r.text
+    assert client.app.state.manager.list() == []
+    assert client.delete(f"/coordinator/{cid}").status_code == 404
+
+
 def test_pause_toggles(client: TestClient):
     cid = _dispatch(client)["coordinator"]["session_id"]
     r = client.post(f"/coordinator/{cid}/pause", json={"paused": True})

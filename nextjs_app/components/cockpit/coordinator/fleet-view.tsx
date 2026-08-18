@@ -7,7 +7,7 @@
 // /sessions-Poll (sessions-provider); nur Mutationen rufen /coordinator/*.
 
 import { useState } from "react";
-import { Pause, Play, FileText, Shuffle } from "lucide-react";
+import { Pause, Play, FileText, Shuffle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
@@ -21,10 +21,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { ApiError, reassignTicket, setCoordinatorPaused } from "@/lib/api";
+import { ApiError, deleteFleet, reassignTicket, setCoordinatorPaused } from "@/lib/api";
 import { displayName, statusMeta } from "@/lib/status";
 import type { EngineRead, Session } from "@/lib/types";
 import { Ampel } from "../ampel";
+import { ConfirmDialog } from "../confirm-dialog";
 import { SessionTile } from "../session-tile";
 
 export function FleetView({
@@ -33,6 +34,7 @@ export function FleetView({
   now,
   paused: pausedProp,
   engines,
+  onDeleted,
 }: {
   coordinator: Session;
   childSessions: Session[];
@@ -41,10 +43,12 @@ export function FleetView({
   paused?: boolean;
   /** Verfügbare Engines für die Umverteilung (kind=engine). */
   engines: EngineRead[];
+  onDeleted?: () => void;
 }) {
   const [paused, setPaused] = useState(pausedProp ?? false);
   const [busy, setBusy] = useState(false);
   const [reassignFor, setReassignFor] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   async function togglePause() {
     if (busy) return;
@@ -55,6 +59,21 @@ export function FleetView({
       toast.success(fleet.paused ? "Dispatch pausiert" : "Dispatch fortgesetzt");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Aktion fehlgeschlagen");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeFleet() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await deleteFleet(coordinator.session_id);
+      toast.success("Flotte gelöscht.");
+      setDeleteOpen(false);
+      onDeleted?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Löschen fehlgeschlagen");
     } finally {
       setBusy(false);
     }
@@ -130,6 +149,10 @@ export function FleetView({
             {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
             {paused ? "Fortsetzen" : "Pausieren"}
           </Button>
+          <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)} disabled={busy}>
+            <Trash2 className="size-3.5" />
+            Löschen
+          </Button>
         </div>
       </header>
 
@@ -180,6 +203,14 @@ export function FleetView({
           ))
         )}
       </div>
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={(next) => !busy && setDeleteOpen(next)}
+        title="Flotte löschen?"
+        description="Der Koordinator und alle Spezialisten-Sessions werden gestoppt und aus dem Cockpit entfernt. Session-Logs im Vault bleiben erhalten."
+        loading={busy}
+        onConfirm={() => void removeFleet()}
+      />
     </section>
   );
 }

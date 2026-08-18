@@ -1758,6 +1758,13 @@ export function deleteFeatureRun(coordinatorId: string): Promise<void> {
   );
 }
 
+/** Flotte (PROJ-22) inklusive Koordinator- und Spezialisten-Sessions stoppen und entfernen. */
+export function deleteFleet(coordinatorId: string): Promise<void> {
+  return request<void>(`/coordinator/${encodeURIComponent(coordinatorId)}`, {
+    method: "DELETE",
+  });
+}
+
 /** Feature-Ausführung pausieren/fortsetzen. */
 export function setFeaturePaused(
   featureId: string,
