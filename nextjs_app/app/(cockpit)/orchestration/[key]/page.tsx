@@ -13,6 +13,7 @@ import { ArrowLeftIcon } from "lucide-react";
 import { EmbedTab } from "@/components/cockpit/embed-tab";
 import { LaunchButton } from "@/components/cockpit/launch-button";
 import { getEngines } from "@/lib/api";
+import { MicroAppErrorBoundary } from "@/components/microapps/microapp-error-boundary";
 import { resolveMicroApp } from "@/lib/microapps-registry";
 import type { EngineRead } from "@/lib/types";
 
@@ -119,15 +120,17 @@ export default function OrchestrationAppPage({
           </p>
         )}
         {nativeApp && (
-          <Suspense
-            fallback={
-              <p className="p-6 text-sm text-muted-foreground">Lädt App…</p>
-            }
-          >
-            <div className="min-h-0 flex-1 overflow-auto">
-              {createElement(nativeApp, { appKey: engine.key })}
-            </div>
-          </Suspense>
+          <MicroAppErrorBoundary>
+            <Suspense
+              fallback={
+                <p className="p-6 text-sm text-muted-foreground">Lädt App…</p>
+              }
+            >
+              <div className="min-h-0 flex-1 overflow-auto">
+                {createElement(nativeApp, { appKey: engine.key })}
+              </div>
+            </Suspense>
+          </MicroAppErrorBoundary>
         )}
       </div>
     );

@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -98,6 +99,27 @@ def _board_args(board: str) -> list[str]:
     return ["kanban", "--board", board]
 
 
+def _normalize_timestamps(obj):
+    # `hermes kanban ... --json` emits *_at fields as raw Unix-second integers
+    # (matches the sqlite `INTEGER` column), but the frontend types declare
+    # ISO strings and does `new Date(iso)`, which treats a bare number as
+    # milliseconds — off by 1000x, rendering dates around 1970-01-21 instead
+    # of the real date. Convert every `..._at` integer to an ISO-8601 string
+    # recursively so task/events/comments/runs all get a real date.
+    if isinstance(obj, dict):
+        return {
+            k: (
+                datetime.fromtimestamp(v, tz=timezone.utc).isoformat()
+                if k.endswith("_at") and isinstance(v, int)
+                else _normalize_timestamps(v)
+            )
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_normalize_timestamps(v) for v in obj]
+    return obj
+
+
 def _require_task_ids(ids: list[str]) -> list[str]:
     ids = [i for i in ids if i]
     if not ids:
@@ -123,12 +145,17 @@ async def get_tasks(board: str, assignee: str | None, include_archived: bool) ->
     if include_archived:
         args += ["--archived"]
     raw = await _run_hermes(args, _T_READ)
-    return json.loads(raw) if raw else []
+    return _normalize_timestamps(json.loads(raw)) if raw else []
 
 
-async def get_assignees(board: str) -> list[dict]:
+async def get_assignees(board: str) -> list[str]:
+    # `hermes kanban assignees --json` liefert Objekte ({name, on_disk, counts}),
+    # nicht die vom Frontend erwartete `string[]` — ungefiltert durchgereicht
+    # rendert React ein rohes Objekt als Kind und crasht hart (React error #31),
+    # was mangels Error Boundary ganz Jupiter mitreißt.
     raw = await _run_hermes(_board_args(board) + ["assignees", "--json"], _T_READ)
-    return json.loads(raw) if raw else []
+    entries = json.loads(raw) if raw else []
+    return [e["name"] if isinstance(e, dict) else e for e in entries]
 
 
 async def get_projects() -> list[dict]:
@@ -160,7 +187,7 @@ async def get_projects() -> list[dict]:
 
 async def get_task(board: str, task_id: str) -> dict:
     raw = await _run_hermes(_board_args(board) + ["show", task_id, "--json"], _T_READ)
-    return json.loads(raw)
+    return _normalize_timestamps(json.loads(raw))
 
 
 async def get_task_log(board: str, task_id: str) -> dict:
@@ -314,12 +341,17 @@ async def tasks(
     board: str = Query(...),
     assignee: str | None = None,
     include_archived: bool = False,
-) -> list[dict]:
-    return await get_tasks(board, assignee, include_archived)
+) -> dict:
+    # Frontend erwartet {board, tasks: [...]} (HermesKanbanTasksResponse) — ein
+    # bares Array liefert `r.tasks === undefined`, das Board bleibt dauerhaft leer.
+    return {
+        "board": board,
+        "tasks": await get_tasks(board, assignee, include_archived),
+    }
 
 
 @router.get("/assignees")
-async def assignees(board: str = Query(...)) -> list[dict]:
+async def assignees(board: str = Query(...)) -> list[str]:
     return await get_assignees(board)
 
 

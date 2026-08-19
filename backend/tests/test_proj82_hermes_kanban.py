@@ -160,6 +160,48 @@ def test_invalid_board_slug_rejected(monkeypatch):
     assert r.status_code == 400
 
 
+def test_get_tasks_route_wraps_response(monkeypatch):
+    # Frontend erwartet {board, tasks: [...]} (HermesKanbanTasksResponse) — ein
+    # bares Array liefert `r.tasks === undefined`, das Board bleibt leer.
+    client, _ = _client(monkeypatch, '[{"id": "t_1", "title": "x", "status": "todo"}]')
+    r = client.get("/hermes-kanban/tasks", params={"board": "jupiter-abc"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["board"] == "jupiter-abc"
+    assert body["tasks"][0]["id"] == "t_1"
+
+
+def test_get_assignees_route_flattens_to_names(monkeypatch):
+    # `hermes kanban assignees --json` liefert Objekte ({name, on_disk, counts}),
+    # nicht die vom Frontend erwartete string[] — sonst rendert React ein rohes
+    # Objekt als Kind und crasht ganz Jupiter (React error #31, kein Boundary).
+    client, _ = _client(
+        monkeypatch,
+        '[{"name": "jupiter-coordinator", "on_disk": true, "counts": {"done": 6}}]',
+    )
+    r = client.get("/hermes-kanban/assignees", params={"board": "jupiter-abc"})
+    assert r.status_code == 200
+    assert r.json() == ["jupiter-coordinator"]
+
+
+def test_get_task_route_normalizes_unix_timestamps(monkeypatch):
+    # `hermes kanban show --json` liefert *_at als rohe Unix-Sekunden-Integer
+    # (sqlite INTEGER-Spalte). `new Date(iso)` im Frontend interpretiert eine
+    # nackte Zahl als Millisekunden -> Anzeige landet um 1970-01-21 statt am
+    # echten Datum. Route muss in ISO-8601-Strings konvertieren.
+    client, _ = _client(
+        monkeypatch,
+        '{"task": {"id": "t_1", "created_at": 1787173296, "started_at": null}, '
+        '"events": [{"kind": "created", "created_at": 1787173296}]}',
+    )
+    r = client.get("/hermes-kanban/tasks/t_1", params={"board": "jupiter-abc"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["task"]["created_at"] == "2026-08-19T21:01:36+00:00"
+    assert body["task"]["started_at"] is None
+    assert body["events"][0]["created_at"] == "2026-08-19T21:01:36+00:00"
+
+
 def test_invalid_task_id_rejected(monkeypatch):
     client, _ = _client(monkeypatch, "{}")
     r = client.get("/hermes-kanban/tasks/xyz/log", params={"board": "jupiter-abc"})

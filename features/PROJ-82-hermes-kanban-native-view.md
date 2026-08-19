@@ -376,5 +376,13 @@ Beide High-Bugs gefixt und live gegen die echte Hermes-CLI verifiziert; Regressi
 
 **Offen (nicht Backend-Scope):** Frontend-Microapp (`nextjs_app/components/microapps/hermes_kanban/`) + Zeile in `nextjs_app/lib/microapps-registry.ts` (siehe /abc-frontend).
 
+**Bugfix (abc-backoffice, 2026-08-19):** `get_task`/`get_tasks` gaben `created_at`/`started_at`/`completed_at`
+(und verschachtelt in `events`/`comments`/`runs`) als rohe Unix-Sekunden-Integer durch (`hermes kanban
+show/list --json`), obwohl die TS-Typen ISO-Strings deklarieren — `new Date(iso)` im Frontend interpretierte
+die Zahl als Millisekunden, Anzeige landete um 1970-01-21 statt am echten Datum. Neue `_normalize_timestamps()`
+in `hermes_kanban.py` konvertiert rekursiv jedes `..._at`-Integer-Feld nach ISO-8601, angewendet in `get_task`
++ `get_tasks`. Test: `test_get_task_route_normalizes_unix_timestamps`. Details: Hal-Knowledge
+`bug_geloest-jupiter-coordinator-main-zone-worktree-drift.md`.
+
 ## Deployment
 _To be added by /deploy_

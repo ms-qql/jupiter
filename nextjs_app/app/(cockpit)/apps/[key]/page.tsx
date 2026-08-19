@@ -15,6 +15,7 @@ import { ArrowLeftIcon } from "lucide-react";
 import { EmbedTab } from "@/components/cockpit/embed-tab";
 import { LaunchButton } from "@/components/cockpit/launch-button";
 import { getEngines } from "@/lib/api";
+import { MicroAppErrorBoundary } from "@/components/microapps/microapp-error-boundary";
 import { resolveMicroApp } from "@/lib/microapps-registry";
 import type { EngineRead } from "@/lib/types";
 
@@ -121,7 +122,9 @@ export default function MicroAppPage({
       <div className="flex h-full flex-col">
         {header}
         <div className="min-h-0 flex-1 overflow-auto">
-          <NativeMicroAppHost appKey={engine.key} back={back} />
+          <MicroAppErrorBoundary>
+            <NativeMicroAppHost appKey={engine.key} back={back} />
+          </MicroAppErrorBoundary>
         </div>
       </div>
     );
