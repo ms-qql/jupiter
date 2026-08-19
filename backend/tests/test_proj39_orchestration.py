@@ -68,11 +68,17 @@ def test_orchestration_entries_are_available(tmp_path):
 
 
 def test_real_config_has_orchestration_group():
-    """Die echte engines.yaml trägt Paperclip+Wayland als group=orchestration (https-URLs)."""
+    """Die echte engines.yaml trägt Paperclip+Wayland als group=orchestration (https-URLs).
+
+    Seit PROJ-82 sind native Einträge (kind=native, gerendert über die
+    Micro-App-Registry statt iframe) in derselben Gruppe zulässig — die
+    https-URL-Pflicht gilt nur für iframe-Einträge (Mixed-Content-Schutz).
+    """
     reg = EngineRegistry(f"{PROJECT}/backend/config/engines.yaml")
     orch = [e for e in reg.all() if e.group == "orchestration"]
     keys = {e.key for e in orch}
     assert {"paperclip", "wayland"} <= keys
     for e in orch:
-        assert e.kind == "iframe"
-        assert e.url and e.url.startswith("https://"), f"{e.key}: URL muss https sein (Mixed-Content)"
+        assert e.kind in ("iframe", "native")
+        if e.kind == "iframe":
+            assert e.url and e.url.startswith("https://"), f"{e.key}: URL muss https sein (Mixed-Content)"

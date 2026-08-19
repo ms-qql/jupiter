@@ -27,8 +27,12 @@ export function useOrchestrationApps(): OrchestrationAppsState {
     const ctrl = new AbortController();
     getEngines(ctrl.signal)
       .then((o) => {
+        // PROJ-82: Orchestration umfasst eingebettete (iframe) UND nativ in
+        // Jupiter programmierte Apps (kind=native, Render via microapps-registry).
         const orch = o.engines.filter(
-          (e) => e.kind === "iframe" && e.group === "orchestration",
+          (e) =>
+            e.group === "orchestration" &&
+            (e.kind === "iframe" || e.kind === "native"),
         );
         setApps(orch);
       })

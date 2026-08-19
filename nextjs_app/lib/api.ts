@@ -105,6 +105,16 @@ import type {
   HalRegistryResponse,
   HalRegistryMatchCandidate,
   HalIngestResponse,
+  HermesKanbanBoard,
+  HermesKanbanCreateRequest,
+  HermesKanbanCreateResult,
+  HermesKanbanDispatchResult,
+  HermesKanbanFeatureLookup,
+  HermesKanbanProject,
+  HermesKanbanSettings,
+  HermesKanbanTask,
+  HermesKanbanTaskDetail,
+  HermesKanbanTasksResponse,
   MetricsSnapshot,
   MetricsStatus,
   TerminalInfo,
@@ -2184,5 +2194,184 @@ export function startHalIngest(
   return request<HalIngestResponse>("/ui-check/hal-registry/ingests", {
     method: "POST",
     body: JSON.stringify({ entry_id: entryId }),
+  });
+}
+
+// --- PROJ-82: Hermes-Kanban (native) ----------------------------------------
+
+/** Alle Boards des Hermes-Kanbans (Slug + Name), Default = is_current. */
+export function getHermesKanbanBoards(
+  signal?: AbortSignal,
+): Promise<HermesKanbanBoard[]> {
+  return request<HermesKanbanBoard[]>("/hermes-kanban/boards", { signal });
+}
+
+/** Tasks eines Boards, optional gefiltert nach Assignee und Archived. */
+export function getHermesKanbanTasks(
+  board: string,
+  assignee?: string | null,
+  includeArchived?: boolean,
+  signal?: AbortSignal,
+): Promise<HermesKanbanTasksResponse> {
+  const params = new URLSearchParams({ board });
+  if (assignee) params.set("assignee", assignee);
+  if (includeArchived) params.set("include_archived", "true");
+  return request<HermesKanbanTasksResponse>(
+    `/hermes-kanban/tasks?${params.toString()}`,
+    { signal },
+  );
+}
+
+/** Detail eines Tasks (Läufe, Events, Kommentare, Summary). */
+export function getHermesKanbanTask(
+  id: string,
+  board: string,
+  signal?: AbortSignal,
+): Promise<HermesKanbanTaskDetail> {
+  return request<HermesKanbanTaskDetail>(
+    `/hermes-kanban/tasks/${id}?${new URLSearchParams({ board })}`,
+    { signal },
+  );
+}
+
+/** Worker-Log-Snapshot (letzte 64 KB). */
+export function getHermesKanbanTaskLog(
+  id: string,
+  board: string,
+  signal?: AbortSignal,
+): Promise<{ log: string }> {
+  return request<{ log: string }>(
+    `/hermes-kanban/tasks/${id}/log?${new URLSearchParams({ board })}`,
+    { signal },
+  );
+}
+
+/** Bekannte Hermes-Profile für das Assignee-Dropdown. */
+export function getHermesKanbanAssignees(
+  board: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  return request<string[]>(
+    `/hermes-kanban/assignees?${new URLSearchParams({ board })}`,
+    { signal },
+  );
+}
+
+/** Projektliste für das Formular (Text-Parsing im Backend). */
+export function getHermesKanbanProjects(
+  signal?: AbortSignal,
+): Promise<HermesKanbanProject[]> {
+  return request<HermesKanbanProject[]>("/hermes-kanban/projects", { signal });
+}
+
+/** Neuen Task anlegen — liefert die erzeugte Task-ID. */
+export function createHermesKanbanTask(
+  body: HermesKanbanCreateRequest,
+  board: string,
+): Promise<HermesKanbanCreateResult> {
+  return request<HermesKanbanCreateResult>(
+    `/hermes-kanban/tasks?${new URLSearchParams({ board })}`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+/** Sofortigen Dispatcher-Lauf anstoßen. */
+export function dispatchHermesKanban(
+  board: string,
+  signal?: AbortSignal,
+): Promise<HermesKanbanDispatchResult> {
+  return request<HermesKanbanDispatchResult>(
+    `/hermes-kanban/dispatch?${new URLSearchParams({ board })}`,
+    { method: "POST", signal },
+  );
+}
+
+/** Task blocken (Grund + Block-Art). */
+export function blockHermesKanbanTask(
+  id: string,
+  board: string,
+  reason?: string | null,
+  kind?: string | null,
+): Promise<void> {
+  return request<void>(
+    `/hermes-kanban/tasks/${id}/block?${new URLSearchParams({ board })}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason, kind }),
+    },
+  );
+}
+
+/** Task entblocken (optionaler Grund). */
+export function unblockHermesKanbanTask(
+  id: string,
+  board: string,
+  reason?: string | null,
+): Promise<void> {
+  return request<void>(
+    `/hermes-kanban/tasks/${id}/unblock?${new URLSearchParams({ board })}`,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
+}
+
+/** Task archivieren. */
+export function archiveHermesKanbanTask(
+  id: string,
+  board: string,
+): Promise<void> {
+  return request<void>(
+    `/hermes-kanban/tasks/${id}/archive?${new URLSearchParams({ board })}`,
+    { method: "POST" },
+  );
+}
+
+/** Mehrere Tasks in EINEM CLI-Aufruf archivieren. */
+export function archiveBulkHermesKanbanTasks(
+  ids: string[],
+  board: string,
+): Promise<{ archived: string[]; failed?: Record<string, string> }> {
+  return request<{ archived: string[]; failed?: Record<string, string> }>(
+    `/hermes-kanban/tasks/archive-bulk?${new URLSearchParams({ board })}`,
+    { method: "POST", body: JSON.stringify({ ids }) },
+  );
+}
+
+/** Kommentar an einen Task anhängen (Autor fest `jupiter`). */
+export function commentHermesKanbanTask(
+  id: string,
+  board: string,
+  text: string,
+): Promise<void> {
+  return request<void>(
+    `/hermes-kanban/tasks/${id}/comments?${new URLSearchParams({ board })}`,
+    { method: "POST", body: JSON.stringify({ text }) },
+  );
+}
+
+/** Best-Effort-Titel eines Features für die Kurzsyntax-Vorbefüllung. */
+export function lookupHermesKanbanFeature(
+  projNumber: number,
+  signal?: AbortSignal,
+): Promise<HermesKanbanFeatureLookup> {
+  return request<HermesKanbanFeatureLookup>(
+    `/hermes-kanban/feature-lookup/${projNumber}`,
+    { signal },
+  );
+}
+
+/** Polling-Intervall lesen. */
+export function getHermesKanbanSettings(
+  signal?: AbortSignal,
+): Promise<HermesKanbanSettings> {
+  return request<HermesKanbanSettings>("/settings/hermes-kanban", { signal });
+}
+
+/** Polling-Intervall setzen (5–60 s). */
+export function setHermesKanbanSettings(
+  pollIntervalSeconds: number,
+): Promise<HermesKanbanSettings> {
+  return request<HermesKanbanSettings>("/settings/hermes-kanban", {
+    method: "PATCH",
+    body: JSON.stringify({ poll_interval_seconds: pollIntervalSeconds }),
   });
 }

@@ -60,6 +60,11 @@ export const MICROAPP_REGISTRY: Record<string, MicroAppComponent> = {
   peppermint_dashboard: lazy(
     () => import("@/components/microapps/peppermint_dashboard/peppermint-dashboard-app"),
   ),
+  // PROJ-82: Hermes Kanban — nativ in Jupiter (Board + Task-Detail, kein iFrame).
+  // Nativer Eintrag in der Orchestration-Sektion (vgl. engines.yaml).
+  hermes_kanban: lazy(
+    () => import("@/components/microapps/hermes_kanban/hermes-kanban-app"),
+  ),
 };
 
 /** Liefert die native Komponente zu einem key — oder null, wenn nicht registriert

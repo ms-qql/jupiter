@@ -15,6 +15,7 @@ import Link from "next/link";
 import { ArrowLeftIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThresholdControl } from "@/components/cockpit/threshold-control";
+import { HermesKanbanControl } from "@/components/cockpit/hermes-kanban-control";
 import { PolicyControl } from "@/components/cockpit/policy-control";
 import { WatchdogControl } from "@/components/cockpit/watchdog-control";
 import { LivenessControl } from "@/components/cockpit/liveness-control";
@@ -39,6 +40,7 @@ const SECTIONS: Section[] = [
   { id: "budget", title: "Budget", control: <ProviderBudgetControl /> },
   { id: "token-savings", title: "Token Savings", control: <TokenSavingsControl /> },
   { id: "sprache", title: "Sprache", control: <TranscriptionControl /> },
+  { id: "hermes-kanban", title: "Hermes-Kanban", control: <HermesKanbanControl /> },
   { id: "modelle", title: "Modelle", control: <EngineModelsControl /> },
   { id: "registry", title: "Registry", control: <RegistryControl /> },
 ];

@@ -1,17 +1,19 @@
 "use client";
 
-// PROJ-39: Vollbild-Ansicht einer eingebetteten Orchestration-App (Paperclip,
-// Wayland …). Lädt den Registry-Eintrag aus GET /engines (kind=iframe,
-// group=orchestration) und bettet ihn vollhöhen über die wiederverwendete
-// EmbedTab-Logik ein. Direkt per URL erreichbar — unabhängig davon, ob die
+// PROJ-39: Vollbild-Ansicht einer Orchestration-App (Paperclip, Hermes-Kanban …).
+// Lädt den Registry-Eintrag aus GET /engines (group=orchestration) und verzweigt
+// nach `kind`: kind=iframe → eingebettet über die wiederverwendete EmbedTab-Logik;
+// kind=native (PROJ-82, Hermes-Kanban) → native Jupiter-Komponente aus der
+// microapps-registry. Direkt per URL erreichbar — unabhängig davon, ob die
 // Sidebar-Sektion gerade ein-/ausgeblendet ist (Edge Case der Spec).
 
-import { use, useEffect, useState } from "react";
+import { Suspense, createElement, use, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeftIcon } from "lucide-react";
 import { EmbedTab } from "@/components/cockpit/embed-tab";
 import { LaunchButton } from "@/components/cockpit/launch-button";
 import { getEngines } from "@/lib/api";
+import { resolveMicroApp } from "@/lib/microapps-registry";
 import type { EngineRead } from "@/lib/types";
 
 // Ergebnis trägt den aufgelösten `key` mit → solange es noch nicht zum aktuellen
@@ -33,7 +35,12 @@ export default function OrchestrationAppPage({
     const ctrl = new AbortController();
     getEngines(ctrl.signal)
       .then((o) => {
-        const engine = o.engines.find((e) => e.key === key && e.kind === "iframe");
+        const engine = o.engines.find(
+          (e) =>
+            e.key === key &&
+            e.group === "orchestration" &&
+            (e.kind === "iframe" || e.kind === "native"),
+        );
         setResult(
           engine
             ? { key, phase: "ready", engine }
@@ -88,13 +95,43 @@ export default function OrchestrationAppPage({
       <div className="p-6">
         {back}
         <p className="mt-6 rounded-lg border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
-          {`Unbekannte App „${key}“ — pflege sie in config/engines.yaml (kind: iframe, group: orchestration).`}
+          {`Unbekannte App „${key}“ — pflege sie in config/engines.yaml (kind: iframe oder native, group: orchestration).`}
         </p>
       </div>
     );
   }
 
   const { engine } = state;
+
+  // --- Native Orchestration-App (kind=native, PROJ-82) -----------------------
+  // Löst den key über die stabile Komponenten-Registry auf und rendert die
+  // Lazy-Komponente in <Suspense>. Fehlt der key → sauberer Hinweis statt Crash.
+  if (engine.kind === "native") {
+    const nativeApp = resolveMicroApp(engine.key);
+    return (
+      <div className="flex h-full flex-col">
+        {!nativeApp && (
+          <p className="p-6">
+            {back}
+            <span className="mt-6 block rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-6 text-sm text-amber-600 dark:text-amber-400">
+              {`Native Orchestration-App „${engine.key}“ ist nicht verfügbar — sie ist in lib/microapps-registry.ts (noch) nicht registriert.`}
+            </span>
+          </p>
+        )}
+        {nativeApp && (
+          <Suspense
+            fallback={
+              <p className="p-6 text-sm text-muted-foreground">Lädt App…</p>
+            }
+          >
+            <div className="min-h-0 flex-1 overflow-auto">
+              {createElement(nativeApp, { appKey: engine.key })}
+            </div>
+          </Suspense>
+        )}
+      </div>
+    );
+  }
 
   // Mixed-Content-Schutz (Spec-Edge-Case): eine http-App lädt in der https-Seite
   // gar nicht — der Browser blockt vor jedem JS-Fallback. Statt eines stillen
