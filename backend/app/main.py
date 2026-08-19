@@ -11,8 +11,9 @@ import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from fastapi import Depends
 
@@ -86,7 +87,9 @@ from .routes import (
     vault,
     vault_v1,
     video_summary,
+    hermes_kanban,
 )
+from .routes.hermes_kanban import HermesError
 
 
 logger = logging.getLogger(__name__)
@@ -442,6 +445,11 @@ def create_app(
     app.include_router(challenge.router, dependencies=auth_gate)
     app.include_router(terminal.router, dependencies=auth_gate)
     app.include_router(registry.router, dependencies=auth_gate)  # PROJ-26: Marktplatz/Registry
+    app.include_router(hermes_kanban.router, dependencies=auth_gate)  # PROJ-82: native Hermes-Kanban-Ansicht
+
+    @app.exception_handler(HermesError)
+    async def _hermes_error_handler(request: Request, exc: HermesError) -> JSONResponse:
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

@@ -1898,3 +1898,145 @@ export interface HalIngestResponse {
   session_id: string;
   message: string;
 }
+
+// --- PROJ-82: Hermes-Kanban (native) ---------------------------------------
+
+export const HERMES_KANBAN_STATUSES = [
+  "triage",
+  "todo",
+  "scheduled",
+  "ready",
+  "running",
+  "blocked",
+  "review",
+  "done",
+  "archived",
+] as const;
+export type HermesKanbanStatus = (typeof HERMES_KANBAN_STATUSES)[number];
+
+/** Board aus `hermes kanban boards list --json`. */
+export interface HermesKanbanBoard {
+  slug: string;
+  name: string;
+  is_current?: boolean;
+}
+
+/** Task aus `hermes kanban list --json`. */
+export interface HermesKanbanTask {
+  id: string;
+  title: string;
+  body?: string | null;
+  assignee?: string | null;
+  status: HermesKanbanStatus;
+  priority?: number | null;
+  tenant?: string | null;
+  workspace_kind?: string | null;
+  workspace_path?: string | null;
+  branch_name?: string | null;
+  project_id?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  result?: string | null;
+  skills?: string[] | null;
+  max_retries?: number | null;
+  model_override?: string | null;
+  provider_override?: string | null;
+  session_id?: string | null;
+  workflow_template_id?: string | null;
+  current_step_key?: string | null;
+}
+
+export interface HermesKanbanRun {
+  id?: string;
+  profile?: string | null;
+  step_key?: string | null;
+  status?: string | null;
+  outcome?: string | null;
+  summary?: string | null;
+  elapsed?: number | null;
+}
+
+export interface HermesKanbanComment {
+  id?: string;
+  author?: string | null;
+  text?: string;
+  created_at?: string | null;
+}
+
+export interface HermesKanbanEvent {
+  id?: string;
+  kind?: string | null;
+  summary?: string | null;
+  created_at?: string | null;
+}
+
+/** Detail aus `hermes kanban show <id> --json`. */
+export interface HermesKanbanTaskDetail {
+  task: HermesKanbanTask;
+  parents: HermesKanbanTask[];
+  children: HermesKanbanTask[];
+  comments: HermesKanbanComment[];
+  events: HermesKanbanEvent[];
+  runs: HermesKanbanRun[];
+  latest_summary?: string | null;
+}
+
+export interface HermesKanbanTasksResponse {
+  board?: string;
+  tasks: HermesKanbanTask[];
+}
+
+/** Projekt aus `hermes project list` (Text-Parsing im Backend). */
+export interface HermesKanbanProject {
+  slug: string;
+  name: string;
+  active: boolean;
+}
+
+/** Ergebnis von `hermes kanban dispatch --json`. */
+export interface HermesKanbanDispatchResult {
+  reclaimed?: number;
+  crashed?: number;
+  spawned?: number;
+}
+
+export interface HermesKanbanCreateRequest {
+  title: string;
+  body?: string | null;
+  assignee?: string | null;
+  project?: string | null;
+  workspace_mode?: string;
+  workspace_path?: string | null;
+  branch?: string | null;
+  parents?: string[];
+  priority?: number | null;
+  skills?: string[];
+  initial_status?: string;
+  triage?: boolean;
+  tenant?: string | null;
+  idempotency_key?: string | null;
+  max_runtime?: string | null;
+  max_retries?: number | null;
+  model_override?: string | null;
+  provider_override?: string | null;
+  goal_mode?: boolean;
+  goal_max_turns?: number | null;
+}
+
+export interface HermesKanbanCreateResult {
+  id?: string;
+  task_id?: string;
+}
+
+export interface HermesKanbanSettings {
+  poll_interval_seconds: number;
+  source: string;
+  warning?: string | null;
+}
+
+export interface HermesKanbanFeatureLookup {
+  proj_number: number;
+  title: string | null;
+}

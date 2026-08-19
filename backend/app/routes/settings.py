@@ -306,3 +306,24 @@ async def set_transcription(payload: TranscriptionSettingPatch) -> dict:
         )
     settings.use_groq_transcription = payload.use_groq
     return _transcription_payload()
+
+
+# --- Hermes-Kanban-Polling-Intervall (PROJ-82) ------------------------------
+
+from ..engine.hermes_kanban_store import hermes_kanban_store
+from ..schemas.hermes_kanban import HermesKanbanSettingsPatch, HermesKanbanSettingsRead
+
+
+@router.get("/hermes-kanban", response_model=HermesKanbanSettingsRead)
+async def get_hermes_kanban_settings() -> dict:
+    """Aktuelles Board-Polling-Intervall (Sekunden) + Herkunft/Warnung."""
+    return hermes_kanban_store.snapshot()
+
+
+@router.patch("/hermes-kanban", response_model=HermesKanbanSettingsRead)
+async def patch_hermes_kanban_settings(payload: HermesKanbanSettingsPatch) -> dict:
+    """Polling-Intervall (5–60 s) validieren + nach YAML schreiben, live aktiv."""
+    try:
+        return hermes_kanban_store.save(payload.poll_interval_seconds)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -45,6 +45,12 @@ _DEFAULT_LIVENESS_PATH = str(Path(__file__).resolve().parent.parent / "config" /
 # Engine-Overrides). Live mtime-geprüft wie Policy/Watchdog/Liveness.
 _DEFAULT_TRANSPORT_PATH = str(Path(__file__).resolve().parent.parent / "config" / "transport.yaml")
 
+# PROJ-82: Polling-Intervall der nativen Hermes-Kanban-Ansicht. YAML-Datei,
+# live mtime-geprüft wie Policy/Watchdog; fehlt/defekt → Default 10 s.
+_DEFAULT_HERMES_KANBAN_PATH = str(
+    Path(__file__).resolve().parent.parent / "config" / "hermes_kanban.yaml"
+)
+
 # PROJ-73: globaler Token-Savings-Default + administrative Modulfreigaben.
 _DEFAULT_TOKEN_SAVINGS_PATH = str(
     Path(__file__).resolve().parent.parent / "config" / "token_savings.yaml"
@@ -108,6 +114,10 @@ class Settings(BaseSettings):
 
     # Pfad/Name des Claude-Code-CLI-Binaries (Subscription-Auth via `claude login`).
     claude_bin: str = "claude"
+
+    # PROJ-82: Pfad/Name der Hermes-Agent-CLI (Kanban-Subcommands). Läuft unter demselben
+    # VPS-User wie das Backend; kein zusätzliches Auth nötig.
+    hermes_bin: str = "hermes"
 
     # PROJ-13: Pfad/Name des git-Binaries + hartes Zeitlimit je Git-Aufruf.
     # Git läuft als parametrisierter Subprozess (kein Shell, keine interaktiven
@@ -298,6 +308,9 @@ class Settings(BaseSettings):
     # Live mtime-geprüft; fehlt/kaputt → Default "direct" für alle Engines (Spec-
     # Vorgabe: konservativ, bis der Spike abgeschlossen und ausgerollt ist).
     transport_config_path: str = _DEFAULT_TRANSPORT_PATH
+    # PROJ-82: Polling-Intervall der nativen Hermes-Kanban-Ansicht (Sekunden, 5–60).
+    # Live mtime-geprüft wie Watchdog; fehlt/defekt → Default 10 s.
+    hermes_kanban_config_path: str = _DEFAULT_HERMES_KANBAN_PATH
     # Hartes Zeitlimit je einzelnem `tmux`-CLI-Aufruf (has-session/new-session/
     # list-panes/kill-session — NICHT der Agenten-Turn selbst, der läuft unabhängig
     # in der Pane weiter). Bug (2026-07-07, echter Produktionsvorfall): ohne dieses
