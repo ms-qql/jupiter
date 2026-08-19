@@ -211,3 +211,9 @@ Diese vier sind laut Tech Design explizit dem Deploy-Schritt zugeordnet („Aufw
 
 ### Status
 Feature ist funktional deployed und in der Sidebar nutzbar; die offene Auth-Lücke bleibt bewusst dokumentiert statt stillschweigend als „fertig" verbucht.
+
+### Bugfix 2026-08-18 (abc-backoffice): Chat-Verbindungsfehler
+**Symptom:** Hermes-Chat meldete "Connection problems", WebSocket-Upgrade schlug fehl.
+**Ursache:** Der Caddy-Block schrieb `Host` auf `127.0.0.1:9119` um, ließ `Origin` aber unverändert `https://hermes.auxevo.tech` durch. Hermes' DNS-Rebinding-Guard (`_ws_host_origin_reason`, `hermes-agent/hermes_cli/web_server.py:15775`) prüft bei loopback-Bind zusätzlich den `Origin`-Header gegen den Bind-Host → Mismatch → `pty refused: origin_mismatch` in `/home/dev/.hermes/logs/gui.log`.
+**Fix:** `/etc/caddy/Caddyfile`, Block `hermes.auxevo.tech`, zusätzlich `header_up Origin http://127.0.0.1:9119` neben dem bestehenden `header_up Host`-Rewrite. Backup vor Änderung: `Caddyfile.bak-20260818-hermes-origin-fix`.
+**Verifikation:** `/home/dev/.hermes/logs/gui.log` zeigt letzten `origin_mismatch` vor dem Reload, danach `pty accepted peer=127.0.0.1 mode=loopback cred=token`. Keine neuen `origin_mismatch`-Einträge seit Fix.
