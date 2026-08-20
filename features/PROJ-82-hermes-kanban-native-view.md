@@ -1,6 +1,6 @@
 # PROJ-82: Hermes-Kanban nativ in Jupiter (kein iFrame)
 
-## Status: Architected
+## Status: Deployed
 **Created:** 2026-08-19
 **Revidiert:** 2026-08-19 — Review gegen echte Hermes-CLI v0.20.4 (alle Subcommands/Flags/JSON-Formate verifiziert), Entscheidungen aus Nutzer-Review eingearbeitet.
 
@@ -385,4 +385,4 @@ in `hermes_kanban.py` konvertiert rekursiv jedes `..._at`-Integer-Feld nach ISO-
 `bug_geloest-jupiter-coordinator-main-zone-worktree-drift.md`.
 
 ## Deployment
-_To be added by /deploy_
+Deployed 2026-08-19 — Bump 0.27.48 (Commit `23fc554`). Nachfolgend Bugfix-Commit `0559c84` (Timestamp-Bug + React-Crash-Boundary).
