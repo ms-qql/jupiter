@@ -1,6 +1,6 @@
 # Feature Index — Jupiter
 
-**Next Available ID:** PROJ-84
+**Next Available ID:** PROJ-85
 
 Status-Werte: Planned → Architected → In Progress → In Review → Approved → Deployed
 
@@ -94,8 +94,9 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-79 | Featurezentrierter Koordinator mit autonomem Abschluss | P1 | Approved | PROJ-22, PROJ-4, PROJ-16, PROJ-27, PROJ-33, PROJ-45, PROJ-17 | [Spec](PROJ-79-featurezentrierter-koordinator.md) |
 | PROJ-80 | Fortsetzbare Paket-Sessions für den Feature-Koordinator (Follow-up ohne Neustart) | P1 | Approved | PROJ-79, PROJ-56, PROJ-58, PROJ-59, PROJ-60, PROJ-62, PROJ-48, PROJ-57 | [Spec](PROJ-80-paket-session-followup-feature-koordinator.md) |
 | PROJ-81 | Orchestration-Eintrag „Hermes" — Hermes-Dashboard eingebettet bedienen | P1 | Deployed | PROJ-39, PROJ-38, PROJ-18 | [Spec](PROJ-81-orchestration-hermes-dashboard.md) |
-| PROJ-82 | Hermes-Kanban nativ in Jupiter (kein iFrame) | P1 | Approved | — (bezieht sich auf PROJ-81, kein harter Dependency) | [Spec](PROJ-82-hermes-kanban-native-view.md) — QA bestanden, 2 High-Bugs gefixt (Projekt-Parser, Bulk-Archivieren); Phase 2 (Live-Worker-Logs) bewusst zurückgestellt |
+| PROJ-82 | Hermes-Kanban nativ in Jupiter (kein iFrame) | P1 | Deployed | — (bezieht sich auf PROJ-81, kein harter Dependency) | [Spec](PROJ-82-hermes-kanban-native-view.md) — deployed v0.27.48, 2026-08-19; QA bestanden, 2 High-Bugs gefixt (Projekt-Parser, Bulk-Archivieren); Phase 2 (Live-Worker-Logs) bewusst zurückgestellt |
 | PROJ-83 | Modellwahl pro Hermes-Profil in den Einstellungen | P1 | Deployed | PROJ-51, PROJ-82 | [Spec](PROJ-83-hermes-profilmodellwahl-einstellungen.md) — deployed v0.27.50, 2026-08-20; manuelle Browser-Bestätigung von AC B nach Deploy empfohlen (kein Testlogin für automatisierte E2E vorhanden) |
+| PROJ-84 | Hermes-Kanban – Arbeitsfluss verfeinern | P1 | Approved | PROJ-82, PROJ-20 | [Spec](PROJ-84-hermes-kanban-arbeitsfluss-verfeinerung.md) — BUG-1 (Critical) gefixt + re-verifiziert 2026-08-20, alle ACs PASS |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

@@ -1,9 +1,9 @@
 # PROJ-84: Hermes-Kanban – Arbeitsfluss verfeinern
 
-## Status: In Review
+## Status: Approved
 
 **Created:** 2026-08-20
-**Last Updated:** 2026-08-20
+**Last Updated:** 2026-08-20 — QA-Re-Verifikation: BUG-1 gefixt bestätigt, Status Approved
 
 ## Dependencies
 
@@ -261,7 +261,7 @@ verwerfen (`git checkout -- ...`), damit `main` sauber bleibt.
 - [x] Schmale Ansicht: `max-h-[70vh] w-full` gestapelt, Schließen-Button immer erreichbar (`:132,142,159`)
 - [x] Detail aktualisiert sich nach Aktionen/Refresh (`onChanged`-Callback, `refresh()`-Aufrufe)
 
-**C — Neues Task-Formular: teils FAIL (siehe BUG-1)**
+**C — Neues Task-Formular: PASS (BUG-1 gefixt, Re-Verifikation 2026-08-20)**
 - [x] Beschreibungsfeld `rows=10`, deutlich größer (`new-task-dialog.tsx:307-319`)
 - [x] `PushToTalkButton` aus PROJ-20 direkt am Feld, hängt Text an (`:315-318`, `appendTranscript` `:198-200`)
 - [x] Wiederverwendung der PROJ-20-Komponente 1:1 (kein neuer Transkriptionsdienst)
@@ -271,26 +271,28 @@ verwerfen (`git checkout -- ...`), damit `main` sauber bleibt.
 - [x] Kein Workspace-Modus-/Branch-Feld im Formular
 - [x] Workspace-Pfad startet mit `/home/dev/projects/`, vollständiger Pfad sichtbar (`:356-373`)
 - [x] Client-seitige Blockade bei leerem/ungültigem Pfad (`pathError`, `:174-182`)
-- [ ] **Serverseitige Durchsetzung FAIL** — im gemeinsamen Worktree fehlt die kanonische Prüfung/`extra=forbid` komplett (BUG-1); ein direkter API-Call umgeht die Frontend-Beschränkung vollständig.
+- [x] **Serverseitige Durchsetzung PASS (Re-Verifikation)** — Fix jetzt auf `main` committed (`567a9a8`, `8a5496b`); die 4 BUG-1-Repro-Requests aus der Erstprüfung erneut live gegen den aktuellen `main`-Code gefahren (isolierter uvicorn auf Port 8091, gemintetes JWT), alle 4 jetzt korrekt **422**: `workspace_mode=worktree`+`branch=evil-branch` → 422 `extra_forbidden`; `project=other-proj` → 422 `extra_forbidden`; Pfad-Traversal `../../etc` → 422 „existiert nicht"; Root-Escape `/etc` → 422 „muss unter /home/dev/projects liegen". Kein `.worktrees/PROJ-84` mehr vorhanden — Arbeit lief korrekt auf `main`.
 - [x] Parents unter „Erweitert" (`:409-443`)
 - [x] Bestehende Validierung (Titel, Triage, Model/Provider-XOR) unverändert wirksam
 
 ### Regression
-- Kein Regressionstest gegen `features/INDEX.md` nötig über das oben Geprüfte hinaus — PROJ-84 ändert nur die 3 UI-Komponenten + den Create-Contract; Lese-Endpunkte, Board/Assignee-Aktionen, TaskActions unverändert (Diff-Scope bestätigt: nur `hermes-kanban-app.tsx`, `new-task-dialog.tsx`, `task-detail-panel.tsx`, `lib/types.ts` im Worktree).
-- Backend-Unrelated-Failures (4x `test_proj50_codex_abc.py`, stale-tmp-path) unabhängig via Vergleichslauf ohne PROJ-84-Diff auf `main` bestätigt vorbestehend.
+- Kein Regressionstest gegen `features/INDEX.md` nötig über das oben Geprüfte hinaus — PROJ-84 ändert nur die 3 UI-Komponenten + den Create-Contract; Lese-Endpunkte, Board/Assignee-Aktionen, TaskActions unverändert (Diff-Scope bestätigt: `git diff --stat ca3b95e..HEAD` zeigt exakt `hermes-kanban-app.tsx`, `new-task-dialog.tsx`, `task-detail-panel.tsx`, `lib/types.ts`, `hermes_kanban.py` Schema+Route, `test_proj82_hermes_kanban.py`).
+- Backend-Unrelated-Failures (4x `test_proj50_codex_abc.py`, `_feature_suggestion`-Prompt-Text-Drift, unabhängig von PROJ-84) erneut bestätigt vorbestehend — voller Lauf `backend/tests`: **1328 passed, 4 failed (unrelated), 1 xfailed**.
+- `test_proj82_hermes_kanban.py` (enthält die BUG-1-Unit-Tests: `extra=forbid`, Traversal, Root-Escape, Symlink-Escape, Kanonisierung): **21/21 passed** auf `main`.
+- `next run build` (Turbopack) auf `main`: kompiliert + typprüft sauber, alle Routen generiert.
 
 ### Security-Redteam
 - Auth-Gate bestätigt: `no-auth` Request auf `POST /hermes-kanban/tasks` → 401 (korrekt, Contract-Bug ist unabhängig davon).
 - SQL-Injection-artiger Titel (`'; DROP TABLE tasks; --`) wurde als literaler String angenommen, kein Crash — Route ist reine CLI-Durchreiche ohne SQL, kein Injection-Vektor.
-- Path-Traversal/Root-Escape/Legacy-Field-Injection: siehe BUG-1 oben — im aktuell deploybaren Arbeitsstand nicht abgewehrt.
+- Path-Traversal/Root-Escape/Legacy-Field-Injection: **BUG-1 gefixt, re-verifiziert (siehe AC C oben)** — im jetzt deploybaren `main`-Stand alle 4 Vektoren mit 422 abgewehrt.
 
 ### Browser-E2E (abc-qa-e2e, Einschränkung)
 - Login-Seite rendert korrekt (Screenshot via Chrome-CLI-Fallback bestätigt: Benutzername/Passwort-Formular, `Jupiter · Anmelden`).
 - Playwright-MCP-Browser-Toolset in dieser Session dauerhaft blockiert (Chrome-Subprozesse laufen defunct/hängen, Environment-Problem, kein Feature-Bug). Ausgewichen auf Chrome-CLI-Headless-Screenshot + reine HTTP/API-Verifikation (curl-äquivalent via Python/urllib mit selbst gemintetem JWT gegen den auf Worktree-Code laufenden Server, Port 8090). Kein Login mit echten Zugangsdaten durchgeführt (keine bekannten/dokumentierten Testcredentials gefunden) — daher keine eingeloggte Klick-Sequenz durchs Board/Formular verifiziert; das entspricht der bekannten Grenze aus dem `abc-qa-e2e`-Skill (CanvasKit/Auth-State nicht klickbar) und wurde stattdessen über Code-Review + `next build` + Live-API-Redteam kompensiert.
 - Responsive 375/768/1440px nicht separat gegen echten Browser verifiziert (Blocker s.o.); Tailwind-Breakpoints (`lg:` = 1024px) im Code plausibel und konsistent mit AC B / Edge-Case „zu schmal für Split".
 
-### Verdict
-**NOT READY.** 1 Critical Bug (Prozess/Deployment — Fix existiert, liegt aber im falschen Ordner und ist im gemeinsamen Feature-Worktree nicht wirksam). Kein Logik- oder Codefehler im eigentlichen Fix. Alle Frontend-ACs (A, B, weitgehend C) PASS. Nach Portierung des Backend-Fixes in den Worktree + Commit ist Re-Verifikation gegen denselben Live-Redteam-Test erforderlich.
+### Verdict (Re-Verifikation, 2026-08-20)
+**READY.** BUG-1 gefixt und auf `main` committed; alle 4 ursprünglichen Redteam-Repros liefern jetzt 422. Alle Acceptance Criteria A/B/C PASS. Backend-Suite grün (1328/1332, 4 vorbestehende unrelated Failures), `test_proj82_hermes_kanban.py` 21/21, Frontend-Build sauber. Verbleibende Einschränkung unverändert: keine eingeloggte Klick-Sequenz im echten Browser (Playwright-MCP in dieser Umgebung blockiert) — kompensiert durch Code-Review + Build + Live-API-Redteam, siehe Browser-E2E-Abschnitt oben. 0 Critical/High offen → produktionsreif.
 
 ## Deployment
 
