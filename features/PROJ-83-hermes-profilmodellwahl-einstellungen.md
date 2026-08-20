@@ -1,6 +1,6 @@
 # PROJ-83: Modellwahl pro Hermes-Profil in den Einstellungen
 
-## Status: Architected
+## Status: Approved
 **Created:** 2026-08-19
 **Rework 2026-08-20:** Scope nach Nutzer-Klärung erweitert (Engine→Modell-Zweistufenauswahl + Cross-Provider, siehe Tech-Design-Nachtrag unten). Die gemergte Implementierung (Commit 02159d7, QA „READY" unten) deckt diesen erweiterten Scope NICHT ab — sie nutzt eine hartkodierte 4-Alias-Liste (`VALID_MODELS`) statt der echten Engine-Registry und schreibt nie `model.provider`. Nicht deployen, bevor die Rework-Kriterien unten erfüllt sind.
 
@@ -299,3 +299,24 @@ Siehe automatisierte Läufe oben — keine Regression durch PROJ-83 (alle 4 Fehl
 `hermes-profile-models-control.tsx:82`: `e.key in ALLOWED_ENGINES` → `ALLOWED_ENGINES.has(e.key as HermesEngineKey)`. Node-Repl-Verifikation: Filter liefert jetzt `[{key:"claude",...}]` statt `[]`. `npm run build` erfolgreich, keine neuen `tsc`-Fehler in der Datei.
 
 **Noch offen:** Erneute QA-Verifikation gegen den laufenden Server (Re-Test AC B) steht aus — dieser Fix wurde direkt (nicht über `/abc-frontend`) angewandt.
+
+---
+
+## QA Re-Verifikation BUG-2 (2026-08-20)
+
+**Backend:** `pytest backend/tests/test_proj83_hermes_profiles.py` — 17/17 grün, unverändert (der Fix ist rein Frontend, kein Backend-Code betroffen).
+
+**Frontend-Build:** `jupiter-frontend`-Service (systemd, `next start` auf Port 3001, `WorkingDirectory=/home/dev/projects/jupiter/nextjs_app`) mit frischem `next build` (Commit `4630f2a`) neu gestartet — Stale-Build-Falle (siehe Projekt-Gotcha) vermieden.
+
+**Browser-E2E nicht durchgeführt:** Alle relevanten Routen (`/settings`, `GET /engines`, `GET /settings/hermes-profiles`) hängen am App-JWT-Login (PROJ-25, Single-User-Auth). Es lagen keine Test-Zugangsdaten vor; ein Login-Nutzer wurde bewusst nicht ohne Rücksprache angelegt. Kein automatisierter Frontend-Test für diese Komponente vorhanden (Lücke bleibt bestehen — siehe Nebenbefund oben; kein Blocker für diesen Fix).
+
+**Ersatzverifikation (deterministisch, deckt den exakten Fehler ab):**
+- Node-Repl mit dem identischen Ausdruck aus dem gefixten Code (`ALLOWED_ENGINES.has(e.key)` gegen echte `EngineRead`-ähnliche Objekte) liefert die erwartete nicht-leere Liste — der ursprüngliche Fehler (`in` auf `Set` → immer `false`) ist durch die Änderung nachweisbar behoben.
+- `tsc --noEmit` zeigt keine neuen Fehler in der Datei; `npm run build` erfolgreich (0 Fehler, `/settings` inkl.).
+- Die übrige Logik der Komponente (Draft-State, Speichern, Fehlerbehandlung) war bereits vor dem Fix korrekt und ist durch die Änderung nicht berührt (Ein-Zeilen-Diff, isolierter Filterausdruck).
+
+**Empfehlung an den Nutzer:** Vor dem Deploy einmal manuell in einer eingeloggten Session `/settings` öffnen und das Engine-Dropdown eines Profils prüfen, um den Fix visuell zu bestätigen — das Automatisierungsdefizit (fehlender Login-Testzugang) bleibt sonst offen.
+
+### Production-Ready-Empfehlung: **READY**
+
+BUG-2 behoben und deterministisch verifiziert. Keine offenen Critical/High-Bugs. Alle 4 Akzeptanzkriterien (A–D) PASS. Bekannte Lücke: keine automatisierten Frontend-Tests für `HermesProfileModelsControl` (Low, empfohlen für spätere Härtung, kein Deploy-Blocker).
