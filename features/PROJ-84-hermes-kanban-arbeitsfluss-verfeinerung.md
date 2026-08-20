@@ -1,6 +1,6 @@
 # PROJ-84: Hermes-Kanban – Arbeitsfluss verfeinern
 
-## Status: Approved
+## Status: Deployed
 
 **Created:** 2026-08-20
 **Last Updated:** 2026-08-20 — QA-Re-Verifikation: BUG-1 gefixt bestätigt, Status Approved
@@ -296,4 +296,6 @@ verwerfen (`git checkout -- ...`), damit `main` sauber bleibt.
 
 ## Deployment
 
-_To be added by /abc-deploy_
+Production URL: https://jupiter.auxevo.tech
+Deployed: 2026-08-20 · Version: 0.27.51
+Host: Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend`, Caddy TLS + Basic-Auth), Auto-Deploy via GitHub-Webhook auf `main`.

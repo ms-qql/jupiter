@@ -96,7 +96,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-81 | Orchestration-Eintrag „Hermes" — Hermes-Dashboard eingebettet bedienen | P1 | Deployed | PROJ-39, PROJ-38, PROJ-18 | [Spec](PROJ-81-orchestration-hermes-dashboard.md) |
 | PROJ-82 | Hermes-Kanban nativ in Jupiter (kein iFrame) | P1 | Deployed | — (bezieht sich auf PROJ-81, kein harter Dependency) | [Spec](PROJ-82-hermes-kanban-native-view.md) — deployed v0.27.48, 2026-08-19; QA bestanden, 2 High-Bugs gefixt (Projekt-Parser, Bulk-Archivieren); Phase 2 (Live-Worker-Logs) bewusst zurückgestellt |
 | PROJ-83 | Modellwahl pro Hermes-Profil in den Einstellungen | P1 | Deployed | PROJ-51, PROJ-82 | [Spec](PROJ-83-hermes-profilmodellwahl-einstellungen.md) — deployed v0.27.50, 2026-08-20; manuelle Browser-Bestätigung von AC B nach Deploy empfohlen (kein Testlogin für automatisierte E2E vorhanden) |
-| PROJ-84 | Hermes-Kanban – Arbeitsfluss verfeinern | P1 | Approved | PROJ-82, PROJ-20 | [Spec](PROJ-84-hermes-kanban-arbeitsfluss-verfeinerung.md) — BUG-1 (Critical) gefixt + re-verifiziert 2026-08-20, alle ACs PASS |
+| PROJ-84 | Hermes-Kanban – Arbeitsfluss verfeinern | P1 | Deployed | PROJ-82, PROJ-20 | [Spec](PROJ-84-hermes-kanban-arbeitsfluss-verfeinerung.md) — deployed v0.27.51, 2026-08-20; BUG-1 (Critical) gefixt + re-verifiziert, alle ACs PASS |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
