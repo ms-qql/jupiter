@@ -343,15 +343,15 @@ async def patch_hermes_kanban_settings(payload: HermesKanbanSettingsPatch) -> di
 
 @router.get("/hermes-profiles", response_model=HermesProfilesRead)
 async def get_hermes_profiles() -> dict:
-    """Erkannte abc-Profile + deren aktuelles Modell + wählbarer Modellbestand.
+    """Erkannte abc-Profile + deren rückübersetzter Engine/Modell-Stand.
 
-    Liest zur Laufzeit die ``jupiter-*``-Profile aus ``~/.hermes/profiles``;
-    einzeln defekte Profile werden mit ``error`` markiert, das Verzeichnis
+    Der Modell-/Engine-Bestand kommt aus ``GET /engines`` (PROJ-18/51) — dieser
+    Endpunkt liefert nur die erkannten Profile samt rückübersetztem Stand.
+    Einzeln defekte Profile werden mit ``error`` markiert, das Verzeichnis
     nicht erreichbar → ``warning`` + leere Liste (kein Crash).
     """
     entries, warning = hermes_profiles_service.discover_profiles()
     return {
-        "models": hermes_profiles_service.available_models(),
         "profiles": entries,
         "warning": warning,
     }
@@ -359,17 +359,21 @@ async def get_hermes_profiles() -> dict:
 
 @router.patch("/hermes-profiles", response_model=list[HermesProfileSaveResult])
 async def patch_hermes_profiles(payload: HermesProfilesPatch) -> list[dict]:
-    """Modellauswahl je Profil atomar in dessen ``config.yaml`` schreiben.
+    """Engine+Modell-Auswahl je Profil atomar in dessen ``config.yaml`` schreiben.
 
-    Jedes Profil wird einzeln verarbeitet: die Antwort listet pro Eintrag
-    ``ok``/``saved_model`` bzw. ``ok=false`` + deutschen Fehlergrund, damit
-    Teilfehler klar benannt werden (ein fehlgeschlagenes Profil darf keine
-    Erfolgsmeldung auslösen). Ungültige Modelle und nicht-abc-Profile werden
-    serverseitig abgewiesen; andere Profile bleiben unverändert.
+    Jedes Profil wird einzeln verarbeitet und gegen die Engine-Registry
+    validiert (Acceptance D): nur die drei erlaubten Engine-Keys und deren
+    angebotene Modelle sind zulässig; die Antwort listet pro Eintrag ``ok`` +
+    bei Erfolg den vollständig zurückübersetzten Profileintrag (``entry``) bzw.
+    ``ok=false`` + deutschen Fehlergrund, damit Teilfehler klar benannt werden
+    (ein fehlgeschlagenes Profil darf keine Erfolgsmeldung auslösen). Andere
+    Profile bleiben unverändert.
     """
     results: list[dict] = []
-    for entry in payload.models:
+    for entry in payload.profiles:
         results.append(
-            hermes_profiles_service.save_profile_model(entry.profile, entry.model)
+            hermes_profiles_service.save_profile_model(
+                entry.profile, entry.engine, entry.model
+            )
         )
     return results

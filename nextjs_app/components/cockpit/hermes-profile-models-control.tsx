@@ -1,10 +1,11 @@
 "use client";
 
-// PROJ-83: Modellwahl je erkanntem abc-Hermes-Profil (Präfix `jupiter-`).
-// Konsumiert GET/PATCH /settings/hermes-profiles. Die UI bietet pro Profil ein
-// Dropdown mit den aus Jupiters bestehender Modellverwaltung (PROJ-51) stammenden
-// Modellen; der Nutzer wählt, ändert mehrere und speichert explizit. Secrets/
-// Credentials werden weder gelesen noch angezeigt — nur das Modell.
+// PROJ-83 (Rework): Modellwahl je erkanntem abc-Hermes-Profil (Präfix `jupiter-`)
+// als gekoppelte Engine→Modell-Auswahl. Engine- und Modellbestand stammen
+// ausschließlich aus `GET /engines` (PROJ-51/PROJ-18) — keine eigene Liste.
+// Speichern übersetzt Engine+Modell gemäß Tech-Design-Nachtrag in
+// `model.default`/`model.provider` (serverseitig in `hermes_profiles.py`).
+// Secrets/Credentials werden weder gelesen noch angezeigt — nur Engine/Modell.
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -24,16 +25,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  ApiError,
-  getHermesProfiles,
-  setHermesProfileModels,
-} from "@/lib/api";
+import { ApiError, getEngines, getHermesProfiles, setHermesProfileModels } from "@/lib/api";
 import type {
-  HermesProfilesRead,
+  EngineRead,
+  HermesEngineKey,
   HermesProfileModel,
+  HermesProfileModelPatch,
+  HermesProfilesRead,
   HermesProfileSaveResult,
 } from "@/lib/types";
+
+/** Nur diese Engine-Keys sind für Hermes erlaubt (Tech-Design-Nachtrag). */
+const ALLOWED_ENGINES = new Set<HermesEngineKey>(["claude", "codex", "opencode"]);
 
 /** Mapping Profilschlüssel → kurzer Rollenanzeigename (nur für Optik). */
 const ROLE_LABELS: Record<string, string> = {
@@ -55,8 +58,9 @@ function roleLabel(profile: string): string {
   return ROLE_LABELS[profile] ?? profile;
 }
 
-/** Lokal editierbarer Stand eines Profils: gewähltes Modell + Unsaved-Flag. */
+/** Lokal editierbarer Stand eines Profils: gewählte Engine + Modell + Unsaved-Flag. */
 interface Draft {
+  engine: HermesEngineKey | null;
   model: string | null;
   dirty: boolean;
 }
@@ -65,17 +69,37 @@ interface Draft {
 
 export function HermesProfileModelsControl() {
   const [data, setData] = useState<HermesProfilesRead | null>(null);
+  const [engines, setEnginesState] = useState<EngineRead[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Steuerbare Hermes-Engines: kind=engine, verfügbar, erlaubter Key.
+  const engineOptions = useMemo<EngineRead[]>(
+    () =>
+      engines.filter(
+        (e) => e.kind === "engine" && e.available && e.key in ALLOWED_ENGINES,
+      ),
+    [engines],
+  );
+  const engineByKey = useMemo(() => {
+    const m = new Map<string, EngineRead>();
+    for (const e of engineOptions) m.set(e.key, e);
+    return m;
+  }, [engineOptions]);
+
+  function modelsFor(engine: HermesEngineKey | null): string[] {
+    if (!engine) return [];
+    return engineByKey.get(engine)?.models ?? [];
+  }
+
   function applyData(d: HermesProfilesRead) {
     setData(d);
-    // Draft-Initialwert = aktuell wirksames Modell (auch wenn nicht in `models`).
+    // Draft-Initialwert = aus der config.yaml rückübersetzte Engine/Modell-Kombination.
     const next: Record<string, Draft> = {};
     for (const p of d.profiles) {
-      next[p.profile] = { model: p.current_model, dirty: false };
+      next[p.profile] = { engine: p.engine, model: p.model, dirty: false };
     }
     setDrafts(next);
     setLoadFailed(false);
@@ -84,7 +108,12 @@ export function HermesProfileModelsControl() {
   async function reload() {
     setLoading(true);
     try {
-      applyData(await getHermesProfiles());
+      const [profiles, eng] = await Promise.all([
+        getHermesProfiles(),
+        getEngines().catch(() => null),
+      ]);
+      applyData(profiles);
+      if (eng) setEnginesState(eng.engines);
     } catch {
       setLoadFailed(true);
     } finally {
@@ -94,9 +123,11 @@ export function HermesProfileModelsControl() {
 
   useEffect(() => {
     const ac = new AbortController();
-    getHermesProfiles(ac.signal)
-      .then((d) => {
-        if (!ac.signal.aborted) applyData(d);
+    Promise.all([getHermesProfiles(ac.signal), getEngines(ac.signal).catch(() => null)])
+      .then(([profiles, eng]) => {
+        if (ac.signal.aborted) return;
+        applyData(profiles);
+        if (eng) setEnginesState(eng.engines);
       })
       .catch(() => {
         if (!ac.signal.aborted) setLoadFailed(true);
@@ -107,61 +138,84 @@ export function HermesProfileModelsControl() {
     return () => ac.abort();
   }, []);
 
-  const models = useMemo(() => data?.models ?? [], [data]);
   const profiles = useMemo(() => data?.profiles ?? [], [data]);
   const writableProfiles = useMemo(
     () => profiles.filter((p) => p.error === null),
     [profiles],
   );
 
-  const dirtyCount = useMemo(
-    () => Object.values(drafts).filter((d) => d.dirty).length,
+  const dirtyDrafts = useMemo(
+    () => Object.values(drafts).filter((d) => d.dirty),
     [drafts],
   );
+  const dirtyCount = dirtyDrafts.length;
+  // Unvollständige Änderung (Engine gewählt, aber noch kein Modell) → kein Speichern.
+  const incomplete = dirtyDrafts.some((d) => !d.engine || !d.model);
 
-  function setDraft(profile: string, model: string) {
-    setDrafts((prev) => ({
-      ...prev,
-      [profile]: { model, dirty: true },
-    }));
+  function setEngine(profile: string, engine: HermesEngineKey) {
+    setDrafts((prev) => {
+      const cur = prev[profile];
+      if (!cur) return prev;
+      // Engine-Wechsel verwirft eine bisherige, nicht mehr passende Modellauswahl.
+      const engineChanged = cur.engine !== engine;
+      return {
+        ...prev,
+        [profile]: { engine, model: engineChanged ? null : cur.model, dirty: true },
+      };
+    });
+  }
+
+  function setModel(profile: string, model: string) {
+    setDrafts((prev) => {
+      const cur = prev[profile];
+      if (!cur) return prev;
+      return { ...prev, [profile]: { ...cur, model, dirty: true } };
+    });
   }
 
   function resetLocal() {
     if (!data) return;
     const next: Record<string, Draft> = {};
     for (const p of data.profiles) {
-      next[p.profile] = { model: p.current_model, dirty: false };
+      next[p.profile] = { engine: p.engine, model: p.model, dirty: false };
     }
     setDrafts(next);
   }
 
   async function handleSave() {
-    if (saving || dirtyCount === 0 || !data) return;
-    const payload = writableProfiles
+    if (saving || dirtyCount === 0 || incomplete || !data) return;
+    const payload: HermesProfileModelPatch[] = writableProfiles
       .filter((p) => drafts[p.profile]?.dirty)
-      .map((p) => ({ profile: p.profile, model: drafts[p.profile].model ?? "" }))
-      .filter((e) => e.model.length > 0);
+      .map((p) => ({
+        profile: p.profile,
+        engine: drafts[p.profile].engine as HermesEngineKey,
+        model: drafts[p.profile].model as string,
+      }))
+      .filter((e) => e.engine && e.model.length > 0);
     if (payload.length === 0) return;
 
     setSaving(true);
     try {
-      const results: HermesProfileSaveResult[] = await setHermesProfileModels(
-        payload,
-      );
+      const results: HermesProfileSaveResult[] = await setHermesProfileModels(payload);
       // Server-Antwort als neue Wahrheit übernehmen (kein lokaler Entwurf = gespeichert).
-      const savedByProfile = new Map(results.map((r) => [r.profile, r]));
+      const byProfile = new Map(results.map((r) => [r.profile, r]));
       const nextDrafts: Record<string, Draft> = { ...drafts };
       const failures: string[] = [];
       for (const p of data.profiles) {
-        const res = savedByProfile.get(p.profile);
+        const res = byProfile.get(p.profile);
         if (!res) continue;
-        if (res.ok) {
-          nextDrafts[p.profile] = { model: res.saved_model, dirty: false };
+        if (res.ok && res.entry) {
+          nextDrafts[p.profile] = {
+            engine: res.entry.engine,
+            model: res.entry.model,
+            dirty: false,
+          };
         } else {
           // Fehlgeschlagene Profile: letzten gültigen Stand behalten (dirty=false),
           // damit kein irreführender Erfolgszustand entsteht.
           nextDrafts[p.profile] = {
-            model: p.current_model,
+            engine: p.engine,
+            model: p.model,
             dirty: false,
           };
           failures.push(`${roleLabel(p.profile)}: ${res.error ?? "Fehler"}`);
@@ -177,9 +231,7 @@ export function HermesProfileModelsControl() {
         );
         failures.forEach((f) => console.warn("PROJ-83 Speichern:", f));
       } else {
-        toast.error(
-          `Speichern fehlgeschlagen: ${failures[0] ?? "Unbekannter Fehler"}`,
-        );
+        toast.error(`Speichern fehlgeschlagen: ${failures[0] ?? "Unbekannter Fehler"}`);
       }
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Speichern fehlgeschlagen");
@@ -232,13 +284,11 @@ export function HermesProfileModelsControl() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs text-muted-foreground">
           {data.warning ? (
-            <span className="text-amber-600 dark:text-amber-400">
-              {data.warning}
-            </span>
+            <span className="text-amber-600 dark:text-amber-400">{data.warning}</span>
           ) : (
             <>
               {writableProfiles.length} von {profiles.length} Profilen änderbar.
-              Nur das Modell wird gespeichert — Provider, Secrets und weitere
+              Engine + Modell werden gespeichert — Provider, Secrets und weitere
               Einstellungen bleiben unberührt.
             </>
           )}
@@ -265,7 +315,7 @@ export function HermesProfileModelsControl() {
           <Button
             size="sm"
             onClick={() => void handleSave()}
-            disabled={dirtyCount === 0 || saving}
+            disabled={dirtyCount === 0 || incomplete || saving}
           >
             <SaveIcon />
             Speichern
@@ -274,15 +324,23 @@ export function HermesProfileModelsControl() {
         </div>
       </div>
 
+      {incomplete ? (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Bitte wähle für jedes geänderte Profil ein vollständiges Engine/Modell-Paar,
+          bevor du speicherst.
+        </p>
+      ) : null}
+
       <ul className="grid gap-2">
         {profiles.map((p) => (
           <ProfileRow
             key={p.profile}
             profile={p}
-            models={models}
+            engineOptions={engineOptions}
             draft={drafts[p.profile]}
             disabled={saving}
-            onSelect={(model) => setDraft(p.profile, model)}
+            onSelectEngine={(engine) => setEngine(p.profile, engine)}
+            onSelectModel={(model) => setModel(p.profile, model)}
           />
         ))}
       </ul>
@@ -292,21 +350,32 @@ export function HermesProfileModelsControl() {
 
 function ProfileRow({
   profile,
-  models,
+  engineOptions,
   draft,
   disabled,
-  onSelect,
+  onSelectEngine,
+  onSelectModel,
 }: {
   profile: HermesProfileModel;
-  models: string[];
+  engineOptions: EngineRead[];
   draft: Draft | undefined;
   disabled: boolean;
-  onSelect: (model: string) => void;
+  onSelectEngine: (engine: HermesEngineKey) => void;
+  onSelectModel: (model: string) => void;
 }) {
-  const selected = draft?.model ?? null;
-  // Aktueller Wert nicht mehr in der verfügbaren Liste → als nicht verfügbar markieren.
-  const selectedAvailable =
-    selected !== null && (models.includes(selected) || profile.error !== null);
+  const selectedEngine = draft?.engine ?? null;
+  const selectedModel = draft?.model ?? null;
+  const modelOptions = selectedEngine ? (engineOptions.find((e) => e.key === selectedEngine)?.models ?? []) : [];
+
+  // Aktueller Bestand nicht mehr verfügbar: Engine/Modell steht in keiner
+  // steuerbaren Registry-Engine (außerhalb Jupiters gesetzt).
+  const engineAvailable =
+    selectedEngine !== null && engineOptions.some((e) => e.key === selectedEngine);
+  const modelAvailable =
+    selectedModel !== null &&
+    (modelOptions.includes(selectedModel) || profile.error !== null);
+  const unavailable =
+    !engineAvailable || (selectedModel !== null && !modelOptions.includes(selectedModel));
 
   if (profile.error !== null) {
     return (
@@ -338,50 +407,82 @@ function ProfileRow({
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           Aktuell:{" "}
-          <span className="font-mono">{profile.current_model ?? "—"}</span>
-          {profile.provider ? (
-            <span className="ml-1">· {profile.provider}</span>
-          ) : null}
-          {selected !== null && selected !== profile.current_model ? (
-            <span className="ml-2 text-emerald-600 dark:text-emerald-400">
-              geändert
-            </span>
+          <span className="font-mono">{profile.model ?? "—"}</span>
+          {profile.provider ? <span className="ml-1">· {profile.provider}</span> : null}
+          {selectedEngine && selectedModel &&
+          (selectedEngine !== profile.engine || selectedModel !== profile.model) ? (
+            <span className="ml-2 text-emerald-600 dark:text-emerald-400">geändert</span>
           ) : null}
         </p>
       </div>
 
-      <div className="flex items-center gap-2">
-        {!selectedAvailable && selected ? (
+      <div className="flex flex-wrap items-center gap-2">
+        {unavailable && profile.model ? (
           <Badge variant="outline" className="font-mono text-[11px]">
-            {selected} (nicht verfügbar)
+            {profile.model} (nicht verfügbar)
           </Badge>
         ) : null}
         <div className="grid gap-1.5">
-          <Label htmlFor={`hpm-${profile.profile}`} className="sr-only">
+          <Label htmlFor={`hpm-engine-${profile.profile}`} className="sr-only">
+            Engine für {roleLabel(profile.profile)}
+          </Label>
+          <Select
+            value={selectedEngine ?? undefined}
+            onValueChange={(v) => v && onSelectEngine(v as HermesEngineKey)}
+          >
+            <SelectTrigger
+              id={`hpm-engine-${profile.profile}`}
+              size="sm"
+              aria-label={`Engine für ${roleLabel(profile.profile)}`}
+              className="w-44"
+            >
+              <SelectValue placeholder="Engine wählen" />
+            </SelectTrigger>
+            <SelectContent>
+              {selectedEngine && !engineAvailable ? (
+                <SelectItem value={selectedEngine}>{selectedEngine} (nicht verfügbar)</SelectItem>
+              ) : null}
+              {engineOptions.map((e) => (
+                <SelectItem key={e.key} value={e.key}>
+                  {e.label || e.key}
+                </SelectItem>
+              ))}
+              {engineOptions.length === 0 ? (
+                <SelectItem value="__none__" disabled>
+                  Keine Engines verfügbar
+                </SelectItem>
+              ) : null}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label htmlFor={`hpm-model-${profile.profile}`} className="sr-only">
             Modell für {roleLabel(profile.profile)}
           </Label>
           <Select
-            value={selected ?? undefined}
-            onValueChange={(v) => v && onSelect(v)}
+            value={selectedModel ?? undefined}
+            onValueChange={(v) => v && onSelectModel(v)}
+            disabled={!selectedEngine || !engineAvailable}
           >
             <SelectTrigger
-              id={`hpm-${profile.profile}`}
+              id={`hpm-model-${profile.profile}`}
               size="sm"
               aria-label={`Modell für ${roleLabel(profile.profile)}`}
               className="w-56"
             >
-              <SelectValue placeholder="Modell wählen" />
+              <SelectValue placeholder={selectedEngine ? "Modell wählen" : "zuerst Engine"} />
             </SelectTrigger>
             <SelectContent>
-              {selectedAvailable && selected ? (
-                <SelectItem value={selected}>{selected}</SelectItem>
+              {selectedModel && !modelAvailable ? (
+                <SelectItem value={selectedModel}>{selectedModel} (nicht verfügbar)</SelectItem>
               ) : null}
-              {models.map((m) => (
+              {modelOptions.map((m) => (
                 <SelectItem key={m} value={m}>
                   {m}
                 </SelectItem>
               ))}
-              {models.length === 0 ? (
+              {selectedEngine && modelOptions.length === 0 ? (
                 <SelectItem value="__none__" disabled>
                   Keine Modelle verfügbar
                 </SelectItem>
@@ -389,6 +490,7 @@ function ProfileRow({
             </SelectContent>
           </Select>
         </div>
+
         {draft?.dirty ? (
           <span className="text-[11px] text-amber-600 dark:text-amber-400">*</span>
         ) : null}

@@ -388,15 +388,15 @@ export function getHermesProfiles(signal?: AbortSignal): Promise<HermesProfilesR
   return request<HermesProfilesRead>("/settings/hermes-profiles", { signal });
 }
 
-/** PROJ-83: Modellauswahl je Profil atomar speichern. Antwort pro Profil mit
- *  ok/saved_model bzw. ok=false + Fehlergrund, damit Teilfehler klar benannt
- *  werden (ein fehlgeschlagenes Profil darf keine Erfolgsmeldung auslösen). */
+/** PROJ-83 (Rework): Engine+Modell-Auswahl je Profil atomar speichern. Antwort
+ *  pro Profil mit ok/entry bzw. ok=false + Fehlergrund, damit Teilfehler klar
+ *  benannt werden (ein fehlgeschlagenes Profil darf keine Erfolgsmeldung auslösen). */
 export function setHermesProfileModels(
-  models: HermesProfileModelPatch[],
+  profiles: HermesProfileModelPatch[],
 ): Promise<HermesProfileSaveResult[]> {
   return request<HermesProfileSaveResult[]>("/settings/hermes-profiles", {
     method: "PATCH",
-    body: JSON.stringify({ models }),
+    body: JSON.stringify({ profiles }),
   });
 }
 

@@ -1,8 +1,11 @@
-"""Pydantic-v2-Schemas für die Hermes-Profil-Modellwahl (PROJ-83).
+"""Pydantic-v2-Schemas für die Hermes-Profil-Modellwahl (PROJ-83 Rework).
 
 Spiegeln exakt die Frontend-Verträge in ``nextjs_app/lib/types.ts``:
 ``HermesProfileModel`` / ``HermesProfilesRead`` / ``HermesProfileModelPatch``
-/ ``HermesProfileSaveResult``.
+/ ``HermesProfileSaveResult``. Die Anzeige arbeitet mit dem Engine/Modell-
+Vokabular aus ``GET /engines`` (``engine`` + ``model``), nicht mit den Rohwerten
+der ``config.yaml`` (``provider`` + ``default``). Enthält bewusst KEINE
+Secret-Werte/Tokens.
 """
 from __future__ import annotations
 
@@ -12,38 +15,45 @@ from pydantic import BaseModel, Field
 class HermesProfileModel(BaseModel):
     """Ein erkanntes abc-Hermes-Profil (Präfix ``jupiter-``, eigene config.yaml).
 
-    Enthält bewusst KEINE Secret-Werte/Tokens — nur das Modell.
+    Enthält bewusst KEINE Secret-Werte/Tokens — nur Engine/Modell.
     """
 
     profile: str
     label: str
-    current_model: str | None = None
+    engine: str | None = None
+    model: str | None = None
     provider: str | None = None
+    default: str | None = None
     error: str | None = None
 
 
 class HermesProfilesRead(BaseModel):
-    """GET /settings/hermes-profiles — alle erkannten abc-Profile + Modellbestand."""
+    """GET /settings/hermes-profiles — alle erkannten abc-Profile (+ Warnung).
 
-    models: list[str] = Field(
-        default_factory=list,
-        description="Auswählbare Modelle aus Jupiters bestehender Modellverwaltung (PROJ-51).",
-    )
+    Der Modell-/Engine-Bestand kommt aus ``GET /engines`` (PROJ-18/51), nicht
+    aus diesem Endpunkt.
+    """
+
     profiles: list[HermesProfileModel] = Field(default_factory=list)
     warning: str | None = None
 
 
 class HermesProfileModelPatch(BaseModel):
-    """Ein zu speichernder Profil-Modell-Eintrag (PATCH /settings/hermes-profiles)."""
+    """Ein zu speichernder Profil-Eintrag (PATCH /settings/hermes-profiles)."""
 
     profile: str = Field(..., min_length=1)
-    model: str = Field(..., min_length=1, description="Modell-Alias, muss in der Modellverwaltung existieren.")
+    engine: str = Field(
+        ...,
+        pattern="^(claude|codex|opencode)$",
+        description="Erlaubter Engine-Key: claude | codex | opencode.",
+    )
+    model: str = Field(..., min_length=1, description="Modell dieser Engine aus GET /engines.")
 
 
 class HermesProfilesPatch(BaseModel):
     """PATCH /settings/hermes-profiles — Body."""
 
-    models: list[HermesProfileModelPatch] = Field(default_factory=list)
+    profiles: list[HermesProfileModelPatch] = Field(default_factory=list)
 
 
 class HermesProfileSaveResult(BaseModel):
@@ -52,4 +62,5 @@ class HermesProfileSaveResult(BaseModel):
     profile: str
     ok: bool
     error: str | None = None
-    saved_model: str | None = None
+    # Bei ok=true: der vollständig zurückübersetzte Profileintrag (neuer Stand).
+    entry: HermesProfileModel | None = None

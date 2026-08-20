@@ -211,3 +211,26 @@ Alle 4 Akzeptanzkriterien PASS, keine offenen Critical/High-Bugs, keine Regressi
 ### Autonom behoben
 - Branch-Feld, vollständiger Komponenten-/Daten-/API-Vertrag und die Alias-Abbildung ergänzt.
 - Nutzerentscheidung umgesetzt: Hermes beschränkt sich auf Claude, Codex und OpenCode; weitere Registry-Engines werden nicht geraten.
+
+## Backend-Implementierung (Rework, 2026-08-20)
+
+**Branch:** `feat/proj-83-hermes-profilmodellwahl-rework`. Ersetzt die flache Altimplementierung
+(`VALID_MODELS`-Aliasliste, nur `model.default`-Schreiben) durch den erweiterten Scope:
+
+- `backend/app/engine/hermes_profiles.py`: zentrale Hin-/Rückübersetzung (Engine/Modell ↔
+  `model.provider`/`model.default`) validiert **ausschließlich gegen `engine_registry`** zur
+  Laufzeit. Erlaubte Engine-Keys: `claude`/`codex`/`opencode` (verfügbar + `kind=engine`).
+  `save_profile_model(profile, engine, model)` schreibt atomar **beide** Felder; `model.base_url`
+  und alle übrigen YAML-Werte bleiben erhalten. BUG-1-Validierung (Format-Regex →
+  Whitelist → Realpath-Scope) unverändert übernommen.
+- `backend/app/schemas/hermes_profiles.py`: Datenvertrag laut Tech-Design-Nachtrag
+  (`engine`/`model`/`provider`/`default` im Read; PATCH `{profiles:[{profile,engine,model}]}`;
+  Response `entry: HermesProfileModel|null`).
+- `backend/app/routes/settings.py`: GET liefert nur Profile + `warning` (kein flacher
+  `models`-Bestand mehr); PATCH iteriert `payload.profiles`.
+- Frontend-Typen/API (`types.ts`, `api.ts`) und `hermes-profile-models-control.tsx`
+  (zwei gekoppelte Engine/Modell-Selects) bereits im Branch angepasst.
+
+**Tests:** `backend/tests/test_proj83_hermes_profiles.py` — 17/17 grün (inkl. Reverse-Translation,
+atomarem Schreiben, Erhalt übriger Keys, ungültige Engine/Modell-Ablehnung, BUG-1-Traversal).
+Kein neuer Import von `available_models` mehr vorhanden.
