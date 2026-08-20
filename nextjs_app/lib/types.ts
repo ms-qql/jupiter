@@ -2064,10 +2064,7 @@ export interface HermesKanbanCreateRequest {
   title: string;
   body?: string | null;
   assignee?: string | null;
-  project?: string | null;
-  workspace_mode?: string;
   workspace_path?: string | null;
-  branch?: string | null;
   parents?: string[];
   priority?: number | null;
   skills?: string[];

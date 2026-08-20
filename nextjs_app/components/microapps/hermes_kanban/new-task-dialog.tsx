@@ -1,10 +1,12 @@
 "use client";
 
-// PROJ-82: Neuer Hermes-Kanban-Task — natives Formular mit voller CLI-Parität.
-// Grundbereich + einklappbarer „Erweitert"-Bereich. Validierung spiegelt die
-// serverseitigen Pydantic-Regeln (Model⊕Provider, Pfad/Branch bei Worktree,
-// Triage⊕Initial-Status). Nicht ausgefüllte optionale Felder werden als `null`
-// gesendet und vom Backend NICHT als leere Flags durchgereicht.
+// PROJ-82/84: Neuer Hermes-Kanban-Task — vereinfachtes Formular.
+// Grundbereich: Titel, große Beschreibung + Push-to-Talk, Assignee,
+// Workspace-Pfad (fest `dir:`, startet unter /home/dev/projects/), Priorität,
+// Skills, Initial-Status. Parent-Tasks liegen unter „Erweitert" neben den
+// seltenen Optionen. PROJ-84 entfernt Projekt-/Workspace-Modus-/Branch-Felder;
+// der Request übermittelt kein `project`, kein `workspace_mode` und kein
+// `branch` mehr (serverseitig per Schema auf `dir:` erzwungen).
 
 import { useMemo, useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
@@ -26,11 +28,8 @@ import {
   createHermesKanbanTask,
   lookupHermesKanbanFeature,
 } from "@/lib/api";
-import type {
-  HermesKanbanCreateRequest,
-  HermesKanbanProject,
-  HermesKanbanTask,
-} from "@/lib/types";
+import { PushToTalkButton } from "@/components/cockpit/push-to-talk-button";
+import type { HermesKanbanCreateRequest, HermesKanbanTask } from "@/lib/types";
 
 // --- Kurzsyntax: kanonische ABC-Phasen + deutsche Aliase (Vorbild
 //     backend/app/engine/abc_phases.py). EIN Ort für die Vorbefüll-Zuordnung. --
@@ -68,18 +67,12 @@ export function parseQuickAdd(input: string): Omit<QuickAddPrefill, "title" | "b
   return { phase, projNumber: Number(m[2]) };
 }
 
-export function quickAddTitle(prefill: {
-  phase: string;
-  projNumber: number;
-}): string {
+export function quickAddTitle(prefill: { phase: string; projNumber: number }): string {
   const label = PHASES[prefill.phase]?.label ?? prefill.phase;
   return `PROJ-${prefill.projNumber}: ${label} starten`;
 }
 
-export function quickAddBody(prefill: {
-  phase: string;
-  projNumber: number;
-}): string {
+export function quickAddBody(prefill: { phase: string; projNumber: number }): string {
   const skill = PHASES[prefill.phase]?.skill ?? `abc-${prefill.phase}`;
   return `/abc-${skill.replace("abc-", "")} für PROJ-${prefill.projNumber} ausführen`;
 }
@@ -88,19 +81,14 @@ interface NewTaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   board: string;
-  projects: HermesKanbanProject[];
   assignees: string[];
   parents: HermesKanbanTask[];
   prefill?: QuickAddPrefill | null;
   onCreated: () => void;
 }
 
-const WORKSPACE_MODES = [
-  { value: "scratch", label: "Scratch" },
-  { value: "dir", label: "dir:<pfad>" },
-  { value: "worktree", label: "Worktree" },
-  { value: "worktree_path", label: "worktree:<pfad>" },
-];
+// PROJ-84 C: fester Workspace-Pfad-Basis; der Nutzer ergänzt nur den Ordner.
+const WORKSPACE_BASE = "/home/dev/projects/";
 
 const INITIAL_STATUSES = [
   { value: "normal", label: "Normal" },
@@ -108,13 +96,10 @@ const INITIAL_STATUSES = [
   { value: "running", label: "Running" },
 ];
 
-type WorkspaceMode = (typeof WORKSPACE_MODES)[number]["value"];
-
 export function NewTaskDialog({
   open,
   onOpenChange,
   board,
-  projects,
   assignees,
   parents,
   prefill,
@@ -123,16 +108,11 @@ export function NewTaskDialog({
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [assignee, setAssignee] = useState("");
-  const [project, setProject] = useState("");
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("scratch");
-  const [workspacePath, setWorkspacePath] = useState("");
-  const [branch, setBranch] = useState("");
+  const [workspacePath, setWorkspacePath] = useState(WORKSPACE_BASE);
   const [priority, setPriority] = useState("");
   const [skills, setSkills] = useState("");
   const [initialStatus, setInitialStatus] = useState("normal");
   const [triage, setTriage] = useState(false);
-  const [tenant, setTenant] = useState("");
-  const [idempotencyKey, setIdempotencyKey] = useState("");
   const [maxRuntime, setMaxRuntime] = useState("");
   const [maxRetries, setMaxRetries] = useState("");
   const [modelOverride, setModelOverride] = useState("");
@@ -157,17 +137,13 @@ export function NewTaskDialog({
   function resetForOpen(p: QuickAddPrefill | null | undefined) {
     setTitle(p?.title ?? "");
     setBody(p?.body ?? "");
-    setAssignee(p ? "jupiter-coordinator" : "");
-    setProject("");
-    setWorkspaceMode("scratch");
-    setWorkspacePath("");
-    setBranch("");
+    // PROJ-84 C: jupiter-coordinator nur vorauswählen, wenn verfügbar.
+    setAssignee(assignees.includes("jupiter-coordinator") ? "jupiter-coordinator" : "");
+    setWorkspacePath(WORKSPACE_BASE);
     setPriority("");
     setSkills("");
     setInitialStatus("normal");
     setTriage(false);
-    setTenant("");
-    setIdempotencyKey("");
     setMaxRuntime("");
     setMaxRetries("");
     setModelOverride("");
@@ -192,12 +168,18 @@ export function NewTaskDialog({
       });
   }
 
-  const needPath =
-    workspaceMode === "dir" || workspaceMode === "worktree_path";
-  const needBranch = workspaceMode === "worktree" || workspaceMode === "worktree_path";
-  const modelXorProvider =
-    Boolean(modelOverride) !== Boolean(providerOverride);
+  const modelXorProvider = Boolean(modelOverride) !== Boolean(providerOverride);
   const triageConflict = triage && initialStatus !== "normal";
+
+  // PROJ-84 C: clientseitige Vorpüfung des Workspace-Pfads (schnelles Feedback).
+  // Serverseitige kanonische Prüfung erfolgt in backend/app/schemas/hermes_kanban.py.
+  const trimmedPath = workspacePath.trim();
+  const pathError =
+    trimmedPath === "" || trimmedPath === WORKSPACE_BASE
+      ? "Bitte einen Projektordner unter /home/dev/projects/ ergänzen."
+      : !trimmedPath.startsWith(WORKSPACE_BASE)
+        ? "Der Workspace-Pfad muss unter /home/dev/projects/ liegen."
+        : null;
 
   const filteredParents = useMemo(() => {
     const q = parentSearch.trim().toLowerCase();
@@ -211,6 +193,12 @@ export function NewTaskDialog({
     );
   }
 
+  // PROJ-20: erkannter Text wird mit Leerzeichen angehängt, vorhandener
+  // Beschreibungstext bleibt erhalten.
+  function appendTranscript(text: string) {
+    setBody((cur) => (cur ? `${cur} ${text}` : text));
+  }
+
   async function handleSubmit() {
     if (saving || !title.trim()) return;
     if (triageConflict) {
@@ -221,12 +209,8 @@ export function NewTaskDialog({
       setError("Modell-Override und Provider-Override gehören zusammen oder keines von beiden.");
       return;
     }
-    if (needPath && !workspacePath.trim()) {
-      setError("Bei 'dir:'/'worktree:<pfad>' ist ein Pfad erforderlich.");
-      return;
-    }
-    if (needBranch && !branch.trim()) {
-      setError("Bei einer Worktree-Variante ist ein Branch erforderlich.");
+    if (pathError) {
+      setError(pathError);
       return;
     }
 
@@ -234,10 +218,7 @@ export function NewTaskDialog({
       title: title.trim(),
       body: body.trim() || null,
       assignee: assignee || null,
-      project: project || null,
-      workspace_mode: workspaceMode,
-      workspace_path: needPath ? workspacePath.trim() : null,
-      branch: needBranch ? branch.trim() : null,
+      workspace_path: trimmedPath,
       parents: selectedParents,
       priority: priority === "" ? null : Number(priority),
       skills: skills
@@ -246,16 +227,12 @@ export function NewTaskDialog({
         .filter(Boolean),
       initial_status: initialStatus,
       triage,
-      tenant: tenant.trim() || null,
-      idempotency_key: idempotencyKey.trim() || null,
       max_runtime: maxRuntime.trim() || null,
       max_retries: maxRetries === "" ? null : Number(maxRetries),
       model_override: modelOverride.trim() || null,
       provider_override: providerOverride.trim() || null,
       goal_mode: goalMode,
-      goal_max_turns: goalMode
-        ? Number(goalMaxTurns) || 20
-        : null,
+      goal_max_turns: goalMode ? Number(goalMaxTurns) || 20 : null,
     };
 
     setSaving(true);
@@ -285,7 +262,7 @@ export function NewTaskDialog({
           <DialogDescription>
             {prefill
               ? `Vorbefüllt aus Schnell-Anlage (${prefill.phase} ${prefill.projNumber}). Bitte prüfen und bestätigen.`
-              : "Alle Felder, die `hermes kanban create` unterstützt."}
+              : "Titel, Beschreibung, Assignee und Workspace — der Rest ist optional."}
           </DialogDescription>
         </DialogHeader>
 
@@ -323,14 +300,23 @@ export function NewTaskDialog({
               />
             </div>
 
+            {/* PROJ-84 C: deutlich größere Beschreibung + Push-to-Talk aus PROJ-20. */}
             <div className="grid gap-2">
               <Label htmlFor="hk_body">Beschreibung</Label>
-              <Textarea
-                id="hk_body"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={4}
-              />
+              <div className="flex items-start gap-2">
+                <Textarea
+                  id="hk_body"
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  rows={10}
+                  className="min-h-40 flex-1"
+                  placeholder="Aufgabe ausführlich beschreiben — auch per Mikrofon diktieren."
+                />
+                <PushToTalkButton
+                  onTranscript={appendTranscript}
+                  title="Beschreibung diktieren"
+                />
+              </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -346,40 +332,6 @@ export function NewTaskDialog({
                   {assignees.map((a) => (
                     <option key={a} value={a}>
                       {a}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="hk_project">Projekt</Label>
-                <select
-                  id="hk_project"
-                  className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
-                  value={project}
-                  onChange={(e) => setProject(e.target.value)}
-                >
-                  <option value="">Kein Projekt</option>
-                  {projects.map((p) => (
-                    <option key={p.slug} value={p.slug}>
-                      {p.name} ({p.slug})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="hk_ws_mode">Workspace-Modus</Label>
-                <select
-                  id="hk_ws_mode"
-                  className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
-                  value={workspaceMode}
-                  onChange={(e) => setWorkspaceMode(e.target.value as WorkspaceMode)}
-                >
-                  {WORKSPACE_MODES.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
                     </option>
                   ))}
                 </select>
@@ -401,27 +353,24 @@ export function NewTaskDialog({
               </div>
             </div>
 
-            {needPath && (
-              <div className="grid gap-2">
-                <Label htmlFor="hk_ws_path">Workspace-Pfad *</Label>
-                <Input
-                  id="hk_ws_path"
-                  value={workspacePath}
-                  onChange={(e) => setWorkspacePath(e.target.value)}
-                  placeholder={workspaceMode === "dir" ? "/pfad/zum/ordner" : "/pfad"}
-                />
-              </div>
-            )}
-            {needBranch && (
-              <div className="grid gap-2">
-                <Label htmlFor="hk_branch">Branch *</Label>
-                <Input
-                  id="hk_branch"
-                  value={branch}
-                  onChange={(e) => setBranch(e.target.value)}
-                />
-              </div>
-            )}
+            {/* PROJ-84 C: fester dir-Workspace, nur der Projektordner wird ergänzt. */}
+            <div className="grid gap-2">
+              <Label htmlFor="hk_ws_path">Workspace-Pfad *</Label>
+              <Input
+                id="hk_ws_path"
+                value={workspacePath}
+                onChange={(e) => setWorkspacePath(e.target.value)}
+                placeholder="/home/dev/projects/mein-projekt"
+                aria-invalid={pathError ? true : undefined}
+              />
+              {pathError ? (
+                <p className="text-xs text-red-500">{pathError}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Vollständiger Pfad: {trimmedPath}
+                </p>
+              )}
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-2">
@@ -444,39 +393,6 @@ export function NewTaskDialog({
               </div>
             </div>
 
-            <div className="grid gap-2">
-              <Label>Parent-Tasks</Label>
-              <Input
-                value={parentSearch}
-                onChange={(e) => setParentSearch(e.target.value)}
-                placeholder="Nach Titel suchen…"
-                className="mb-1"
-              />
-              {filteredParents.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  Keine (weiteren) offenen Tasks für diese Vorfilterung.
-                </p>
-              ) : (
-                <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
-                  {filteredParents.map((p) => (
-                    <label
-                      key={p.id}
-                      className="flex cursor-pointer items-center gap-2 text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedParents.includes(p.id)}
-                        onChange={() => toggleParent(p.id)}
-                      />
-                      <span className="truncate">
-                        {p.title} {p.status !== "todo" ? `(${p.status})` : ""}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-
             <button
               type="button"
               className="flex w-fit items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground"
@@ -492,6 +408,40 @@ export function NewTaskDialog({
 
             {advancedOpen && (
               <div className="grid gap-4 rounded-lg border border-border p-3">
+                {/* PROJ-84 C: Parent-Tasks liegen vollständig unter „Erweitert". */}
+                <div className="grid gap-2">
+                  <Label>Parent-Tasks</Label>
+                  <Input
+                    value={parentSearch}
+                    onChange={(e) => setParentSearch(e.target.value)}
+                    placeholder="Nach Titel suchen…"
+                    className="mb-1"
+                  />
+                  {filteredParents.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Keine (weiteren) offenen Tasks für diese Vorfilterung.
+                    </p>
+                  ) : (
+                    <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
+                      {filteredParents.map((p) => (
+                        <label
+                          key={p.id}
+                          className="flex cursor-pointer items-center gap-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedParents.includes(p.id)}
+                            onChange={() => toggleParent(p.id)}
+                          />
+                          <span className="truncate">
+                            {p.title} {p.status !== "todo" ? `(${p.status})` : ""}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -500,25 +450,6 @@ export function NewTaskDialog({
                   />
                   Triage ({`--triage`})
                 </label>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="hk_tenant">Tenant</Label>
-                    <Input
-                      id="hk_tenant"
-                      value={tenant}
-                      onChange={(e) => setTenant(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="hk_idem">Idempotency-Key</Label>
-                    <Input
-                      id="hk_idem"
-                      value={idempotencyKey}
-                      onChange={(e) => setIdempotencyKey(e.target.value)}
-                    />
-                  </div>
-                </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="grid gap-2">
@@ -560,9 +491,7 @@ export function NewTaskDialog({
                   </div>
                 </div>
                 {modelXorProvider && (
-                  <p className="text-xs text-red-500">
-                    Beide zusammen oder keins.
-                  </p>
+                  <p className="text-xs text-red-500">Beide zusammen oder keins.</p>
                 )}
 
                 <label className="flex items-center gap-2 text-sm">
@@ -598,7 +527,7 @@ export function NewTaskDialog({
                 Abbrechen
               </Button>
               <Button
-                disabled={saving || !title.trim() || triageConflict || modelXorProvider}
+                disabled={saving || !title.trim() || triageConflict || modelXorProvider || !!pathError}
                 onClick={() => void handleSubmit()}
               >
                 {saving ? "Erstellt…" : "Erstellen"}

@@ -1,16 +1,17 @@
 "use client";
 
-// PROJ-82: Native Hermes-Kanban-Ansicht in Jupiter (kein iFrame).
-// Board-Übersicht (gruppiert nach Status), Assignee-Filter, Archived-Toggle,
+// PROJ-82/84: Native Hermes-Kanban-Ansicht in Jupiter (kein iFrame).
+// Board-Übersicht (gruppiert nach Status), lokaler Phasenfilter, Assignee-Filter,
 // Schnell-Anlage (Kurzsyntax), Dispatch-Button, Mehrfachauswahl + Bulk-Archiv
-// und Task-Detail-Panel. Aktualisiert sich per Polling laut Settings-Intervall.
+// und angedocktes Task-Detail-Panel (Desktop neben dem Board, mobil darunter).
+// Aktualisiert sich per Polling laut Settings-Intervall.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArchiveIcon,
   ColumnsIcon,
   PlusIcon,
   RefreshCwIcon,
+  SlidersHorizontalIcon,
   XIcon,
   ZapIcon,
 } from "lucide-react";
@@ -18,6 +19,11 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -32,15 +38,10 @@ import {
   dispatchHermesKanban,
   getHermesKanbanAssignees,
   getHermesKanbanBoards,
-  getHermesKanbanProjects,
   getHermesKanbanSettings,
   getHermesKanbanTasks,
 } from "@/lib/api";
-import type {
-  HermesKanbanBoard,
-  HermesKanbanProject,
-  HermesKanbanTask,
-} from "@/lib/types";
+import type { HermesKanbanBoard, HermesKanbanTask } from "@/lib/types";
 import {
   NewTaskDialog,
   parseQuickAdd,
@@ -82,9 +83,7 @@ export default function HermesKanbanApp() {
   const [boards, setBoards] = useState<HermesKanbanBoard[]>([]);
   const [board, setBoard] = useState<string>("");
   const [assignees, setAssignees] = useState<string[]>([]);
-  const [projects, setProjects] = useState<HermesKanbanProject[]>([]);
   const [assigneeFilter, setAssigneeFilter] = useState("");
-  const [includeArchived, setIncludeArchived] = useState(false);
   const [tasks, setTasks] = useState<HermesKanbanTask[]>([]);
   const [pollInterval, setPollInterval] = useState(10);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -97,17 +96,21 @@ export default function HermesKanbanApp() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [dispatchBusy, setDispatchBusy] = useState(false);
 
-  // --- Initial: Boards, Assignees, Projekte, Settings ----------------------
+  // PROJ-84 A: lokaler Phasenfilter — alle 8 regulären Phasen sind sichtbar.
+  // Kein Persistenz-, kein Request-Auslöser; filtert nur den geladenen Bestand.
+  const [visiblePhases, setVisiblePhases] = useState<Set<string>>(
+    () => new Set(COLUMNS.map((c) => c.status)),
+  );
+
+  // --- Initial: Boards + Settings -----------------------------------------
   useEffect(() => {
     const ctrl = new AbortController();
     void Promise.all([
       getHermesKanbanBoards(ctrl.signal),
       getHermesKanbanSettings(ctrl.signal),
-      getHermesKanbanProjects(ctrl.signal),
     ])
-      .then(([b, s, p]) => {
+      .then(([b, s]) => {
         setBoards(b);
-        setProjects(p);
         setPollInterval(s.poll_interval_seconds);
         const current = b.find((x) => x.is_current);
         setBoard(current?.slug ?? b[0]?.slug ?? "");
@@ -144,7 +147,7 @@ export default function HermesKanbanApp() {
         const r = await getHermesKanbanTasks(
           board,
           assigneeFilter || null,
-          includeArchived,
+          false,
           signal,
         );
         setTasks(r.tasks ?? []);
@@ -158,7 +161,7 @@ export default function HermesKanbanApp() {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [board, assigneeFilter, includeArchived],
+    [board, assigneeFilter],
   );
 
   // Tasks beim Laden + bei Filter-/Board-Wechsel.
@@ -170,14 +173,16 @@ export default function HermesKanbanApp() {
 
   // Polling laut Settings-Intervall.
   useEffect(() => {
-    const t = setInterval(() => void refreshTasks(), Math.max(5, pollInterval) * 1000);
+    const t = setInterval(
+      () => void refreshTasks(),
+      Math.max(5, pollInterval) * 1000,
+    );
     return () => clearInterval(t);
   }, [refreshTasks, pollInterval]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, HermesKanbanTask[]>();
     for (const c of COLUMNS) map.set(c.status, []);
-    map.set("archived", []);
     for (const t of tasks) {
       const list = map.get(t.status);
       if (list) list.push(t);
@@ -185,10 +190,24 @@ export default function HermesKanbanApp() {
     return map;
   }, [tasks]);
 
+  const visibleCols = useMemo(
+    () => COLUMNS.filter((c) => visiblePhases.has(c.status)),
+    [visiblePhases],
+  );
+
   const selectedTasks = useMemo(
     () => tasks.filter((t) => selectedIds.has(t.id)),
     [tasks, selectedIds],
   );
+
+  function togglePhase(status: string) {
+    setVisiblePhases((cur) => {
+      const next = new Set(cur);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  }
 
   function toggleSelect(id: string) {
     setSelectedIds((cur) => {
@@ -303,14 +322,35 @@ export default function HermesKanbanApp() {
           ))}
         </select>
 
-        <label className="flex items-center gap-1.5 text-sm">
-          <input
-            type="checkbox"
-            checked={includeArchived}
-            onChange={(e) => setIncludeArchived(e.target.checked)}
-          />
-          Archivierte
-        </label>
+        {/* PROJ-84 A: Phasenfilter ersetzt den bisherigen Archived-Toggle. */}
+        <Popover>
+          <PopoverTrigger className="inline-flex h-7 items-center gap-1.5 rounded-[min(var(--radius-md),12px)] border border-border bg-background px-2.5 text-[0.8rem] hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50">
+            <SlidersHorizontalIcon className="size-3.5" />
+            Phasen
+            <Badge variant="secondary">
+              {visiblePhases.size}/{COLUMNS.length}
+            </Badge>
+          </PopoverTrigger>
+          <PopoverContent className="w-56 space-y-1">
+            <p className="px-1 pb-1 text-xs font-medium text-muted-foreground">
+              Sichtbare Phasen
+            </p>
+            {COLUMNS.map((col) => (
+              <label
+                key={col.status}
+                className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-secondary/50"
+              >
+                <input
+                  type="checkbox"
+                  checked={visiblePhases.has(col.status)}
+                  onChange={() => togglePhase(col.status)}
+                  aria-label={`Phase ${col.label} umschalten`}
+                />
+                {col.label}
+              </label>
+            ))}
+          </PopoverContent>
+        </Popover>
 
         <Input
           value={quickInput}
@@ -365,61 +405,68 @@ export default function HermesKanbanApp() {
               size="sm"
               onClick={() => setBulkConfirmOpen(true)}
             >
-              <ArchiveIcon className="size-3.5" />
+              <ColumnsIcon className="size-3.5" />
               Archivieren ({selectedIds.size})
             </Button>
           </div>
         </div>
       )}
 
-      {/* Board */}
-      {!loading && (
-        <div className="flex min-h-0 flex-1 items-stretch gap-3 overflow-x-auto px-4 py-3">
-          {COLUMNS.map((col) => {
-            const items = grouped.get(col.status) ?? [];
-            return (
-              <Column
-                key={col.status}
-                label={col.label}
-                count={items.length}
-                items={items}
-                selectionMode={selectedIds.size > 0}
-                selectedIds={selectedIds}
-                onToggleSelect={toggleSelect}
-                onOpen={(id) => setSelectedTaskId(id)}
-              />
-            );
-          })}
-          {includeArchived && (
-            <Column
-              label="Archived"
-              count={grouped.get("archived")?.length ?? 0}
-              items={grouped.get("archived") ?? []}
-              selectionMode={selectedIds.size > 0}
-              selectedIds={selectedIds}
-              onToggleSelect={toggleSelect}
-              onOpen={(id) => setSelectedTaskId(id)}
-            />
+      {/* Board + angedocktes Detail (Desktop nebeneinander, mobil gestapelt). */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <div className="min-h-0 flex-1">
+          {loading ? (
+            <div className="flex h-full items-center justify-center px-4 py-3 text-sm text-muted-foreground">
+              Lädt…
+            </div>
+          ) : (
+            <div className="min-h-0 flex-1 overflow-x-auto px-4 py-3">
+              {visibleCols.length === 0 ? (
+                <div className="flex h-full items-center justify-center">
+                  <p className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+                    Keine Phase ausgewählt. Oben rechts mindestens eine Phase
+                    wählen.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex h-full items-stretch gap-3">
+                  {visibleCols.map((col) => {
+                    const items = grouped.get(col.status) ?? [];
+                    return (
+                      <Column
+                        key={col.status}
+                        label={col.label}
+                        count={items.length}
+                        items={items}
+                        selectionMode={selectedIds.size > 0}
+                        selectedIds={selectedIds}
+                        onToggleSelect={toggleSelect}
+                        onOpen={(id) => setSelectedTaskId(id)}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
         </div>
-      )}
 
-      {/* Detail-Panel (seitlich, wenn ein Task gewählt) */}
-      {selectedTaskId && (
-        <TaskDetailPanel
-          taskId={selectedTaskId}
-          board={board}
-          onClose={() => setSelectedTaskId(null)}
-          onChanged={() => void refreshTasks()}
-        />
-      )}
+        {/* Detail-Panel (rechts angedockt auf Desktop). */}
+        {selectedTaskId && (
+          <TaskDetailPanel
+            taskId={selectedTaskId}
+            board={board}
+            onClose={() => setSelectedTaskId(null)}
+            onChanged={() => void refreshTasks()}
+          />
+        )}
+      </div>
 
       {/* Neuer Task */}
       <NewTaskDialog
         open={newTaskOpen}
         onOpenChange={setNewTaskOpen}
         board={board}
-        projects={projects}
         assignees={assignees}
         parents={tasks.filter((t) => t.status !== "archived")}
         prefill={prefill}
@@ -456,8 +503,11 @@ export default function HermesKanbanApp() {
             <Button variant="outline" onClick={() => setBulkConfirmOpen(false)}>
               Abbrechen
             </Button>
-            <Button variant="destructive" onClick={() => void confirmBulkArchive()}>
-              <ArchiveIcon className="size-4" />
+            <Button
+              variant="destructive"
+              onClick={() => void confirmBulkArchive()}
+            >
+              <ColumnsIcon className="size-4" />
               Archivieren ({selectedIds.size})
             </Button>
           </DialogFooter>
@@ -485,13 +535,13 @@ function Column({
   onOpen: (id: string) => void;
 }) {
   return (
-    <section className="flex w-64 shrink-0 flex-col rounded-xl border border-border bg-card">
+    <section className="flex w-64 shrink-0 flex-col rounded-xl border border-border bg-card min-h-[33dvh]">
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
         <ColumnsIcon className="size-3.5 text-muted-foreground" />
         <h3 className="text-xs font-semibold uppercase tracking-wide">{label}</h3>
         <Badge variant="secondary">{count}</Badge>
       </header>
-      <div className="max-h-[calc(100vh-16rem)] min-h-0 space-y-2 overflow-y-auto p-2">
+      <div className="flex-1 min-h-0 space-y-2 overflow-y-auto p-2">
         {items.length === 0 ? (
           <p className="px-1 py-6 text-center text-xs text-muted-foreground">
             Keine Tasks
@@ -531,7 +581,9 @@ function Column({
                     </Badge>
                   )}
                   {t.priority != null && (
-                    <span className={`text-xs font-semibold ${PRIORITY_COLORS[String(t.priority)] ?? ""}`}>
+                    <span
+                      className={`text-xs font-semibold ${PRIORITY_COLORS[String(t.priority)] ?? ""}`}
+                    >
                       P{t.priority}
                     </span>
                   )}

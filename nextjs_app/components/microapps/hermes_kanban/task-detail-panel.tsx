@@ -129,7 +129,7 @@ export function TaskDetailPanel({
 
   if (loading) {
     return (
-      <aside className="flex h-full w-full flex-col gap-3 overflow-auto border-l border-border bg-card p-4 lg:w-[440px]">
+      <aside className="flex max-h-[70vh] w-full flex-col gap-3 overflow-auto border-border bg-card p-4 lg:max-h-none lg:h-full lg:w-[40rem] lg:border-l">
         <Skeleton className="h-6 w-2/3" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-24 w-full" />
@@ -139,7 +139,7 @@ export function TaskDetailPanel({
 
   if (error) {
     return (
-      <aside className="flex h-full w-full flex-col border-l border-border bg-card p-4 lg:w-[440px]">
+      <aside className="flex max-h-[70vh] w-full flex-col border-border bg-card lg:max-h-none lg:h-full lg:w-[40rem] lg:border-l">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold">Task-Detail</h2>
           <Button size="icon" variant="ghost" onClick={onClose} aria-label="Schließen">
@@ -156,7 +156,7 @@ export function TaskDetailPanel({
   const task = detail?.task;
 
   return (
-    <aside className="flex h-full w-full flex-col overflow-hidden border-l border-border bg-card lg:w-[460px]">
+    <aside className="flex max-h-[70vh] w-full flex-col overflow-hidden border-border bg-card lg:max-h-none lg:h-full lg:w-[40rem] lg:border-l">
       <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
         <h2 className="truncate text-sm font-semibold">Task-Detail</h2>
         <div className="flex items-center gap-1">
@@ -335,7 +335,7 @@ export function TaskDetailPanel({
                   {logLoading ? "Lädt…" : "Aktualisieren"}
                 </Button>
               </div>
-              <pre className="max-h-72 overflow-auto rounded-lg border border-border bg-black/80 p-3 text-xs leading-relaxed text-green-400">
+              <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-black/80 p-3 text-xs leading-relaxed text-green-400">
                 {log ? log : "Noch kein Worker-Log vorhanden"}
               </pre>
             </section>
