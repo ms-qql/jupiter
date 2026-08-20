@@ -1,6 +1,6 @@
 # PROJ-83: Modellwahl pro Hermes-Profil in den Einstellungen
 
-## Status: Architecture Draft
+## Status: Architected
 **Created:** 2026-08-19
 **Rework 2026-08-20:** Scope nach Nutzer-Klärung erweitert (Engine→Modell-Zweistufenauswahl + Cross-Provider, siehe Tech-Design-Nachtrag unten). Die gemergte Implementierung (Commit 02159d7, QA „READY" unten) deckt diesen erweiterten Scope NICHT ab — sie nutzt eine hartkodierte 4-Alias-Liste (`VALID_MODELS`) statt der echten Engine-Registry und schreibt nie `model.provider`. Nicht deployen, bevor die Rework-Kriterien unten erfüllt sind.
 
@@ -50,7 +50,7 @@ Out of scope:
 - [ ] Scheitert das Laden, zeigt die Oberfläche eine deutsche Fehlermeldung mit einer Wiederholen-Möglichkeit.
 
 ### B — Modellwahl und Speichern
-- [ ] Jedes angezeigte Profil besitzt zwei gekoppelte Dropdowns nebeneinander — **Engine** und **Modell** — analog zum Engine/Modell-Muster im Schwarm-Verteilungsplan: das Engine-Dropdown listet alle Engines aus `GET /engines`, das Modell-Dropdown listet die Modelle der gerade gewählten Engine.
+- [ ] Jedes angezeigte Profil besitzt zwei gekoppelte Dropdowns nebeneinander — **Engine** und **Modell** — analog zum Engine/Modell-Muster im Schwarm-Verteilungsplan: das Engine-Dropdown listet ausschließlich die verfügbaren `claude`-, `codex`- und `opencode`-Einträge aus `GET /engines`; das Modell-Dropdown listet die Modelle der gerade gewählten Engine.
 - [ ] Engine- und Modell-Dropdown sind vorausgewählt mit der aus dem aktuell im Profil hinterlegten `model.provider`/`model.default` zurückübersetzten Engine/Modell-Kombination (siehe Tech-Design-Nachtrag, Rückübersetzung).
 - [ ] Ändert der Nutzer das Engine-Dropdown, aktualisiert sich das Modell-Dropdown auf die Modellliste der neu gewählten Engine; eine bisherige Modellauswahl, die zur neuen Engine nicht passt, wird verworfen und muss neu getroffen werden.
 - [ ] Der Nutzer kann die Auswahl für ein oder mehrere Profile ändern und anschließend explizit speichern.
@@ -80,11 +80,19 @@ Die UI arbeitet mit dem bestehenden Engine/Modell-Vokabular aus `GET /engines` (
 
 | Engine (`key`) | Modellwert aus `engines.yaml` | → `config.yaml` `model.provider` | → `config.yaml` `model.default` |
 |---|---|---|---|
-| `claude` | Alias `sonnet`/`haiku`/`opus`/`fable` | `anthropic` | volle Modell-ID (z. B. `claude-sonnet-5`) — Alias→ID-Tabelle neu anzulegen, existiert im Code noch nicht |
+| `claude` | Alias `sonnet`/`haiku`/`opus`/`fable` | `anthropic` | `claude-sonnet-5` / `claude-haiku-4.5` / `claude-opus-5` / `claude-fable-5` |
 | `codex` | z. B. `gpt-5.6-terra` | `openai-codex` | Modellwert unverändert |
 | `opencode` | z. B. `opencode-go/hy3` oder `opencode/deepseek-v4-flash` | Teil vor dem ersten `/` (z. B. `opencode-go`, `opencode`) | Teil nach dem ersten `/` (z. B. `hy3`, `deepseek-v4-flash`) |
 
 Rückübersetzung (Anzeige eines bestehenden Profils) läuft spiegelbildlich: aus `model.provider`+`model.default` wird die passende Engine + der passende Modellwert aus `engines.yaml` rekonstruiert. Ist keine passende Kombination auffindbar (z. B. Provider/Modell wurde außerhalb Jupiters gesetzt), gilt das aktuelle Modell als „nicht mehr verfügbar" (siehe Edge Cases) und wird trotzdem unverändert angezeigt.
+
+### Implementierungsvertrag
+
+- **Komponente:** `HermesProfileModelsControl` bleibt der alleinige Settings-Abschnitt. Sie lädt `getHermesProfiles()` und `getEngines()` gemeinsam, filtert die Registry auf `kind === "engine"`, `available === true` und die feste erlaubte Menge `{claude, codex, opencode}` und hält pro Profil den Draft `{engine: string | null, model: string | null, dirty: boolean}`. Bei Engine-Wechsel wird `model` auf `null` gesetzt. Nicht auflösbare Bestandswerte bleiben als nicht verfügbare, nicht speicherbare Anzeige erhalten.
+- **Backend-Service:** `backend/app/engine/hermes_profiles.py` erhält die zentrale, reine Hin-/Rückübersetzung und validiert ausschließlich gegen den zur Laufzeit geladenen `engine_registry`-Snapshot. Sie akzeptiert nur die drei erlaubten Engine-Keys und deren angebotene Modelle. Erst nach erfolgreicher Übersetzung schreibt sie atomar genau `model.provider` und `model.default`; `model.base_url` und alle anderen YAML-Werte bleiben erhalten. Der vorhandene Regex-, Whitelist- und Realpath-Schutz für `profile` bleibt unverändert.
+- **Datenvertrag:** Ein gelesener Profileintrag enthält `profile: str`, `label: str`, `engine: str | null`, `model: str | null`, `provider: str | null`, `default: str | null` und `error: str | null`. Ein Patch-Eintrag ist `{profile: str, engine: Literal["claude", "codex", "opencode"], model: str}`; die Antwort enthält pro Profil `ok`, `error` und bei Erfolg den vollständig zurückübersetzten Profileintrag. Kein Tenant/RLS-Modell: Jupiter nutzt den bestehenden Single-User-Auth-Gate auf `settings_routes`; Secrets sind in keinem Schema enthalten.
+- **API:** `GET /engines` bleibt unverändert und liefert die Registry. `GET /settings/hermes-profiles` liefert nur die erkannten Profile samt rückübersetztem Stand. `PATCH /settings/hermes-profiles` erhält `{profiles: [...]}`, validiert und speichert jedes Profil einzeln und gibt dessen serverseitigen Endstand zurück. Der bisherige flache `models`-Response und `{models: [{profile, model}]}`-Patchvertrag werden dabei ersetzt.
+- **Abhängigkeiten:** Keine neue Bibliothek, Datenbank oder Migration. Die vorhandenen `EngineRead`-, shadcn-`Select`-, YAML- und `os.replace`-Muster werden wiederverwendet. `openai`, `swisscom`, `ollama` und jede spätere Registry-Engine bleiben für Hermes explizit ausgeschlossen, bis ein eigener Rework ihre Hermes-Abbildung festlegt.
 
 ## Edge Cases
 - **Ein abc-Profil wird zwischen Laden und Speichern gelöscht oder umbenannt** — Speichern schlägt nur für dieses Profil mit einer deutschen Meldung fehl; die übrigen Profile bleiben unverändert.
@@ -188,20 +196,18 @@ Alle 4 Akzeptanzkriterien PASS, keine offenen Critical/High-Bugs, keine Regressi
 <!-- Sections below are added by subsequent skills -->
 
 ## Architecture Review (abc-review-architecture)
-**Reviewed:** 2026-08-20 · **Verdict:** Blocked — offene Produktentscheidung
+**Reviewed:** 2026-08-20 · **Verdict:** Architected
 
 ### Checklist
-- [ ] Component structure — die bestehende `HermesProfileModelsControl`-Komponente hat nur ein Modell-Dropdown; der Nachtrag benennt keine Ziel-Komponente bzw. den neuen Engine/Modell-Draft-Zustand für zwei gekoppelte Selects.
-- [ ] Data model — `HermesProfileModel` und `HermesProfileModelPatch` führen nur `current_model` bzw. `model`; für Rückübersetzung und Speichern fehlen Engine-Key, Registry-Modellwert sowie das gemeinsame Provider/Modell-Paar.
-- [ ] API shape — `GET /settings/hermes-profiles` liefert eine flache `models`-Liste und `PATCH` akzeptiert nur `model`; der Rework braucht den Registry-Snapshot aus `GET /engines` und ein Patch-Payload mit `engine` + `model`.
+- [x] Component structure — `HermesProfileModelsControl` bleibt die klar abgegrenzte Komponente; Engine-/Modell-Drafts und die gekoppelten shadcn-Selects sind im Implementierungsvertrag festgelegt.
+- [x] Data model — Profil-Lese- und Patchfelder, Typen, erlaubte Engine-Keys sowie die Single-User-Auth-Grenze sind festgelegt.
+- [x] API shape — `GET /engines`, `GET /settings/hermes-profiles` und `PATCH /settings/hermes-profiles` haben Methode, Pfad, Auth und Payload/Antwortvertrag.
 - [x] Tech decisions — atomisches, profilweises Schreiben sowie Erhalt übriger `model`-Felder sind konkret beschrieben; die vorhandene Implementierung nutzt bereits atomisches `os.replace`.
-- [ ] Dependencies — `GET /engines` ist verfügbar und auth-geschützt (`backend/app/routes/engines.py:13`, `backend/app/main.py:426-431`), aber die notwendige Übersetzungsdefinition für alle dort gelieferten `kind: engine`-Einträge fehlt.
-- [x] Branch field — `feat/proj-83-hermes-profilmodellwahl-rework` ergänzt; der Branch ist noch anzulegen.
+- [x] Dependencies — `GET /engines` ist verfügbar und auth-geschützt (`backend/app/routes/engines.py:13`, `backend/app/main.py:426-431`); die Produktentscheidung begrenzt Hermes auf Claude, Codex und OpenCode.
+- [x] Branch field — `feat/proj-83-hermes-profilmodellwahl-rework` ist als creatable Branch festgelegt.
 - [x] Conflict-free — keine Route kollidiert: `/settings/hermes-profiles` ist vorhanden; die Erweiterung ersetzt dessen flachen Vertrag. Der aktuelle Vertrag ist jedoch für den Rework unzureichend (`backend/app/routes/settings.py:344-374`).
-- [ ] Acceptance-criteria coverage — AC A und C haben eine Heimat in der bestehenden Profil-API/UI. AC B/D bleiben offen: die aktuelle UI nutzt ein Dropdown und `VALID_MODELS`; `save_profile_model()` schreibt nur `model.default`, nicht `model.provider` (`backend/app/engine/hermes_profiles.py:117-120, 140-226`; `nextjs_app/components/cockpit/hermes-profile-models-control.tsx:58-62, 353-390`).
+- [x] Acceptance-criteria coverage — AC A/C bleiben im bestehenden Profilbereich; AC B/D sind durch den Engine-Registry-Filter, die zentrale Übersetzung und den erweiterten PATCH-Vertrag abgedeckt. Die flache Altimplementierung wird bewusst ersetzt.
 
 ### Autonom behoben
-- Branch-Feld im Tech-Design-Nachtrag ergänzt. Sonstige Lücken hängen an der offenen Provider-Abbildung und werden nicht geraten.
-
-### Offene Fragen (falls Blocked)
-- `GET /engines` enthält neben `claude`, `codex` und `opencode` auch konfigurierbare Engine-Keys wie `openai`, `swisscom` und `ollama` (`backend/config/engines.example.yaml`). Welche dieser Engines dürfen Hermes-Profile auswählen, und wie lautet für jeden erlaubten Key die verbindliche Abbildung auf `config.yaml` `model.provider` + `model.default`? Ohne diese Regel kann weder die serverseitige Validierung noch die Rückübersetzung vollständig und sicher implementiert werden.
+- Branch-Feld, vollständiger Komponenten-/Daten-/API-Vertrag und die Alias-Abbildung ergänzt.
+- Nutzerentscheidung umgesetzt: Hermes beschränkt sich auf Claude, Codex und OpenCode; weitere Registry-Engines werden nicht geraten.
