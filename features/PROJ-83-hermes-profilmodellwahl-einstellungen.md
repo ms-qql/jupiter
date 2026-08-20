@@ -1,6 +1,6 @@
 # PROJ-83: Modellwahl pro Hermes-Profil in den Einstellungen
 
-## Status: Planned
+## Status: Approved
 **Created:** 2026-08-19
 
 ## Dependencies
