@@ -201,14 +201,12 @@ async def create_task(board: str, req: CreateTaskRequest) -> dict:
         args += ["--body", req.body]
     if req.assignee:
         args += ["--assignee", req.assignee]
-    if req.project:
-        args += ["--project", req.project]
-    if req.workspace_mode == "dir":
-        args += ["--workspace", f"dir:{req.workspace_path}"]
-    elif req.workspace_mode == "worktree":
-        args += ["--workspace", "worktree", "--branch", req.branch]
-    elif req.workspace_mode == "worktree_path":
-        args += ["--workspace", f"worktree:{req.workspace_path}", "--branch", req.branch]
+    # Workspace ist serverseitig immer `dir:<kanonischer_pfad>`. Der
+    # Eingabewert wurde in CreateTaskRequest.workspace_path bereits kanonisch
+    # aufgelöst und auf /home/dev/projects begrenzt; ein manipulierter Call
+    # kann weder scratch/worktree noch fremde oder per Symlink erreichbare
+    # Pfade erzeugen.
+    args += ["--workspace", f"dir:{req.workspace_path}"]
     for parent in req.parents:
         if not _TASK_ID_RE.match(parent):
             raise HTTPException(status_code=400, detail=f"Ungültige Parent-ID: {parent}")

@@ -26,29 +26,105 @@ def test_model_and_provider_must_come_together():
         CreateTaskRequest(title="t", provider_override="p")  # model fehlt
 
 
-def test_branch_required_for_worktree():
-    with pytest.raises(ValueError):
-        CreateTaskRequest(title="t", workspace_mode="worktree")
-    with pytest.raises(ValueError):
-        CreateTaskRequest(title="t", workspace_mode="worktree_path", workspace_path="/x")
+def test_branch_or_path_no_longer_accepted():
+    # workspace_mode/project/branch sind entfernt -> extra="forbid" liefert 422.
+    base = {"title": "t", "workspace_path": "/home/dev/projects/foo"}
+    for bad in (
+        {"workspace_mode": "worktree"},
+        {"workspace_mode": "worktree_path", "workspace_path": "/x"},
+        {"project": "jupiter-abc"},
+        {"branch": "wt/x"},
+    ):
+        with pytest.raises(ValueError):
+            CreateTaskRequest(**{**base, **bad})
 
 
-def test_path_required_for_dir_and_worktree_path():
+def test_workspace_path_required_and_canonical():
+    # Fehlender Pfad -> 422.
     with pytest.raises(ValueError):
-        CreateTaskRequest(title="t", workspace_mode="dir")
+        CreateTaskRequest(title="t")
+    # Leerer Pfad -> 422.
     with pytest.raises(ValueError):
-        CreateTaskRequest(title="t", workspace_mode="worktree_path", branch="b")
+        CreateTaskRequest(title="t", workspace_path="   ")
+
+
+def test_workspace_path_rejects_outside_root(tmp_path, monkeypatch):
+    import app.schemas.hermes_kanban as hk_schema
+
+    root = tmp_path / "projects"
+    root.mkdir()
+    monkeypatch.setattr(hk_schema, "_WORKSPACE_ROOT", root)
+
+    # Pfad außerhalb der Wurzel wird abgewiesen.
+    with pytest.raises(ValueError):
+        CreateTaskRequest(title="t", workspace_path="/etc")
+    # Nicht existierender Pfad unter der Wurzel wird abgewiesen.
+    with pytest.raises(ValueError):
+        CreateTaskRequest(title="t", workspace_path=str(root / "nope"))
+    # Die Wurzel selbst wird abgewiesen.
+    with pytest.raises(ValueError):
+        CreateTaskRequest(title="t", workspace_path=str(root))
+
+
+def test_workspace_path_rejects_symlink_escape(tmp_path, monkeypatch):
+    import app.schemas.hermes_kanban as hk_schema
+
+    root = tmp_path / "projects"
+    root.mkdir()
+    # Ein echtes Projekt-Verzeichnis unter der Wurzel.
+    proj = root / "ok-proj"
+    proj.mkdir()
+    # Ein Angriffsziel außerhalb der Wurzel.
+    outside = tmp_path / "secret"
+    outside.mkdir()
+    # Symlink innerhalb der Wurzel zeigt nach außen.
+    link = root / "evil"
+    link.symlink_to(outside)
+    monkeypatch.setattr(hk_schema, "_WORKSPACE_ROOT", root)
+
+    # Der Symlink selbst ist ein Verzeichnis, aber aufgelöst liegt er außerhalb
+    # der Wurzel -> muss abgewiesen werden.
+    with pytest.raises(ValueError):
+        CreateTaskRequest(title="t", workspace_path=str(link))
+
+
+def test_workspace_path_canonicalizes(tmp_path, monkeypatch):
+    import app.schemas.hermes_kanban as hk_schema
+
+    root = tmp_path / "projects"
+    root.mkdir()
+    proj = root / "my-proj"
+    proj.mkdir()
+    monkeypatch.setattr(hk_schema, "_WORKSPACE_ROOT", root)
+
+    # Ein Pfad mit ``..``-Segmenten, der kanonisch unter der Wurzel landet,
+    # wird auf den aufgelösten Pfad normalisiert.
+    sub = proj / "sub"
+    sub.mkdir()
+    messy = str(sub / "..")
+    req = CreateTaskRequest(title="t", workspace_path=messy)
+    assert req.workspace_path == str(proj)
 
 
 def test_triage_excludes_initial_status():
     with pytest.raises(ValueError):
-        CreateTaskRequest(title="t", triage=True, initial_status="blocked")
+        CreateTaskRequest(title="t", workspace_path="/home/dev/projects/foo", triage=True, initial_status="blocked")
 
 
 # --- CLI-Argument-Building (echte CLI wird gemockt) -------------------------
 
 
-async def test_create_builds_full_arg_list(monkeypatch):
+async def test_create_forces_dir_workspace(monkeypatch, tmp_path):
+    # Workspace-Wurzel auf ein temporäres Verzeichnis lenken, damit der
+    # kanonische Pfad ohne echtes /home/dev/projects existiert.
+    import app.schemas.hermes_kanban as hk_schema
+
+    root = tmp_path / "projects"
+    root.mkdir()
+    proj = root / "my-proj"
+    proj.mkdir()
+    monkeypatch.setattr(hk_schema, "_WORKSPACE_ROOT", root)
+
     captured = {}
 
     async def fake_run(args, timeout):
@@ -58,12 +134,10 @@ async def test_create_builds_full_arg_list(monkeypatch):
 
     monkeypatch.setattr(hk, "_run_hermes", fake_run)
     req = CreateTaskRequest(
-        title="PROJ-82: backend starten",
+        title="PROJ-84: backend starten",
         body="Body text",
         assignee="jupiter-coordinator",
-        project="jupiter-abc",
-        workspace_mode="worktree",
-        branch="wt/82-backend",
+        workspace_path=str(proj),
         parents=["t_abc123"],
         priority=5,
         skills=["abc-backend"],
@@ -83,16 +157,28 @@ async def test_create_builds_full_arg_list(monkeypatch):
     assert args[:4] == ["kanban", "--board", "jupiter-abc", "create"]
     assert "--created-by" in args and args[args.index("--created-by") + 1] == "jupiter"
     assert "--json" in args
-    assert "--workspace" in args and "worktree" in args
-    assert "--branch" in args and "wt/82-backend" in args
+    # Workspace ist IMMER dir:<kanonischer_pfad>, kein worktree/branch mehr.
+    assert "--workspace" in args
+    ws_idx = args.index("--workspace")
+    assert args[ws_idx + 1] == f"dir:{proj}"
+    assert "--branch" not in args  # worktree-Branch existiert im neuen Contract nicht.
+    assert "--project" not in args
     assert "--parent" in args and "t_abc123" in args
     assert "--model" in args and "--provider" in args
     assert "--goal" in args and "--goal-max-turns" in args
     assert captured["timeout"] == hk._T_CREATE
-    assert args[-1] == "PROJ-82: backend starten"  # Titel ist letztes pos. Argument
+    assert args[-1] == "PROJ-84: backend starten"  # Titel ist letztes pos. Argument
 
 
-async def test_create_omits_empty_optional_fields(monkeypatch):
+async def test_create_omits_empty_optional_fields(monkeypatch, tmp_path):
+    import app.schemas.hermes_kanban as hk_schema
+
+    root = tmp_path / "projects"
+    root.mkdir()
+    proj = root / "my-proj"
+    proj.mkdir()
+    monkeypatch.setattr(hk_schema, "_WORKSPACE_ROOT", root)
+
     captured = {}
 
     async def fake_run(args, timeout):
@@ -100,12 +186,16 @@ async def test_create_omits_empty_optional_fields(monkeypatch):
         return "{}"
 
     monkeypatch.setattr(hk, "_run_hermes", fake_run)
-    await hk.create_task("jupiter-abc", CreateTaskRequest(title="nur Titel"))
+    await hk.create_task(
+        "jupiter-abc", CreateTaskRequest(title="nur Titel", workspace_path=str(proj))
+    )
     args = captured["args"]
     assert "--assignee" not in args
     assert "--body" not in args
     assert "--triage" not in args
     assert "--initial-status" not in args
+    assert "--workspace" in args and args[args.index("--workspace") + 1].startswith("dir:")
+
 
 
 async def test_bulk_archive_rejects_bad_ids(monkeypatch):
