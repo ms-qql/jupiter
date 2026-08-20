@@ -139,4 +139,26 @@ Frontend: `next build` — 0 Fehler, 0 Warnungen (Turbopack, alle Routen inkl. `
 1 offener Bug: **BUG-1 (High)** — Path-Traversal-Validierungslücke im `profile`-Parameter (Backend `hermes_profiles.py`). Muss vor Deploy gefixt werden.
 
 ---
+
+## QA Re-Verifikation BUG-1 (2026-08-20)
+
+**Fix (Backend, unabhängig geprüft):** `save_profile_model()` validiert `profile` jetzt dreistufig — (1) Format-Regex `^jupiter-[a-z0-9_-]+$` gegen `/`, `..`, Absolutpfad, Steuerzeichen; (2) Whitelist gegen `discover_profiles()`-Namen; (3) Realpath-Scope-Check (`_is_within`/`commonpath`) vor jedem Dateizugriff.
+
+**Eigener Testlauf:** `test_proj83_hermes_profiles.py` 15/15 grün (11 bestehend + 4 neue Traversal-Regressionstests: slash, `..`, Absolutpfad, Großschreibung).
+
+**Eigener unabhängiger Exploit-Versuch** (eigenes Skript, nicht die vorhandene Suite) mit 11 Payloads gegen `save_profile_model()`, inkl. Vektoren, die im ursprünglichen Fund nicht getestet wurden:
+- Alle bekannten Payloads (`jupiter-qa/../../escape_target`, `jupiter-qa/..`, `jupiter-/etc/passwd`, `jupiter-QA`) → `ok=False`, `"Kein abc-Profil."`
+- Zusätzlich getestet: URL-encoded Slash (`%2f`), Null-Byte (`\x00`), Leerzeichen, `jupiter-..`, verschachtelter `./../../`-Pfad → alle korrekt abgewiesen.
+- **Symlink-Escape (neuer Vektor, nicht in ursprünglicher Suite):** Profil `jupiter-evil` als Symlink auf ein Verzeichnis außerhalb von `profiles_dir` angelegt und via `discover_profiles()` nicht in die Whitelist aufgenommen (da direkter Verzeichnis-Scan) — Zugriff korrekt mit `"Kein abc-Profil."` verweigert; Realpath-Scope-Check hätte selbst bei Whitelist-Aufnahme gegriffen.
+- Geheime Datei außerhalb `profiles_dir` (`escape_target/config.yaml`, Inhalt `secret: TOPSECRET`) nach allen 11 Angriffsversuchen **unverändert** — kein Lese- oder Schreibzugriff außerhalb des Scopes möglich.
+
+**Regressionstest (volle Suite, eigener Lauf):** `python -m pytest` (backend): 1299 passed, 27 failed, 1 skipped, 1 xfailed. Die 27 Fehlschläge sind identisch mit dem vorherigen QA-Lauf (`test_proj50_codex_abc.py`, `test_proj79_feature_coordinator.py`, `test_proj80_followup.py`) — bestätigt vorbestehend, keine Regression durch den BUG-1-Fix. 4 zusätzliche PROJ-83-Tests ggü. vorherigem Lauf (1295→1299 passed) entsprechen den 4 neuen Traversal-Regressionstests.
+
+**Ergebnis: BUG-1 (High) bestätigt gefixt.** Keine der bekannten oder zusätzlich versuchten Umgehungen (inkl. Symlink) war erfolgreich.
+
+### Production-Ready-Empfehlung: **READY**
+
+Alle 4 Akzeptanzkriterien PASS, keine offenen Critical/High-Bugs, keine Regression.
+
+---
 <!-- Sections below are added by subsequent skills -->
