@@ -1,6 +1,8 @@
 # PROJ-83: Modellwahl pro Hermes-Profil in den Einstellungen
 
-## Status: Approved
+## Status: Deployed
+
+**Deployment:** https://jupiter.auxevo.tech · 2026-08-20 · Version 0.27.50 · Host: jupiter (systemd + Caddy, GitHub-Webhook Auto-Deploy auf `main`)
 **Created:** 2026-08-19
 **Rework 2026-08-20:** Scope nach Nutzer-Klärung erweitert (Engine→Modell-Zweistufenauswahl + Cross-Provider, siehe Tech-Design-Nachtrag unten). Die gemergte Implementierung (Commit 02159d7, QA „READY" unten) deckt diesen erweiterten Scope NICHT ab — sie nutzt eine hartkodierte 4-Alias-Liste (`VALID_MODELS`) statt der echten Engine-Registry und schreibt nie `model.provider`. Nicht deployen, bevor die Rework-Kriterien unten erfüllt sind.
 
