@@ -234,3 +234,60 @@ Alle 4 Akzeptanzkriterien PASS, keine offenen Critical/High-Bugs, keine Regressi
 **Tests:** `backend/tests/test_proj83_hermes_profiles.py` — 17/17 grün (inkl. Reverse-Translation,
 atomarem Schreiben, Erhalt übriger Keys, ungültige Engine/Modell-Ablehnung, BUG-1-Traversal).
 Kein neuer Import von `available_models` mehr vorhanden.
+
+---
+
+## QA Test Results — Rework (2026-08-20)
+
+**Scope:** Zweistufenauswahl Engine→Modell (Commit `45ca1ca`), gegen die erweiterten Akzeptanzkriterien A–D oben. Ersetzt die überholten QA-Läufe der alten Scope-Version (siehe Überholt-Hinweis oben).
+
+**Setup:** Backend `backend/tests/test_proj83_hermes_profiles.py` (isolierte temp-dirs) ausgeführt; `nextjs_app` `tsc --noEmit` + `npm run build`; Code-Review der Übersetzungslogik (`hermes_profiles.py`) und der neuen Komponente (`hermes-profile-models-control.tsx`) gegen den Implementierungsvertrag; gezielter Node-Repl-Test der Filterlogik.
+
+### Automatisierte Läufe
+- `pytest backend/tests/test_proj83_hermes_profiles.py`: **17/17 grün**.
+- `pytest backend/` (volle Suite): 1325 passed, 1 xfailed, **4 failed** — alle 4 in `test_proj50_codex_abc.py` (Skill-Generator-Tests gegen `~/.claude/skills`, unabhängig von PROJ-83-Code, kein Bezug zu `hermes_profiles`/`settings`). Keine Regression durch PROJ-83.
+- `nextjs_app`: `npm run build` — erfolgreich, 0 Fehler (Turbopack, `/settings` inkl.). `tsc --noEmit` (Standalone, ohne Next-Build-Skip): 7 Fehler, alle in vorbestehenden `*.test.tsx`/`*.test.ts`-Fixtures (Session-Typ-Drift), keiner in PROJ-83-Dateien.
+
+### Akzeptanzkriterien
+
+**A — Einstellungsbereich und Profilübersicht:** ✅ PASS
+- Lädt `getHermesProfiles()` + `getEngines()` parallel; Lade-/Leer-/Fehlerzustand mit Wiederholen vorhanden (Zeilen 244–280).
+
+**B — Modellwahl und Speichern:** ❌ **FAIL — Critical**
+Siehe BUG-2 unten: das Engine-Dropdown ist durch einen Logikfehler in der Filterbedingung **immer leer**, unabhängig vom tatsächlichen Registry-Inhalt. Damit ist die zentrale Neuerung des Reworks (Engine→Modell-Zweistufenauswahl) in der UI nicht bedienbar — kein Nutzer kann eine Engine wählen oder speichern.
+
+**C — Profilisolation und Konfigurationsschutz:** ✅ PASS
+- Nur `model.provider`/`model.default` geschrieben, Rest der YAML erhalten (Code-Review `save_profile_model`, Tests bestätigen). BUG-1-Schutz (Format-Regex → Whitelist → Realpath-Scope) unverändert vorhanden und weiterhin per Test abgedeckt.
+- Keine Secret-Felder im Schema (`HermesProfileModel`).
+
+**D — Konsistenz mit bestehender Modellverwaltung:** ✅ PASS
+- `allowed_engine_models()` liest ausschließlich aus `engine_registry` (Backend). Kein hartkodierter Modellbestand mehr.
+- Bestehende Tabs/Session-Dialog/Kanban unverändert (nur additive Registrierung).
+
+### Bugs
+
+**BUG-2 (Critical) — Engine-Dropdown durch `in`-Operator auf `Set` immer leer, Feature unbedienbar.**
+
+`nextjs_app/components/cockpit/hermes-profile-models-control.tsx:82`:
+```ts
+const ALLOWED_ENGINES = new Set<HermesEngineKey>(["claude", "codex", "opencode"]);
+...
+engines.filter((e) => e.kind === "engine" && e.available && e.key in ALLOWED_ENGINES)
+```
+`in` prüft Property-Existenz auf dem `Set`-Objekt (Prototyp-Kette), nicht Mengenzugehörigkeit — dafür ist `.has()` nötig. Für reale Engine-Keys (`"claude"`, `"codex"`, `"opencode"`) ist `key in aSet` immer `false` (verifiziert per Node-Repl):
+```
+> new Set(["claude"]).has("claude")   // true
+> "claude" in new Set(["claude"])     // false
+```
+Folge: `engineOptions` ist immer `[]`, unabhängig vom `GET /engines`-Inhalt. Das Engine-`<Select>` zeigt dauerhaft „Keine Engines verfügbar", das Modell-Select bleibt disabled (`disabled={!selectedEngine || !engineAvailable}`). Kein Nutzer kann eine Engine/Modell-Kombination wählen oder speichern — AC B (Kernstück des Reworks) ist vollständig unbedienbar. Vom Build/`tsc` nicht erkannt, da `in` auf beliebigen Objekten syntaktisch gültig ist (kein Typfehler). Keine Frontend-Tests für diese Komponente vorhanden, die den Bug abgefangen hätten.
+
+**Fix-Empfehlung:** `ALLOWED_ENGINES.has(e.key)` statt `e.key in ALLOWED_ENGINES` (Zeile 82). Gleiches Muster prüfen, falls an anderer Stelle wiederverwendet — an dieser einen Stelle im Diff ist es der einzige Fund.
+
+**Nebenbefund (Low, kein Blocker):** Die Komponente berechnet Rollenlabels lokal (`ROLE_LABELS`/`roleLabel()`) statt das vom Backend gelieferte `profile.label` zu verwenden; Backend- und Frontend-Labelmap sind nicht deckungsgleich (z. B. `jupiter-predeploy`/`jupiter-review-architecture` nur im Frontend, `jupiter-review` nur im Backend). Führt zu keinem Funktionsfehler, nur zu potenziell inkonsistenter Anzeige gegenüber einer künftigen zweiten Oberfläche, die `label` direkt nutzt.
+
+### Regressionstest
+Siehe automatisierte Läufe oben — keine Regression durch PROJ-83 (alle 4 Fehlschläge vorbestehend, unabhängig vom Feature).
+
+### Production-Ready-Empfehlung: **NOT READY**
+
+1 offener Bug: **BUG-2 (Critical)** — Engine-Dropdown durch `Set`-`in`-Fehler dauerhaft leer, Feature komplett unbedienbar. Ein-Zeilen-Fix (`.has()` statt `in`), muss vor erneuter QA/Deploy behoben werden.

@@ -95,7 +95,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-80 | Fortsetzbare Paket-Sessions für den Feature-Koordinator (Follow-up ohne Neustart) | P1 | Approved | PROJ-79, PROJ-56, PROJ-58, PROJ-59, PROJ-60, PROJ-62, PROJ-48, PROJ-57 | [Spec](PROJ-80-paket-session-followup-feature-koordinator.md) |
 | PROJ-81 | Orchestration-Eintrag „Hermes" — Hermes-Dashboard eingebettet bedienen | P1 | Deployed | PROJ-39, PROJ-38, PROJ-18 | [Spec](PROJ-81-orchestration-hermes-dashboard.md) |
 | PROJ-82 | Hermes-Kanban nativ in Jupiter (kein iFrame) | P1 | Approved | — (bezieht sich auf PROJ-81, kein harter Dependency) | [Spec](PROJ-82-hermes-kanban-native-view.md) — QA bestanden, 2 High-Bugs gefixt (Projekt-Parser, Bulk-Archivieren); Phase 2 (Live-Worker-Logs) bewusst zurückgestellt |
-| PROJ-83 | Modellwahl pro Hermes-Profil in den Einstellungen | P1 | In Progress | PROJ-51, PROJ-82 | [Spec](PROJ-83-hermes-profilmodellwahl-einstellungen.md) — Rework-Backend implementiert (Branch `feat/proj-83-hermes-profilmodellwahl-rework`): Engine→Modell-Zweistufenauswahl + Cross-Provider, Registry-validiert, schreibt `model.provider`+`model.default` |
+| PROJ-83 | Modellwahl pro Hermes-Profil in den Einstellungen | P1 | In Review | PROJ-51, PROJ-82 | [Spec](PROJ-83-hermes-profilmodellwahl-einstellungen.md) — QA Rework NOT READY: BUG-2 (Critical) Engine-Dropdown durch `in`-statt-`.has()`-Fehler auf `Set` immer leer, Feature unbedienbar (Branch `feat/proj-83-hermes-profilmodellwahl-rework`) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 
