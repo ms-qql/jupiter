@@ -76,4 +76,67 @@ Out of scope:
 - **Profilkonfiguration enthält unbekannte zusätzliche Einstellungen** — diese bleiben erhalten und werden durch die Modellwahl weder angezeigt noch entfernt.
 
 ---
+
+## QA Test Results (2026-08-20)
+
+**Setup:** Backend-Instanz mit `JUPITER_HERMES_PROFILES_DIR` auf isoliertes Test-Verzeichnis (Kopien realer `jupiter-*`-Profile) gestartet — echte `~/.hermes/profiles` nie angerührt. pytest-Suite (isoliert, temp-dirs) + eigenes Python-Exploit-Skript gegen `hermes_profiles.save_profile_model` für Red-Team.
+
+### Akzeptanzkriterien
+
+**A — Einstellungsbereich und Profilübersicht:** ✅ PASS
+- Bereich "Modelle je abc-Profil" in `settings/page.tsx` registriert, lädt dynamisch via GET.
+- Bekannte Rollen (Requirements/Architecture/Frontend/Backend/QA) über `_ROLE_LABELS`/`ROLE_LABELS` gemappt (Backend + Frontend konsistent).
+- `default` + `jupiter` (Präfix-Sonderfall) ausgeschlossen — bestätigt per Test `test_get_lists_abc_profiles_with_models` und eigenem GET gegen Live-Instanz.
+- Leerzustand "Keine abc-Profile gefunden." vorhanden (Code-Review Zeile 222-228).
+- Fehlerzustand mit Wiederholen-Button vorhanden (Zeile 192-214).
+
+**B — Modellwahl und Speichern:** ✅ PASS
+- Dropdown vorausgewählt mit `current_model` (Draft-Init).
+- Explizites Speichern über Button, `dirtyCount`-Gate.
+- Erfolg-/Fehlermeldung via `toast`, unterscheidet Voll-/Teilerfolg (Zeile 172-183).
+- Server-Antwort wird als neue Wahrheit übernommen (kein lokaler Entwurf als "gespeichert" dargestellt) — erfüllt Edge Case "Mehrere Tabs".
+- Ungültiges Modell serverseitig abgewiesen: bestätigt per `test_patch_invalid_model_rejected` + eigenem Livetest (Antwort `ok=false`, Datei unverändert).
+
+**C — Profilisolation und Konfigurationsschutz:** ⚠️ PASS mit Sicherheitsfund (siehe Security-Audit)
+- Nur `model`-Sektion geschrieben, restliche Keys erhalten — bestätigt (`test_patch_preserves_other_keys`: `provider`+`toolsets` blieben erhalten).
+- Keine Secret-Felder im Response-Schema (`HermesProfileModel` hat nur `profile/label/current_model/provider/error`).
+- Kaputte/unlesbare Config eines Profils isoliert markiert, andere Profile bleiben bedienbar — bestätigt (`test_get_lists_abc_profiles_with_models`, `broken`-Profil separat markiert).
+- Fehlschlag eines Profils lässt dessen vorherigen Stand unverändert — bestätigt (`test_patch_invalid_model_rejected`: Datei-Inhalt nach fehlgeschlagenem PATCH unverändert).
+- **Sicherheitslücke:** `profile`-Parameter wird nicht gegen Pfad-Traversal validiert, siehe unten (BUG-1).
+
+**D — Konsistenz mit bestehender Modellverwaltung:** ✅ PASS
+- `available_models()` liest direkt `VALID_MODELS` aus `app/config.py` (PROJ-51), keine eigene Liste — bestätigt per Code-Review + `test_get_lists_abc_profiles_with_models` (`data["models"] == sorted(VALID_MODELS)`).
+- Bestehende Settings-Tabs/Session-Dialog/Hermes-Kanban unberührt (nur additive Route + additive UI-Section, kein bestehender Code geändert außer Registrierung in `page.tsx`).
+
+### Security-Audit (Red Team)
+
+**BUG-1 (High) — Fehlende Validierung des `profile`-Parameters ermöglicht Pfad-Traversal-Zugriff außerhalb des Profilverzeichnisses.**
+
+`hermes_profiles.save_profile_model()` prüft nur `profile.startswith("jupiter-")` und `profile not in {"jupiter", "default"}` — nicht aber, ob der Name Pfadseparatoren oder `..`-Segmente enthält, und nicht, ob das Profil tatsächlich in `discover_profiles()` existiert. `cfg_path = os.path.join(base, profile, "config.yaml")` wird direkt aus dem ungeprüften Client-Input gebaut.
+
+Exploit (gegen isoliertes Testverzeichnis, eigenes Skript, kein Zugriff auf echte Profile):
+```
+PATCH-Payload: {"profile": "jupiter-qa/../../escape_target", "model": "opus"}
+```
+Ergebnis: Der Service öffnet und liest `escape_target/config.yaml` **außerhalb** von `profiles_dir` erfolgreich (Lesezugriff bestätigt — Inhalt inkl. eines Test-Secret-Werts wurde geparst, bevor der Schreibversuch fehlschlägt). Der Schreibversuch selbst scheitert nur zufällig, weil `tempfile.mkstemp(prefix=f".{profile}.")` den unsanitisierten `profile`-String (inkl. `/` und `..`) als Prefix verwendet und dadurch selbst einen ungültigen Pfad erzeugt — das ist **kein bewusster Schutz**, sondern ein Nebeneffekt eines anderen Bugs. Mit einem leicht anderen Payload (ohne Slash direkt im Tempfile-Prefix-Pfad-Segment) ist ein Schreibzugriff außerhalb von `profiles_dir` plausibel nicht ausgeschlossen — wurde aus Zeit-/Risikogründen nicht bis zum vollen Schreib-Exploit weiterverfolgt, aber die fehlende Eingabevalidierung ist der Kernfehler, nicht die zufällige tempfile-Fehlermeldung.
+
+Auch als reiner Read-Oracle sicherheitsrelevant: unterschiedliche Fehlermeldungen (`"nicht lesbar/schreibbar"` vs. spätere `"Speichern fehlgeschlagen"`) erlauben Datei-Existenz-Probing außerhalb des Profilverzeichnisses.
+
+**Fix-Empfehlung:** `profile` gegen die tatsächlich von `discover_profiles()` erkannte Namensliste whitelisten (nicht nur Präfix-Check), oder mindestens per Regex auf `^jupiter-[a-z0-9_-]+$` einschränken UND zusätzlich `os.path.commonpath([os.path.realpath(cfg_path), os.path.realpath(base)])`-Check vor jedem Dateizugriff.
+
+**Weitere Red-Team-Checks:** kein Auth-Bypass möglich (Router hängt an `auth_gate = [Depends(get_current_user)]`, GET ohne Token → 401 sobald Nutzer existieren — konsistent mit Rest der App). Keine Secrets im Response-Body (Schema-Review). Kein Cross-Tenant-Aspekt (Single-User-App, kein Mandantenmodell).
+
+### Regressionstest
+
+`conda run -n Dashboard python -m pytest` (backend, volle Suite): **27 Fehlschläge, 1295 bestanden** — alle 27 Fehlschläge bestätigt **vorbestehend** (identisch reproduzierbar auf `git stash` = Stand vor PROJ-83-Änderungen, betreffen `test_proj50_codex_abc.py`, `test_proj79_feature_coordinator.py`, `test_proj80_followup.py` — nicht PROJ-83-Code). Keine Regression durch PROJ-83.
+
+Neue PROJ-83-Tests: `test_proj83_hermes_profiles.py` — 11/11 grün, isoliert nachvollzogen.
+
+Frontend: `next build` — 0 Fehler, 0 Warnungen (Turbopack, alle Routen inkl. `/settings` erfolgreich generiert). `tsc --noEmit`: keine PROJ-83-bezogenen Fehler; die 7 verbleibenden Fehler betreffen ausschließlich vorbestehende `*.test.tsx`/`*.test.ts`-Dateien (Session-Fixture-Typ-Drift, nicht PROJ-83).
+
+### Production-Ready-Empfehlung: **NOT READY**
+
+1 offener Bug: **BUG-1 (High)** — Path-Traversal-Validierungslücke im `profile`-Parameter (Backend `hermes_profiles.py`). Muss vor Deploy gefixt werden.
+
+---
 <!-- Sections below are added by subsequent skills -->
