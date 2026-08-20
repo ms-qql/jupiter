@@ -79,7 +79,7 @@ export function HermesProfileModelsControl() {
   const engineOptions = useMemo<EngineRead[]>(
     () =>
       engines.filter(
-        (e) => e.kind === "engine" && e.available && e.key in ALLOWED_ENGINES,
+        (e) => e.kind === "engine" && e.available && ALLOWED_ENGINES.has(e.key as HermesEngineKey),
       ),
     [engines],
   );

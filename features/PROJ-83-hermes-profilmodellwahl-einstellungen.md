@@ -291,3 +291,11 @@ Siehe automatisierte Läufe oben — keine Regression durch PROJ-83 (alle 4 Fehl
 ### Production-Ready-Empfehlung: **NOT READY**
 
 1 offener Bug: **BUG-2 (Critical)** — Engine-Dropdown durch `Set`-`in`-Fehler dauerhaft leer, Feature komplett unbedienbar. Ein-Zeilen-Fix (`.has()` statt `in`), muss vor erneuter QA/Deploy behoben werden.
+
+---
+
+## BUG-2 Fix (2026-08-20)
+
+`hermes-profile-models-control.tsx:82`: `e.key in ALLOWED_ENGINES` → `ALLOWED_ENGINES.has(e.key as HermesEngineKey)`. Node-Repl-Verifikation: Filter liefert jetzt `[{key:"claude",...}]` statt `[]`. `npm run build` erfolgreich, keine neuen `tsc`-Fehler in der Datei.
+
+**Noch offen:** Erneute QA-Verifikation gegen den laufenden Server (Re-Test AC B) steht aus — dieser Fix wurde direkt (nicht über `/abc-frontend`) angewandt.
