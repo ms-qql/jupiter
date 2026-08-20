@@ -751,6 +751,51 @@ export interface EngineSettingsValidation {
   engines: EngineSettingsEntry[];
 }
 
+// --- PROJ-83: Modellwahl je abc-Hermes-Profil ----------------------------
+
+/** Ein erkanntes abc-Hermes-Profil (Präfix `jupiter-`, eigene config.yaml).
+ *  Spiegelt GET/PATCH /settings/hermes-profiles. Enthält bewusst KEINE
+ *  Secret-Werte, Tokens oder sonstigen Profiloptionen — nur das Modell. */
+export interface HermesProfileModel {
+  /** Profilschlüssel, z. B. `jupiter-frontend`. */
+  profile: string;
+  /** Anzeigename der Rolle (aus der Profilbelegung abgeleitet, sonst `profile`). */
+  label: string;
+  /** Aktuell wirksames Modell (`model.default` aus der config.yaml). */
+  current_model: string | null;
+  /** Provider des aktuellen Modells (`model.provider`), zur Anzeige. */
+  provider: string | null;
+  /** Profil kann nicht gelesen/geschrieben werden — Fehlerzustand je Profil. */
+  error: string | null;
+}
+
+/** GET /settings/hermes-profiles — alle erkannten abc-Profile + Modellbestand. */
+export interface HermesProfilesRead {
+  /** Verfügbare Modelle aus Jupiters bestehender Modellverwaltung (PROJ-51). */
+  models: string[];
+  /** Erkannte abc-Profile; `error` != null markiert einzeln defekte Profile. */
+  profiles: HermesProfileModel[];
+  /** Herkunft/Warnung der Profilerkennung (z. B. nicht erreichbares Verzeichnis). */
+  warning: string | null;
+}
+
+/** Ein zu speichernder Profil-Modell-Eintrag (PATCH /settings/hermes-profiles). */
+export interface HermesProfileModelPatch {
+  profile: string;
+  model: string;
+}
+
+/** PATCH /settings/hermes-profiles — Antwort mit serverseitig gültigem Stand.
+ *  Pro Profil ein Erfolg/Versagen, damit Teilfehler klar benannt werden können. */
+export interface HermesProfileSaveResult {
+  profile: string;
+  ok: boolean;
+  /** Bei ok=false: deutscher Fehlergrund (z. B. nicht schreibbar, ungültiges Modell). */
+  error: string | null;
+  /** Bei ok=true: das tatsächlich gespeicherte Modell (Echo aus der config.yaml). */
+  saved_model: string | null;
+}
+
 // --- PROJ-9: Smart Launcher -------------------------------------------------
 
 /** Ein offenes Feature aus features/INDEX.md + die abgeleitete nächste Arbeit.

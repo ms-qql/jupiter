@@ -313,6 +313,15 @@ async def set_transcription(payload: TranscriptionSettingPatch) -> dict:
 from ..engine.hermes_kanban_store import hermes_kanban_store
 from ..schemas.hermes_kanban import HermesKanbanSettingsPatch, HermesKanbanSettingsRead
 
+# --- PROJ-83: Modellwahl je abc-Hermes-Profil ------------------------------
+
+from ..engine import hermes_profiles as hermes_profiles_service
+from ..schemas.hermes_profiles import (
+    HermesProfileSaveResult,
+    HermesProfilesPatch,
+    HermesProfilesRead,
+)
+
 
 @router.get("/hermes-kanban", response_model=HermesKanbanSettingsRead)
 async def get_hermes_kanban_settings() -> dict:
@@ -327,3 +336,40 @@ async def patch_hermes_kanban_settings(payload: HermesKanbanSettingsPatch) -> di
         return hermes_kanban_store.save(payload.poll_interval_seconds)
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- PROJ-83: Modellwahl je abc-Hermes-Profil ------------------------------
+
+
+@router.get("/hermes-profiles", response_model=HermesProfilesRead)
+async def get_hermes_profiles() -> dict:
+    """Erkannte abc-Profile + deren aktuelles Modell + wählbarer Modellbestand.
+
+    Liest zur Laufzeit die ``jupiter-*``-Profile aus ``~/.hermes/profiles``;
+    einzeln defekte Profile werden mit ``error`` markiert, das Verzeichnis
+    nicht erreichbar → ``warning`` + leere Liste (kein Crash).
+    """
+    entries, warning = hermes_profiles_service.discover_profiles()
+    return {
+        "models": hermes_profiles_service.available_models(),
+        "profiles": entries,
+        "warning": warning,
+    }
+
+
+@router.patch("/hermes-profiles", response_model=list[HermesProfileSaveResult])
+async def patch_hermes_profiles(payload: HermesProfilesPatch) -> list[dict]:
+    """Modellauswahl je Profil atomar in dessen ``config.yaml`` schreiben.
+
+    Jedes Profil wird einzeln verarbeitet: die Antwort listet pro Eintrag
+    ``ok``/``saved_model`` bzw. ``ok=false`` + deutschen Fehlergrund, damit
+    Teilfehler klar benannt werden (ein fehlgeschlagenes Profil darf keine
+    Erfolgsmeldung auslösen). Ungültige Modelle und nicht-abc-Profile werden
+    serverseitig abgewiesen; andere Profile bleiben unverändert.
+    """
+    results: list[dict] = []
+    for entry in payload.models:
+        results.append(
+            hermes_profiles_service.save_profile_model(entry.profile, entry.model)
+        )
+    return results

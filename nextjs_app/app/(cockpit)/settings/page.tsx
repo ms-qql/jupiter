@@ -23,6 +23,7 @@ import { TranscriptionControl } from "@/components/cockpit/transcription-control
 import { RegistryControl } from "@/components/cockpit/registry-control";
 import { EngineModelsControl } from "@/components/cockpit/engine-models-control";
 import { ProviderBudgetControl } from "@/components/cockpit/provider-budget-control";
+import { HermesProfileModelsControl } from "@/components/cockpit/hermes-profile-models-control";
 import { TokenSavingsControl } from "@/components/cockpit/token-savings-control";
 
 type Section = {
@@ -43,6 +44,7 @@ const SECTIONS: Section[] = [
   { id: "hermes-kanban", title: "Hermes-Kanban", control: <HermesKanbanControl /> },
   { id: "modelle", title: "Modelle", control: <EngineModelsControl /> },
   { id: "registry", title: "Registry", control: <RegistryControl /> },
+  { id: "hermes-profile-modelle", title: "Modelle je abc-Profil", control: <HermesProfileModelsControl /> },
 ];
 
 export default function SettingsPage() {

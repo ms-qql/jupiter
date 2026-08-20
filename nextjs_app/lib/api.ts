@@ -38,6 +38,9 @@ import type {
   EngineSettingsEntry,
   EngineSettingsOverview,
   EngineSettingsValidation,
+  HermesProfilesRead,
+  HermesProfileModelPatch,
+  HermesProfileSaveResult,
   Session,
   SessionCreate,
   SessionDetail,
@@ -375,6 +378,25 @@ export function setEngineSettings(
   return request<EngineSettingsOverview>("/settings/engines", {
     method: "PUT",
     body: JSON.stringify({ engines }),
+  });
+}
+
+// --- PROJ-83: Modellwahl je abc-Hermes-Profil ----------------------------
+
+/** PROJ-83: Erkannte abc-Profile + verfügbarer Modellbestand (PROJ-51). */
+export function getHermesProfiles(signal?: AbortSignal): Promise<HermesProfilesRead> {
+  return request<HermesProfilesRead>("/settings/hermes-profiles", { signal });
+}
+
+/** PROJ-83: Modellauswahl je Profil atomar speichern. Antwort pro Profil mit
+ *  ok/saved_model bzw. ok=false + Fehlergrund, damit Teilfehler klar benannt
+ *  werden (ein fehlgeschlagenes Profil darf keine Erfolgsmeldung auslösen). */
+export function setHermesProfileModels(
+  models: HermesProfileModelPatch[],
+): Promise<HermesProfileSaveResult[]> {
+  return request<HermesProfileSaveResult[]>("/settings/hermes-profiles", {
+    method: "PATCH",
+    body: JSON.stringify({ models }),
   });
 }
 

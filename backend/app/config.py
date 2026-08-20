@@ -51,6 +51,11 @@ _DEFAULT_HERMES_KANBAN_PATH = str(
     Path(__file__).resolve().parent.parent / "config" / "hermes_kanban.yaml"
 )
 
+# PROJ-83: Verzeichnis der Hermes-Profile (abc-Rollen wie `jupiter-backend`).
+# Dort liegen je Profil eine `config.yaml`; die Modellwahl schreibt atomar
+# deren `model.default`/`model.provider`. Default = `~/.hermes/profiles`.
+_DEFAULT_HERMES_PROFILES_DIR = str(Path.home() / ".hermes" / "profiles")
+
 # PROJ-73: globaler Token-Savings-Default + administrative Modulfreigaben.
 _DEFAULT_TOKEN_SAVINGS_PATH = str(
     Path(__file__).resolve().parent.parent / "config" / "token_savings.yaml"
@@ -311,6 +316,9 @@ class Settings(BaseSettings):
     # PROJ-82: Polling-Intervall der nativen Hermes-Kanban-Ansicht (Sekunden, 5–60).
     # Live mtime-geprüft wie Watchdog; fehlt/defekt → Default 10 s.
     hermes_kanban_config_path: str = _DEFAULT_HERMES_KANBAN_PATH
+    # PROJ-83: Verzeichnis der Hermes-Profile (`jupiter-*`), deren `config.yaml`
+    # die Modellwahl pro abc-Profil steuert. Default = `~/.hermes/profiles`.
+    hermes_profiles_dir: str = _DEFAULT_HERMES_PROFILES_DIR
     # Hartes Zeitlimit je einzelnem `tmux`-CLI-Aufruf (has-session/new-session/
     # list-panes/kill-session — NICHT der Agenten-Turn selbst, der läuft unabhängig
     # in der Pane weiter). Bug (2026-07-07, echter Produktionsvorfall): ohne dieses
