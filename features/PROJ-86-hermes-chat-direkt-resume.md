@@ -1,6 +1,6 @@
 # PROJ-86: Hermes-Chat direkt fortsetzen — schneller Start und stabiler Kontext
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-08-22
 **Last Updated:** 2026-08-22
 
@@ -394,11 +394,12 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 
 **Production URL:** https://jupiter.auxevo.tech  
 **Deployed:** 2026-08-22  
-**Version:** 0.27.57  
+**Version:** 0.27.58  
 **Host project:** jupiter
 
 - Hermes Direct-Chat-Resume einschließlich Provider-Persistenz und sicherem Rehydrate ausgerollt.
 - Follow-up-Fix: Hermes verarbeitet ausschließlich seine eigene stdout-`session_id`.
+- Named-Session-Fix: Folge-Turns nutzen `--continue jupiter-<Session-ID>` statt einer stdout-ID als Fortsetzungsvertrag.
 - User hat den Deploy trotz des bekannten vollständigen-Backend-Suite-Blockers ausdrücklich freigegeben.
 - Smoke-Test nach erfolgreichem Auto-Deploy ausstehend: Login, neue Hermes-Session, Erstturn, Folgeturn/Resume und Fehleranzeige prüfen.
 
