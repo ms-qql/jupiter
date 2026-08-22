@@ -429,3 +429,17 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 - Die modellgesteuerte Zusatzzeile wurde entfernt; nur Hermes' eigene stdout-Kontrollzeile wird verarbeitet.
 - Live-CLI-Smoke-Test: genau eine `session_id:`-Zeile nach dem Turn.
 - Backend gezielt: **26 passed**. Re-QA für den Cockpit-Erst- und Folgeturn steht noch aus.
+
+## QA Re-verification 3 — 2026-08-22
+
+- [x] Live-Smoke-Test mit `gpt-5.6-luna` und `openai-codex`: Antwort `OK` plus **genau eine** Hermes-`session_id:`-Zeile.
+- [x] BUG-4 verifiziert behoben: keine modellgesteuerte Zusatzzeile, nur der echte Hermes-stdout-Kanal.
+- [x] Backend gezielt: **42 passed** (Hermes-, Transport- und Rehydrate-Regressionen).
+- [x] Frontend: **205 passed**.
+- [ ] Vollständige Backend-Suite: reproduzierbar per 60-Sekunden-Timeout bei 16 % blockiert (bestehender tmux-Alt-Test); kein PROJ-86-Testfehler.
+
+### Re-QA Summary
+
+- **Feature-Bugs:** 0 offen.
+- **Security:** kein neuer Auth-, Owner- oder Injection-Befund.
+- **Production Ready:** **NO** — der bekannte vollständige-Backend-Suite-Blocker bleibt vor einem regulären Release zu klären.
