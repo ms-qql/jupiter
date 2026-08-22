@@ -394,10 +394,11 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 
 **Production URL:** https://jupiter.auxevo.tech  
 **Deployed:** 2026-08-22  
-**Version:** 0.27.56  
+**Version:** 0.27.57  
 **Host project:** jupiter
 
 - Hermes Direct-Chat-Resume einschließlich Provider-Persistenz und sicherem Rehydrate ausgerollt.
+- Follow-up-Fix: Hermes verarbeitet ausschließlich seine eigene stdout-`session_id`.
 - User hat den Deploy trotz des bekannten vollständigen-Backend-Suite-Blockers ausdrücklich freigegeben.
 - Smoke-Test nach erfolgreichem Auto-Deploy ausstehend: Login, neue Hermes-Session, Erstturn, Folgeturn/Resume und Fehleranzeige prüfen.
 
