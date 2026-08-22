@@ -15,7 +15,10 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
+from app.db.session_index import SqliteSessionIndexRepository
 from app.engine.base import EngineDriver, EventHandler, LaunchSpec
+from app.engine.hermes_chat_driver import HermesChatDriver
+from app.engine.manager import ERROR, SessionManager
 from app.engine.events import StreamEvent
 from app.engine.registry import engine_registry
 from app.main import create_app
@@ -348,3 +351,37 @@ def test_hermes_reanimate_returns_409(hermes_enabled):
     sid = _create(client).json()["session_id"]
     resp = client.post(f"/sessions/{sid}/reanimate", headers=_auth_headers())
     assert resp.status_code == 409, resp.text
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_waiting_hermes_preserves_provider(tmp_path, hermes_enabled):
+    repo = SqliteSessionIndexRepository(str(tmp_path / "index.db"))
+    await repo.init()
+    await repo.upsert({
+        "session_id": "hermes-waiting", "owner": "dev", "project_path": "/home/dev/projects",
+        "model": "gpt-5.6", "permission_mode": "bypassPermissions", "engine": "hermes",
+        "status": "waiting", "hermes_resume_ref": "resume-1", "hermes_provider": "openai",
+    })
+    manager = SessionManager(repo=repo)
+    await manager.rehydrate()
+    runtime = manager.get("hermes-waiting")
+    assert runtime is not None and runtime.state.status == "waiting"
+    assert isinstance(runtime.driver, HermesChatDriver)
+    assert runtime.driver._provider == "openai"
+    assert runtime.driver.resume_id == "resume-1"
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_running_hermes_marks_interrupted_error(tmp_path):
+    repo = SqliteSessionIndexRepository(str(tmp_path / "index.db"))
+    await repo.init()
+    await repo.upsert({
+        "session_id": "hermes-running", "owner": "dev", "project_path": "/home/dev/projects",
+        "model": "qwen3.5-397b-a17b", "permission_mode": "bypassPermissions", "engine": "hermes",
+        "status": "running", "hermes_resume_ref": "resume-1",
+    })
+    manager = SessionManager(repo=repo)
+    await manager.rehydrate()
+    runtime = manager.get("hermes-running")
+    assert runtime is not None and runtime.state.status == ERROR
+    assert "unterbrochen" in (runtime.state.error or "")

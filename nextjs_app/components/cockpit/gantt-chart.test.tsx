@@ -58,7 +58,7 @@ describe("GanttChart — PROJ-8", () => {
   });
 
   it("füllt bis zur erreichten Phase und hebt die aktuelle hervor", () => {
-    // backend = Index 4: Zellen 0–3 abgeschlossen, 4 aktuell, 5–7 offen.
+    // backend = Index 5: Zellen 0–4 abgeschlossen, 5 aktuell, 6–8 offen.
     const html = renderToStaticMarkup(
       <GanttChart
         sessions={[
@@ -74,12 +74,12 @@ describe("GanttChart — PROJ-8", () => {
     expect(html).toContain("Jupiter");
     expect(html).toContain("Feature 8");
     expect(count(html, "aktuelle Phase")).toBe(1);
-    expect(count(html, ": abgeschlossen")).toBe(4);
+    expect(count(html, ": abgeschlossen")).toBe(5);
     expect(count(html, ": offen")).toBe(3);
   });
 
   it("nicht-linear: Bar füllt bis reached, aktuelle Phase getrennt markiert", () => {
-    // reached=document(7), aktuell zurück bei frontend(3): 0–7 gefüllt (7 abgeschlossen
+    // reached=document(8), aktuell zurück bei frontend(4): 0–8 gefüllt (8 abgeschlossen
     // + 1 aktuell), 0 offen; die aktuelle Markierung sitzt auf frontend.
     const html = renderToStaticMarkup(
       <GanttChart
@@ -89,17 +89,17 @@ describe("GanttChart — PROJ-8", () => {
       />,
     );
     expect(count(html, "aktuelle Phase")).toBe(1);
-    expect(count(html, ": abgeschlossen")).toBe(7);
+    expect(count(html, ": abgeschlossen")).toBe(8);
     expect(count(html, ": offen")).toBe(0);
   });
 
-  it("Session ohne Phase → neutrale Zeile (alle 8 Zellen offen, keine Hervorhebung)", () => {
+  it("Session ohne Phase → neutrale Zeile (alle 9 Zellen offen, keine Hervorhebung)", () => {
     const html = renderToStaticMarkup(
       <GanttChart sessions={[session({ project_name: "Ad-hoc" })]} />,
     );
     expect(html).toContain("Ad-hoc");
     expect(count(html, "aktuelle Phase")).toBe(0);
-    expect(count(html, ": offen")).toBe(8);
+    expect(count(html, ": offen")).toBe(9);
   });
 
   it("beendete Session → eingefroren, aktuelle Phase NICHT mehr markiert", () => {
@@ -117,7 +117,7 @@ describe("GanttChart — PROJ-8", () => {
     );
     expect(html).toContain("· beendet");
     expect(count(html, "aktuelle Phase")).toBe(0); // eingefroren
-    expect(count(html, ": abgeschlossen")).toBe(6); // brainstorm…qa = 6 Zellen gefüllt
+    expect(count(html, ": abgeschlossen")).toBe(7); // brainstorm…qa = 7 Zellen gefüllt
   });
 
   it("Fallback-Label: ohne project_name den Pfad-Basename zeigen", () => {

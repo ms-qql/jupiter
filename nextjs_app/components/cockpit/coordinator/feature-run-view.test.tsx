@@ -17,7 +17,7 @@ describe("FeatureRunView — PROJ-79", () => {
     const html = renderToStaticMarkup(
       <FeatureRunView featureId="101" coordinator={coordinator} />,
     );
-    expect(html).toContain("Feature 101");
-    expect(html).toContain("Lade Feature-Ausführung");
+    expect(html).toContain("Schwarm 101");
+    expect(html).toContain("Lade Schwarm");
   });
 });

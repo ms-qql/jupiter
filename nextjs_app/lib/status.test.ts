@@ -256,11 +256,12 @@ describe("contextLabel — PROJ-5", () => {
 });
 
 describe("ABC_PHASES + phaseIndex — PROJ-8 Gantt", () => {
-  it("acht Phasen in fester kanonischer Reihenfolge", () => {
+  it("neun Phasen in fester kanonischer Reihenfolge", () => {
     expect(ABC_PHASES.map((p) => p.key)).toEqual([
       "brainstorm",
       "requirements",
       "architecture",
+      "review-architecture",
       "frontend",
       "backend",
       "qa",
@@ -276,8 +277,8 @@ describe("ABC_PHASES + phaseIndex — PROJ-8 Gantt", () => {
   });
   it("phaseIndex liefert die Position; null/unbekannt → -1", () => {
     expect(phaseIndex("brainstorm")).toBe(0);
-    expect(phaseIndex("backend")).toBe(4);
-    expect(phaseIndex("document")).toBe(7);
+    expect(phaseIndex("backend")).toBe(5);
+    expect(phaseIndex("document")).toBe(8);
     expect(phaseIndex(null)).toBe(-1);
     expect(phaseIndex(undefined)).toBe(-1);
     expect(phaseIndex("quatsch")).toBe(-1);

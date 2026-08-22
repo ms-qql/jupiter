@@ -401,6 +401,7 @@ class SessionState:
     # Engine lehnt Resume ab). Kontext-Snapshot wird NUR aus Hermes-Telemetrie
     # (Usage-Datei) gefüllt — nie erfunden (ADR-85-3).
     hermes_resume_ref: str | None = None
+    hermes_provider: str | None = None
     context_used_tokens: int | None = None
     context_window_tokens: int | None = None
     context_usage_available: bool = False
@@ -1328,7 +1329,7 @@ class SessionManager:
             from .hermes_chat_driver import HermesChatDriver
 
             inv = getattr(state, "hermes_invocation", None)
-            provider = inv.provider if inv is not None else (profile.auth_env or "anthropic")
+            provider = inv.provider if inv is not None else (state.hermes_provider or "anthropic")
             # PROJ-86: beim Rehydrieren (kein flüchtiges `hermes_invocation`) das
             # persistierte `state.model` nutzen, nicht das Profil-Default-Modell.
             model = inv.model if inv is not None else (state.model or profile.default_model or "")
@@ -1399,6 +1400,7 @@ class SessionManager:
             "savings_pilot_safe": 1 if s.savings_pilot_safe else 0 if s.savings_pilot_safe is not None else None,
             # PROJ-85: Hermes-Kontext-Snapshot (nur aus Hermes-Telemetrie).
             "hermes_resume_ref": s.hermes_resume_ref,
+            "hermes_provider": s.hermes_provider,
             "context_used_tokens": s.context_used_tokens,
             "context_window_tokens": s.context_window_tokens,
             "context_usage_available": 1 if s.context_usage_available else 0,
@@ -1513,7 +1515,7 @@ class SessionManager:
                     runtime.transcript = [TranscriptEntry(**d) for d in json.loads(raw)]
             except Exception as exc:  # noqa: BLE001 — best-effort, In-Memory bleibt führend.
                 logger.warning("Transkript konnte nicht rehydriert werden (%s): %s", sid, exc)
-            if state.engine == "hermes" and state.status in ACTIVE_STATES:
+            if state.engine == "hermes" and state.status == WAITING:
                 # PROJ-86: eine ruhende Hermes-Session nach Backend-Neustart NICHT als
                 # verwaist/ERROR führen — sie bleibt sichtbar und fortsetzbar (direkter
                 # Driver, gespeicherte Conversation-ID). Kein generisches ERROR, kein
@@ -1537,6 +1539,14 @@ class SessionManager:
                         runtime.transcript = [TranscriptEntry(**d) for d in json.loads(raw)]
                 except Exception as exc:  # noqa: BLE001 — best-effort, In-Memory bleibt führend.
                     logger.warning("Transkript konnte nicht rehydriert werden (%s): %s", sid, exc)
+                continue
+            if state.engine == "hermes" and state.status in ACTIVE_STATES:
+                # Ein direkter Turn hat beim Neustart keinen steuerbaren Prozess mehr.
+                # Nur ruhendes waiting darf fortgesetzt werden.
+                state.status = ERROR
+                state.error = "Hermes-Turn durch Backend-Neustart unterbrochen. Bitte erneut senden."
+                self._sessions[sid] = runtime
+                self._persist(runtime)
                 continue
             if row.get("status") in ACTIVE_STATES:
                 if state.drained_at:
@@ -1718,6 +1728,7 @@ class SessionManager:
             feature_blocker=self._json_field(row.get("feature_blocker")),
             # PROJ-85: Hermes-Kontext-Snapshot (nur aus Hermes-Telemetrie).
             hermes_resume_ref=row.get("hermes_resume_ref"),
+            hermes_provider=row.get("hermes_provider"),
             context_used_tokens=(int(row["context_used_tokens"]) if row.get("context_used_tokens") is not None else None),
             context_window_tokens=(int(row["context_window_tokens"]) if row.get("context_window_tokens") is not None else None),
             context_usage_available=bool(row.get("context_usage_available") or False),
@@ -1978,6 +1989,7 @@ class SessionManager:
             savings_degraded=list(savings.degraded),
             savings_provenance=list(savings.provenance),
             hermes_invocation=inv,  # flüchtig → treibt den HermesChatDriver.
+            hermes_provider=inv.provider,
         )
         # PROJ-86: Hermes läuft IMMER im direkten Prozessmodus (ADR-86-3) — kein tmux,
         # keine Pane-Liveness, keine Auto-Reanimation. Setzt den Transport bewusst

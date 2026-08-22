@@ -363,5 +363,15 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 - **Production Ready:** **NO**.
 - **Recommendation:** High-Bugs zuerst beheben, dann `/abc-qa` erneut ausführen.
 
+## QA Re-verification
+
+**Re-tested:** 2026-08-22
+
+- [x] BUG-1 fixed: nur Hermes-`waiting` wird nach Restart fortsetzbar rehydriert; ein laufender Turn wird sichtbar als unterbrochenes `error` gespeichert.
+- [x] BUG-2 fixed: der Hermes-Provider wird zusammen mit Resume-Referenz persistiert und beim Rehydrate wieder an den direkten Driver gegeben.
+- [x] BUG-3 fixed: Frontend-Erwartungen spiegeln die kanonische neunphasige ABC-Reihenfolge und die Schwarm-Begriffe.
+- [x] Backend: **42 passed** (PROJ-86 + Transport-/Rehydrate-Regressionen).
+- [x] Frontend: **205 passed**.
+
 ## Deployment
 _To be added by /abc-deploy_

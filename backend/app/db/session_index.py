@@ -95,6 +95,7 @@ COLUMNS: tuple[str, ...] = (
     # `hermes_resume_ref` ist die opaque Resume-Referenz; die Kontext-Spalten sind
     # nullable (None = "nicht verfügbar", nie erfunden — ADR-85-3).
     "hermes_resume_ref",
+    "hermes_provider",
     "context_used_tokens",
     "context_window_tokens",
     "context_usage_available",
@@ -148,7 +149,12 @@ CREATE TABLE IF NOT EXISTS session_index (
     feature_plan          TEXT,
     feature_packages      TEXT DEFAULT '[]',
     feature_revision      INTEGER DEFAULT 0,
-    feature_blocker       TEXT
+    feature_blocker       TEXT,
+    hermes_resume_ref     TEXT,
+    hermes_provider       TEXT,
+    context_used_tokens   INTEGER,
+    context_window_tokens INTEGER,
+    context_usage_available INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 
@@ -210,6 +216,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("feature_blocker", "TEXT"),  # PROJ-79 (JSON)
     # PROJ-85: Hermes-Kontext-Snapshot (absolute Werte, nur aus Hermes-Telemetrie).
     ("hermes_resume_ref", "TEXT"),
+    ("hermes_provider", "TEXT"),  # PROJ-86: Resume muss denselben Provider verwenden.
     ("context_used_tokens", "INTEGER"),
     ("context_window_tokens", "INTEGER"),
     ("context_usage_available", "INTEGER DEFAULT 0"),
