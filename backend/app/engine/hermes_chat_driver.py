@@ -70,6 +70,10 @@ class HermesChatDriver(GenericCliDriver):
             argv += ["--resume", self._resume_ref]
         return argv
 
+    async def _spawn(self, argv: list[str], cwd: str, *, prompt: str | None = None) -> None:
+        self._control_lines = []
+        await super()._spawn(argv, cwd, prompt=prompt)
+
     async def start(self, spec: LaunchSpec, on_event: EventHandler) -> None:  # type: ignore[valid-type]
         self._on = on_event
         self._spec = spec

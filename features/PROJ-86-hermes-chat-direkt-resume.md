@@ -400,3 +400,32 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 - Hermes Direct-Chat-Resume einschließlich Provider-Persistenz und sicherem Rehydrate ausgerollt.
 - User hat den Deploy trotz des bekannten vollständigen-Backend-Suite-Blockers ausdrücklich freigegeben.
 - Smoke-Test nach erfolgreichem Auto-Deploy ausstehend: Login, neue Hermes-Session, Erstturn, Folgeturn/Resume und Fehleranzeige prüfen.
+
+## QA Regression — 2026-08-22
+
+### Automated Tests
+
+- [x] Backend, gezielt: **42 passed** — PROJ-85/86-, tmux-Transport- und Rehydrate-Regressionen.
+- [x] Frontend: **205 passed**.
+- [ ] Vollständige Backend-Suite: nach 16 % weiter laufend; kein Abschluss innerhalb des QA-Zeitfensters.
+
+### BUG-4: Doppelter Conversation-Identifier blockiert jeden erfolgreichen Turn
+
+- **Severity:** High
+- **Steps to Reproduce:** `hermes chat -q <Text mit der neuen Abschlussanweisung> --cli -Q --yolo --pass-session-id --in <Projekt>` ausführen.
+- **Expected:** Genau eine stdout-Zeile `session_id: <id>`; Jupiter setzt die Session auf `waiting` und speichert die Referenz.
+- **Actual:** Hermes 0.20.4 gibt bereits eine `session_id:` aus. Die neue Prompt-Anweisung erzeugt eine zweite. `HermesChatDriver` verwirft zwei Kontrollzeilen erwartungsgemäß als mehrdeutig und setzt `error`.
+- **Evidence:** Live-Smoke-Test vom 2026-08-22 mit zwei identischen `session_id:`-Zeilen um die Antwort `OK`.
+- **Priority:** Fix before release; den echten Hermes-Ausgabekanal einmalig und ohne modellgesteuerte Zusatzzeile abfangen.
+
+### QA Summary
+
+- **Acceptance Criteria:** Erst-/Folge-Turn und atomare Resume-Persistenz derzeit nicht freigegeben.
+- **Bugs Found:** 1 High (BUG-4).
+- **Production Ready:** **NO**.
+
+## BUG-4 Fix — 2026-08-22
+
+- Die modellgesteuerte Zusatzzeile wurde entfernt; nur Hermes' eigene stdout-Kontrollzeile wird verarbeitet.
+- Live-CLI-Smoke-Test: genau eine `session_id:`-Zeile nach dem Turn.
+- Backend gezielt: **26 passed**. Re-QA für den Cockpit-Erst- und Folgeturn steht noch aus.
