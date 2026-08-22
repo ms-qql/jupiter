@@ -1,10 +1,23 @@
-"""Regressionstest — HermesChatDriver.send_input darf den ersten getippten Text
-NICHT verwerfen, wenn die Session noch auf die Erst-Eingabe wartet
-(_awaiting_first_input). Bug: der erste Turn wurde aus dem alten, noch leeren
-LaunchSpec gespawnt (`-z ""`), statt aus einem neuen Spec mit dem echten Text —
-Hermes bekam einen leeren Prompt, der Text ging verloren.
+"""Regressionstests — HermesChatDriver darf einen sauber beendeten Turn nicht als
+Absturz melden, und der erste getippte Text darf nicht verworfen werden.
+
+Bug 1 (Text verworfen): send_input spawnte den ersten Turn bei wartender Session
+aus dem alten, leeren LaunchSpec statt aus einem neuen mit dem getippten Text.
+
+Bug 2 (Fehlalarm "Prozess wurde beendet, ohne den Turn regulär abzuschließen"):
+_read_stdout las die Usage-Datei (Resume-Ref) SOFORT beim Start des Readers,
+lange bevor der Hermes-Prozess sie überhaupt geschrieben hat — die Basisklasse
+sah daher nie eine Resume-Ref UND nie ein "result"-Event (Hermes' plaintext-
+Adapter emittiert nie eins) und meldete jeden — auch einen völlig normal
+beendeten — Turn als abgebrochen.
 """
 from __future__ import annotations
+
+import asyncio
+import json
+import os
+import stat
+import tempfile
 
 import pytest
 
@@ -13,12 +26,30 @@ from app.engine.hermes_chat_driver import HermesChatDriver
 from app.engine.registry import EngineProfile
 
 
-class _Profile(EngineProfile):
-    pass
+def _write_fake_hermes(tmp_path, resume_ref: str = "hermes-ref-xyz") -> str:
+    """Ein Shell-Stub, der sich wie die echte Hermes-CLI verhält: druckt Text auf
+    stdout, schreibt die Usage-Datei ERST GANZ AM ENDE, exitet dann mit 0 —
+    genau die Reihenfolge, die den Timing-Bug (Bug 2) real auslöst."""
+    script = tmp_path / "fake_hermes.sh"
+    script.write_text(
+        "#!/bin/bash\n"
+        "usage_file=\"\"\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ \"$1\" == \"--usage-file\" ]]; then usage_file=\"$2\"; fi\n"
+        "  shift\n"
+        "done\n"
+        "echo 'Hallo vom Fake-Hermes'\n"
+        "sleep 0.2\n"
+        f"echo '{{\"session_id\": \"{resume_ref}\"}}' > \"$usage_file\"\n"
+        "exit 0\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
 
 
 @pytest.mark.anyio
 async def test_first_send_input_uses_typed_text_not_empty_prompt(monkeypatch):
+    """Bug 1."""
     profile = EngineProfile(
         key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
         models=["qwen3.5-397b-a17b"], bin="hermes",
@@ -42,6 +73,46 @@ async def test_first_send_input_uses_typed_text_not_empty_prompt(monkeypatch):
     assert driver._awaiting_first_input is False
     argv = captured["argv"]
     assert "Hallo Hermes, bitte X tun" in argv, argv
-    # Vorher (Bug): argv enthielt "-z", "" — der Text landete nirgends.
     z_index = argv.index("-z")
     assert argv[z_index + 1] == "Hallo Hermes, bitte X tun"
+
+
+@pytest.mark.anyio
+async def test_clean_turn_does_not_emit_no_final_result(tmp_path):
+    """Bug 2 — echter Subprozess (kein Fake-Treiber), reproduziert die reale
+    asyncio-Spawn-/Reader-Kette. Vor dem Fix: `closed` mit reason=no_final_result
+    trotz rc=0 und vorhandener Usage-Datei. Nach dem Fix: `closed` ohne Reason."""
+    profile = EngineProfile(
+        key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
+        models=["qwen3.5-397b-a17b"], bin=_write_fake_hermes(tmp_path),
+    )
+    driver = HermesChatDriver(profile, provider="anthropic", model="claude-fable-5")
+
+    events: list = []
+
+    async def on_event(event):
+        events.append(event)
+
+    spec = LaunchSpec(
+        session_id="s1", project_path=str(tmp_path), model="fable",
+        permission_mode="bypassPermissions", initial_prompt="Hallo Hermes",
+    )
+    await driver.start(spec, on_event)
+    assert driver._reader_task is not None
+    await asyncio.wait_for(driver._reader_task, timeout=5)
+    if driver._stderr_task is not None:
+        driver._stderr_task.cancel()
+
+    # Sauberes, fortsetzbares Turn-Ende (rc=0 + Resume-Ref) → gar kein `closed`
+    # (Session bleibt "wartet auf nächste Eingabe", siehe PROJ-48-Kommentar in
+    # generic_cli_driver.py). Vor dem Fix kam hier fälschlich ein `closed` mit
+    # reason=no_final_result, weil die Usage-Datei zu früh gelesen wurde.
+    no_final_result = [
+        e for e in events
+        if e.type == "system" and e.subtype == "closed"
+        and e.raw.get("reason") == "no_final_result"
+    ]
+    assert not no_final_result, (
+        f"Fälschlich als abgebrochen gemeldet trotz sauberem rc=0-Turn-Ende: {events}"
+    )
+    assert driver._resume_ref == "hermes-ref-xyz"

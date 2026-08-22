@@ -344,6 +344,17 @@ class GenericCliDriver(EngineDriver):
         if self._on is not None:
             await self._on(event)
 
+    async def _after_process_exit(self, rc: int | None) -> None:
+        """Hook: läuft NACH dem echten Prozessende, VOR der closed/DONE-Entscheidung.
+        No-op per Default; Treiber ohne Turn-Ende-Signal im Stream überschreiben ihn."""
+        return None
+
+    def _turn_completed_normally(self) -> bool:
+        """Entscheidet, ob ein bei rc 0/None beendeter Prozess ein sauberes, fortsetzbares
+        Turn-Ende war (→ kein `closed`) statt eines stillen Abbruchs (→ `closed`/`no_final_result`,
+        siehe PROJ-60/62). Default: Claude-/JSON-Adapter-Fall (echtes result-Event gesehen)."""
+        return self.supports_self_resume and self._saw_final_result
+
     async def _read_stdout(self) -> None:
         is_tmux = self._transport_mode == "tmux"
         if is_tmux:
@@ -369,13 +380,18 @@ class GenericCliDriver(EngineDriver):
                 self._saw_final_result = True
             await self._emit(event)
         rc = await self._transport_obj.wait() if is_tmux else await self._proc.wait()
+        # Hook für Treiber ohne Turn-Ende-Signal im Stream selbst (z. B. Hermes'
+        # plaintext-Adapter): erst NACH dem echten Prozessende auswertbar (z. B. eine
+        # Usage-Datei, die die Engine erst beim Exit schreibt), aber noch VOR der
+        # closed/DONE-Entscheidung unten. No-op per Default.
+        await self._after_process_exit(rc)
         # Selbst gestoppt → closed (→ done). PROJ-48: ein resumefähiger oneshot-Turn, der
         # sauber mit Turn-Ende endete, ist NICHT „done" — die Session bleibt fortsetzbar
         # (Status bleibt „wartet", gesetzt vom result-Event); kein `closed` emittieren.
         if self._stopping:
             await self._emit(StreamEvent("system", "closed", {}))
         elif rc in (0, None):
-            if self.supports_self_resume and self._saw_final_result:
+            if self._turn_completed_normally():
                 return  # Turn fertig, Session fortsetzbar → kein DONE
             # PROJ-60: Prozess endete (rc 0/None), OHNE je ein echtes Turn-Ende geliefert zu
             # haben (Provider-Timeout/Crash nach einem Tool-Zwischenschritt o. Ä.) — das ist

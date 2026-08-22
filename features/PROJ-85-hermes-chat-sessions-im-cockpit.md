@@ -418,9 +418,53 @@ initialer Eingabetext nach Neustart nicht übernommen.
   (`argv` enthielt `-z ""`), nach dem Fix grün. Volle `test_proj85_hermes*.py`-Suite: 13/13 grün,
   kein Regressionsbruch. Frontend-`tsc --noEmit`: identische 7 vorbestehende Fehler vor/nach dem
   Fix (unabhängige Test-Mock-Typen, nicht in `hermes-start-dialog.tsx`/`select.tsx`).
-- **Nicht live reproduziert:** der gemeldete 404-Modellfehler selbst — die tmux-Session war beim
-  Check bereits neu gestartet und lief fehlerfrei; kein Log mit der ursprünglichen Session-ID
-  auffindbar. Plausibelste Erklärung: Folgeeffekt des leeren `-z ""`-Aufrufs. Sollte der 404 nach
-  diesem Fix (Text kommt jetzt korrekt an) erneut auftreten, weiteres Signal für eine separate
-  Ursache in der Modell-/Provider-Auflösung — dann neuer Ticket.
+- **Nicht live reproduziert (zu diesem Zeitpunkt):** der gemeldete 404-Modellfehler selbst — die
+  tmux-Session war beim Check bereits neu gestartet und lief fehlerfrei.
 - **Knowledge:** `bug-geloest-jupiter-hermes-chat-first-turn-empty-prompt.md`
+
+### Nachtrag — zweiter Fund nach Live-Nachtest (abc-backoffice, 2026-08-22, selber Tag)
+
+Nutzer testete nach dem obigen Deploy (`v0.27.53-PROJ-85`, live 13:11:43 UTC) erneut per
+„Neue Hermes-Session" (Titel „HSession test") und bekam denselben Fehler
+„Der Prozess wurde beendet, ohne den Turn regulär abzuschließen." — diesmal ohne Textverlust
+(Fix 2/3 griff), also ein **zweiter, unabhängiger** Root Cause für Symptom (2).
+
+- **Reproduktion:** `session_index.db` zeigte Session `560c815b…`, engine=`hermes`,
+  model=`gpt-5.6-terra`, `status=done`, exakt dieser Fehlertext, erzeugt **nach** dem Deploy. Manuelle
+  CLI-Reproduktion (`hermes -z "sag hallo" -m gpt-5.6-terra --provider openai-codex --cli --yolo …`)
+  lief einwandfrei (rc 0, Text kam an) — der Fehler steckte also im Treiber, nicht im Modell/Provider.
+- **Ursache:** `hermes_chat_driver.py` (`HermesChatDriver._read_stdout`, jetzt entfernt) rief
+  `_after_turn()` (liest die `--usage-file` für die Resume-Ref) **beim Start** des Readers auf —
+  bevor der Prozess überhaupt eine Zeile ausgegeben hat, geschweige denn beendet war. Die Datei
+  existierte zu diesem Zeitpunkt nie → `_resume_ref` blieb `None`. Zusätzlich verlangt die
+  Turn-Ende-Erkennung der Basisklasse (`GenericCliDriver._read_stdout`,
+  `self.supports_self_resume and self._saw_final_result`) ein `_saw_final_result`, das NUR bei
+  einem echten `result`-Event gesetzt wird — Hermes' `plaintext`-Adapter (`adapters.py:65`) emittiert
+  laut eigenem Docstring *nie* ein `result`-Event ("Kein Turn-Ende-Signal … das liefert das
+  EOF/Prozessende"). Beide Bedingungen der Basisklasse waren damit für JEDEN Hermes-Turn strukturell
+  unerfüllbar → jeder — auch ein völlig sauberer — Turn wurde als `closed`/`no_final_result` gemeldet.
+- **Fix:** zwei kleine, generische Hooks in der Basisklasse `GenericCliDriver`
+  (`generic_cli_driver.py`): `_after_process_exit(rc)` (No-op-Default, läuft NACH `proc.wait()`/
+  `transport.wait()`, VOR der closed/DONE-Entscheidung) und `_turn_completed_normally()`
+  (Default: bisherige `supports_self_resume and _saw_final_result`-Logik, jetzt als überschreibbare
+  Methode statt Inline-Bedingung). `HermesChatDriver` überschreibt beide: `_after_process_exit` ruft
+  jetzt zur RICHTIGEN Zeit `_after_turn()` auf (Usage-Datei existiert dann), `_turn_completed_normally`
+  prüft direkt `self._resume_ref is not None` statt des für Hermes nie erfüllbaren
+  `_saw_final_result`-Flags. Der alte, falsch getimte `_read_stdout`-Override in `HermesChatDriver`
+  wurde entfernt (Basisklasse übernimmt jetzt die volle Reader-/Rc-Logik, inkl. der beiden Hooks).
+- **Verifikation:** neuer Test `test_clean_turn_does_not_emit_no_final_result` in
+  `test_proj85_hermes_chat_driver.py` — echter Subprozess (Fake-Hermes-Shellskript, das Text druckt
+  und die Usage-Datei erst am Ende schreibt), vor dem Fix rot (`closed`/`no_final_result` trotz
+  rc=0 + vorhandener Usage-Datei), nach dem Fix grün. Volle `test_proj85_hermes*.py`-Suite: 14/14
+  grün. Volle Backend-Suite (`pytest backend/tests -q`): 1316 passed, 1 xfailed, 5 failed — alle 5
+  identisch zu den bereits vor PROJ-85 bestehenden, themenfremden Failures aus dem QA-Log oben
+  (`test_proj39_orchestration`, `test_proj50_codex_abc.py` ×4), kein neuer Bruch.
+- **Einordnung des ursprünglichen 404-Fehlers:** ein früherer Lauf (Session `b3ab3764…`, VOR diesem
+  Fix, engine=hermes/gpt-5.6-terra) zeigte einen echten `status=error` mit `"API-Fehler 404"` —
+  das ist ein separater, nicht-null Exit-Code-Pfad (Hermes schrieb den Fehler nach stderr), keine
+  Folge dieses Timing-Bugs. Die manuelle CLI-Reproduktion mit identischem Modell/Provider lief sauber
+  durch — deutet auf einen transienten Upstream-Fehler (ChatGPT-Codex-Backend) statt auf einen
+  systematischen Bug in der Modell-/Provider-Auflösung. Mit diesem Fix maskiert der Treiber echte
+  Fehler nicht mehr unter dem generischen "no_final_result" — sollte der 404 wieder auftreten, zeigt
+  er sich jetzt als eigener, aussagekräftiger Fehler statt als falscher Turn-Ende-Report.
+- **Knowledge:** `bug-geloest-jupiter-hermes-chat-usage-file-timing.md`

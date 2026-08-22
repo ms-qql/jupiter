@@ -126,11 +126,20 @@ class HermesChatDriver(GenericCliDriver):
             return
         raise RuntimeError("Session läuft nicht.")
 
-    async def _read_stdout(self) -> None:
-        # Prozess-EOF erreicht → Usage-Datei auswerten, BEVOR der parent-Code den
-        # Turn abschließt (closed/DONE). Danach den regulären Reader laufen lassen.
+    async def _after_process_exit(self, rc: int | None) -> None:
+        # Läuft NACH dem echten Prozessende (Hook der Basisklasse) — genau dann hat
+        # Hermes die Usage-Datei fertig geschrieben. Ein früherer Versuch rief
+        # _after_turn() beim Start des Readers auf (vor jeder Ausgabe) statt hier —
+        # die Datei existierte da nie, jeder Turn wurde fälschlich als abgebrochen
+        # gemeldet ("Prozess wurde beendet, ohne den Turn regulär abzuschließen").
         await self._after_turn()
-        await super()._read_stdout()
+
+    def _turn_completed_normally(self) -> bool:
+        # Hermes' plaintext-Adapter emittiert nie ein "result"-Event (siehe
+        # adapters.py) — _saw_final_result der Basisklasse bleibt daher immer False.
+        # Das eigentliche Signal für ein sauberes Turn-Ende ist die Resume-Ref aus
+        # der Usage-Datei (von _after_process_exit oben gerade gesetzt).
+        return self._resume_ref is not None
 
     async def _after_turn(self) -> None:
         """Usage-Datei lesen: Resume-Ref + Kontext-Usage extrahieren und emittieren."""
