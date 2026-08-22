@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 
 from .adapters import get_adapter
 from .base import EngineDriver, EventHandler, LaunchSpec, pid_alive
 from .events import StreamEvent
 from .transport import EXIT_MARKER, TmuxTransport, TransportError
+
+log = logging.getLogger(__name__)
 
 
 def build_generic_argv(
@@ -189,6 +192,7 @@ class GenericCliDriver(EngineDriver):
             stderr=asyncio.subprocess.PIPE,
         )
         self._reader_task = asyncio.create_task(self._read_stdout())
+        self._reader_task.add_done_callback(self._on_reader_done)
         self._stderr_task = asyncio.create_task(self._read_stderr())
         # Verhalten unverändert: Schreiben ERST nachdem der Prozess/die Reader stehen
         # (identische Reihenfolge zu vor PROJ-63, nur in `_spawn` verlagert).
@@ -220,6 +224,7 @@ class GenericCliDriver(EngineDriver):
         # kein separates `send_input` auf eine offene Pipe möglich/nötig.
         self._stdin_closed = True
         self._reader_task = asyncio.create_task(self._read_stdout())
+        self._reader_task.add_done_callback(self._on_reader_done)
 
     async def _write_stdin(self, text: str) -> None:
         """Schreibt eine Eingabe in den laufenden Prozess (oneshot: schließt stdin danach)."""
@@ -343,6 +348,33 @@ class GenericCliDriver(EngineDriver):
     async def _emit(self, event: StreamEvent) -> None:
         if self._on is not None:
             await self._on(event)
+
+    def _on_reader_done(self, task: asyncio.Task) -> None:
+        """PROJ-47-Muster (bisher nur in ``claude_driver.py``): stirbt der stdout-Reader
+        mit einer nicht abgefangenen Ausnahme, darf das nicht still passieren — ohne
+        diesen Callback bleibt eine fire-and-forget-Task-Exception für immer unabgeholt
+        UND die Session hängt sichtbar für den Nutzer in ``running`` fest (Liveness
+        erkennt den toten Prozess zwar separat, aber ``state.status``/``state.error``
+        werden ausschließlich von ``_read_stdout`` selbst gesetzt — bricht die Task
+        vorher ab, passiert das nie). Anders als bei Claude (langlebiger tmux-Pane,
+        eigene Re-Sync-Wege) gibt es hier kein zweites Netz, daher zusätzlich ein
+        ``error``-Event, das die Session sichtbar terminiert statt sie einzufrieren."""
+        if task.cancelled():
+            return  # von stop() gewollt.
+        exc = task.exception()
+        if exc is not None:
+            log.error("stdout-Reader-Task endete mit Ausnahme.", exc_info=exc)
+            if self._on is not None:
+                asyncio.ensure_future(
+                    self._emit(StreamEvent("system", "error", {"message": f"{exc}"}))
+                )
+        elif not self._stopping and self.is_alive:
+            log.error(
+                "Reader-Stall: stdout-Reader endete, obwohl der Subprozess (pid=%s) "
+                "noch lebt und kein Stop läuft — Session re-synchronisieren "
+                "(Stop + Fortsetzen).",
+                self.pid,
+            )
 
     async def _after_process_exit(self, rc: int | None) -> None:
         """Hook: läuft NACH dem echten Prozessende, VOR der closed/DONE-Entscheidung.

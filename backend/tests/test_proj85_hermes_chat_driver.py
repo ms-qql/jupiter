@@ -116,3 +116,51 @@ async def test_clean_turn_does_not_emit_no_final_result(tmp_path):
         f"Fälschlich als abgebrochen gemeldet trotz sauberem rc=0-Turn-Ende: {events}"
     )
     assert driver._resume_ref == "hermes-ref-xyz"
+
+
+@pytest.mark.anyio
+async def test_reader_exception_does_not_hang_session_forever(tmp_path, monkeypatch):
+    """Bug 3 (PROJ-47-Lücke) — eine Ausnahme im stdout-Reader (z. B. beim Auswerten der
+    Usage-Datei) durfte die Task bisher fire-and-forget sterben lassen: kein Log, kein
+    Event, die Session blieb für immer auf `running` stehen (Liveness erkennt den toten
+    Prozess zwar separat als "tot", aber `state.status`/`state.error` werden
+    ausschließlich vom Reader selbst gesetzt). `claude_driver.py` hatte für genau diesen
+    Fall bereits einen `_on_reader_done`-Callback (PROJ-47) — `GenericCliDriver` (Basis
+    von Hermes/Codex/OpenCode) nicht. Nach dem Fix: die Ausnahme erzeugt ein sichtbares
+    `system/error`-Event statt eine stumm verschwundene Task."""
+    profile = EngineProfile(
+        key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
+        models=["qwen3.5-397b-a17b"], bin=_write_fake_hermes(tmp_path),
+    )
+    driver = HermesChatDriver(profile, provider="anthropic", model="claude-fable-5")
+
+    def boom(rc):
+        raise RuntimeError("kaputte Usage-Datei (simuliert)")
+
+    monkeypatch.setattr(driver, "_after_process_exit", boom)
+
+    events: list = []
+
+    async def on_event(event):
+        events.append(event)
+
+    spec = LaunchSpec(
+        session_id="s1", project_path=str(tmp_path), model="fable",
+        permission_mode="bypassPermissions", initial_prompt="Hallo Hermes",
+    )
+    await driver.start(spec, on_event)
+    assert driver._reader_task is not None
+    # Task selbst wirft (fire-and-forget) — nur der done-Callback darf das auffangen.
+    for _ in range(50):
+        if driver._reader_task.done():
+            break
+        await asyncio.sleep(0.05)
+    await asyncio.sleep(0.05)  # dem synchronen done-Callback Zeit geben, das Event zu schedulen
+    if driver._stderr_task is not None:
+        driver._stderr_task.cancel()
+
+    error_events = [e for e in events if e.type == "system" and e.subtype == "error"]
+    assert error_events, (
+        f"Reader-Exception blieb unsichtbar — Session wäre für immer 'running' geblieben: {events}"
+    )
+    assert "kaputte Usage-Datei" in error_events[-1].raw.get("message", "")

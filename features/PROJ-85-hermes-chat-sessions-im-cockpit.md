@@ -468,3 +468,52 @@ Nutzer testete nach dem obigen Deploy (`v0.27.53-PROJ-85`, live 13:11:43 UTC) er
   Fehler nicht mehr unter dem generischen "no_final_result" — sollte der 404 wieder auftreten, zeigt
   er sich jetzt als eigener, aussagekräftiger Fehler statt als falscher Turn-Ende-Report.
 - **Knowledge:** `bug-geloest-jupiter-hermes-chat-usage-file-timing.md`
+
+### Nachtrag 2 — Nutzerfragen nach Live-Nachtest 2, dritter Fund (abc-backoffice, 2026-08-22, selber Tag)
+
+Nutzer fragte nach erneutem Live-Test: (1) warum Sessions ständig "beendet/nicht steuerbar" werden
+und reaktiviert werden müssen, (2) warum der Hermes-Agent direkt in Hermes das Modell "hy3" zeigt,
+und meldete (3) einen neuen Fehler "No conversation found with session ID: <uuid>".
+
+**Antwort (2) — kein Bug:** Hy3 ist Hermes' eigenes global konfiguriertes Default-Modell
+(Nous Research), sichtbar wenn man die STANDALONE Hermes-CLI/das eigene Hermes-Dashboard direkt
+öffnet (separates System, `hermes_dashboard`-iFrame bzw. eigener tmux/CLI-Zugriff). Die Modellwahl
+im Jupiter-Dialog gilt NUR für den `-m`/`--provider`-Aufruf, den `HermesChatDriver` für GENAU diese
+eine Jupiter-Session macht — sie ändert nie Hermes' persistente globale Konfiguration. Wer die
+Hermes-CLI direkt (nicht über Jupiters Chat-Panel) öffnet, sieht immer deren eigenen Default.
+
+**Root Cause (1)+(3) — dritter, unabhängiger Fund:** Live-Reproduktion über die echte laufende
+Backend-API (nicht nur Unit-Test) zeigte: eine per `/sessions/hermes` erzeugte Session blieb nach
+Prozessende dauerhaft auf `status=running` hängen (`num_turns=0`, kein Fehler), obwohl der OS-Prozess
+längst tot war (`liveness=tot`, PID nicht mehr vorhanden) — der Nutzer sah "Session beendet/nicht
+steuerbar" (aus der separaten Liveness-Prüfung) und musste manuell reaktivieren, ohne dass je ein
+`state.error` gesetzt wurde.
+
+- **Ursache:** `asyncio.create_task(self._read_stdout())` in `GenericCliDriver` (Basis von
+  Hermes/Codex/OpenCode) ist reines Fire-and-Forget — wirft der Reader (z. B. eine Ausnahme beim
+  Auswerten der Usage-Datei, oder irgendein anderer unerwarteter Fehler) irgendwo eine nicht
+  abgefangene Exception, stirbt die Task lautlos: kein Log, kein Event, `state.status` bleibt für
+  immer auf dem letzten Wert stehen (nur `_read_stdout` selbst aktualisiert ihn normalerweise am
+  Ende). `claude_driver.py` hat für genau diesen Fall bereits seit PROJ-47 einen
+  `_on_reader_done`-Callback (`add_done_callback`) — dieser wurde nie auf `GenericCliDriver`
+  portiert, obwohl Hermes/Codex/OpenCode strukturell demselben Risiko ausgesetzt sind.
+- **Fix:** `_on_reader_done`-Callback (PROJ-47-Muster) auf `GenericCliDriver` portiert, an beiden
+  `_reader_task`-Erzeugungsstellen (`_spawn`, `_spawn_tmux`) registriert. Anders als bei Claude
+  (das ein zweites Sicherheitsnetz über langlebige tmux-Panes hat) emittiert der Callback hier
+  zusätzlich ein `system/error`-Event, damit die Session sichtbar terminiert statt für immer in
+  `running` hängen zu bleiben.
+- **Verifikation:** neuer Test `test_reader_exception_does_not_hang_session_forever` — erzwingt eine
+  Ausnahme in `_after_process_exit` (Monkeypatch), vor dem Fix rot (`Task exception was never
+  retrieved`-Warnung, kein Event, Session bliebe für immer `running`), nach dem Fix grün (`system/
+  error`-Event mit der Exception-Message kommt an). Volle `test_proj85_hermes*.py`-Suite: 16/16
+  grün. Volle Backend-Suite: 1317 passed, 1 xfailed, 5 failed — dieselben 5 vorbestehenden,
+  themenfremden Failures wie oben, kein neuer Bruch.
+- **Nicht abschließend geklärt:** die genaue Ausnahme, die im konkret beobachteten Nutzerfall
+  (Session `3d404cd9…`) den Reader real zum Absturz brachte, sowie die exakte Herkunft des Texts
+  "No conversation found with session ID: …" (nicht im Hermes- oder Jupiter-Quellcode als Literal
+  auffindbar — vermutlich Text einer vom Hermes-Agenten selbst aufgerufenen Tool-Antwort, die über
+  `--pass-session-id` mit Jupiters Session-UUID im System-Prompt in Berührung kam). Mit diesem Fix
+  wird ein zukünftiges Auftreten aber nicht mehr lautlos verschluckt, sondern als sichtbares
+  `error`-Event mit Klartext-Nachricht auf der Session landen — das macht die nächste Diagnose
+  direkt möglich, statt erneut bei einer für immer "laufenden" Session zu stehen.
+- **Knowledge:** `bug-geloest-jupiter-generic-cli-driver-reader-task-silent-exception.md`
