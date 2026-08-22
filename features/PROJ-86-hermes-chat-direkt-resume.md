@@ -300,7 +300,68 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 - `backend/tests/test_proj85_hermes.py` + `test_proj85_hermes_chat_driver.py` — Start ohne Prozess, Whitespace→422, Erst-/Folge-Turn mit stablem Ref, fehlende/doppelte/stderr-ID→Fehler, abgelehntes Resume, Liveness-Skip, Reanimate-409. Alle 24 grün; Manager/Liveness/Rehydrate-Regressionen (77 Tests) unverändert grün.
 
 ## QA Test Results
-_To be added by /abc-qa_
+
+**Tested:** 2026-08-22  
+**Backend:** gezielte pytest-Integrationstests (Fake-Hermes; keine produktiven Hermes-Credentials)  
+**Frontend:** Quellprüfung; Browser-E2E nicht ausführbar, da kein lokaler App-Start mit Hermes-Credentials vorlag  
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- [x] AC 1–10, 12–13: durch `test_proj85_hermes.py`, `test_proj85_hermes_chat_driver.py` und Quellprüfung abgedeckt (Start ohne Prompt/Prozess, Whitespace-422, direkter `hermes chat`, Kontrollzeile, Resume-Fehler, Liveness-/tmux-Ausschluss, UI-Hinweis/Reanimate-Ausblendung, Nicht-Hermes-Regression).
+- [ ] AC 11: Backend-Neustart setzt die gewählte Hermes-Provider-Invocation nicht fort; siehe BUG-2.
+- [ ] AC 14: die geforderten Neustarttests fehlen; zusätzlich verletzt ein Neustart während eines laufenden Hermes-Turns den Edge-Case, siehe BUG-1.
+
+### Edge Cases Status
+
+- [x] Leere Eingabe, fehlende/doppelte/stderr-only Conversation-ID, abgelehntes Resume und paralleler Turn sind gezielt getestet.
+- [ ] Laufender Hermes-Turn beim Backend-Neustart wird als fortsetzbares `waiting` rehydriert statt sichtbar als unterbrochenes `error` markiert (BUG-1).
+- [ ] Ruhe zwischen Turns mit nicht-Anthropic Provider verliert beim Rehydrate den Provider (BUG-2).
+
+### Security Audit Results
+
+- [x] Owner-Scope: alle Session-Lese-/Schreibendpunkte nutzen `_owned_or_404`; `owner` stammt aus dem JWT-Sub.
+- [x] Eingabevalidierung: leere Hermes-Eingaben werden serverseitig mit 422 abgewiesen; Conversation-ID ist kein Client-Feld.
+- [x] XSS/Secrets: SessionView rendert Text als React-Text, ohne HTML-Injection; die CLI-ID wird nicht angezeigt.
+- [x] Auth-Ratelimits: Login 5/min, Refresh 30/min konfiguriert.
+- [ ] Produktiver JWT-/Cross-Owner- und realer Hermes-CLI-Test nicht ausgeführt (keine Testidentitäten bzw. Hermes-Credentials).
+
+### Automated Tests
+
+- [x] Backend gezielt: **40 passed** — `test_proj85_hermes.py`, `test_proj85_hermes_chat_driver.py`, `test_proj63_manager_transport.py`, `test_proj74_tmux_liveness_rehydrate.py`.
+- [ ] Vollständige Backend-Suite: bei ca. 16 % abgebrochen, da ein bereits laufender Alt-Test CPU-intensiv nicht abschloss; kein PROJ-86-Testfehler beobachtet.
+- [ ] Frontend: **198 passed, 7 failed** — bestehende Gantt-/Koordinator-Erwartungen (`status.test.ts`, `gantt-chart.test.tsx`, `feature-run-view.test.tsx`), nicht durch PROJ-86 ausgelöst, aber vor Release zu bereinigen.
+
+### Bugs Found
+
+#### BUG-1: Laufender Hermes-Turn wird nach Backend-Neustart fälschlich fortsetzbar
+- **Severity:** High
+- **Steps to Reproduce:** Hermes-Session starten, während eines direkten Turns das Backend neu starten, anschließend die Session lesen.
+- **Expected:** Status `error` mit deutscher Unterbrechungsnachricht; kein erfolgreicher/fortsetzbarer Turn.
+- **Actual:** `rehydrate()` behandelt für Hermes alle `ACTIVE_STATES` gleich und erhält auch `running` als fortsetzbaren Runtime-Eintrag.
+- **Priority:** Fix before deployment.
+
+#### BUG-2: Rehydrate verliert den ursprünglich gewählten Hermes-Provider
+- **Severity:** High
+- **Steps to Reproduce:** Hermes-Session über ein nicht-Claude Registry-Modell (z. B. Codex/OpenAI) starten, erfolgreichen Turn abwarten, Backend neu starten und nächste Eingabe senden.
+- **Expected:** Resume mit derselben Provider-/Modell-Invocation wie beim Erstturn.
+- **Actual:** `hermes_invocation` ist nur flüchtig; Rehydrate baut den Driver ohne persistierten Provider und fällt auf `profile.auth_env or "anthropic"` zurück.
+- **Priority:** Fix before deployment.
+
+#### BUG-3: Frontend-Testsuite ist nicht grün
+- **Severity:** High
+- **Steps to Reproduce:** In `nextjs_app` `npm test` ausführen.
+- **Expected:** Vollständige Suite grün.
+- **Actual:** 7 Fehler in Gantt-/Koordinator-Tests.
+- **Priority:** Fix before deployment.
+
+### Summary
+
+- **Acceptance Criteria:** 11/14 verifiziert; 2 fehlgeschlagen, 1 wegen fehlender Neustartabdeckung nicht verifiziert.
+- **Bugs Found:** 3 total (0 Critical, 3 High, 0 Medium, 0 Low).
+- **Security:** Kein bestätigter Sicherheitsfehler; produktiver Auth-/CLI-Test ausstehend.
+- **Production Ready:** **NO**.
+- **Recommendation:** High-Bugs zuerst beheben, dann `/abc-qa` erneut ausführen.
 
 ## Deployment
 _To be added by /abc-deploy_
