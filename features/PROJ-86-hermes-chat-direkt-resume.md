@@ -431,6 +431,12 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 - Live-CLI-Smoke-Test: genau eine `session_id:`-Zeile nach dem Turn.
 - Backend gezielt: **26 passed**. Re-QA für den Cockpit-Erst- und Folgeturn steht noch aus.
 
+## Named-Session Fix — 2026-08-22
+
+- `HermesChatDriver` verwendet nun `--continue jupiter-<Jupiter-Session-ID>` statt einer stdout-`session_id` als Resume-Vertrag; nur der erste Turn erhält zusätzlich `--create-if-missing`.
+- Der echte Zwei-Turn-Spike mit `gpt-5.6-luna`/`openai-codex` bestätigte Kontextfortsetzung über getrennte Prozesse.
+- Hermes-Metazeilen (`session_id:` und Resume-Banner) werden nicht als Assistant-Text gezeigt. Status: **In Review**, Re-QA ausstehend.
+
 ## QA Re-verification 3 — 2026-08-22
 
 - [x] Live-Smoke-Test mit `gpt-5.6-luna` und `openai-codex`: Antwort `OK` plus **genau eine** Hermes-`session_id:`-Zeile.

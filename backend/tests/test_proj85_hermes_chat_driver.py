@@ -1,10 +1,8 @@
 """Regressionstests — HermesChatDriver (PROJ-86) über den direkten `hermes chat`-Vertrag.
 
-Deckt ab: getippte Nachricht landet in `-q` (nicht `-z`), Erst- vs. Folge-Turn
-(unterschiedliches `--resume`-Verhalten), sauberes Turn-Ende ohne `no_final_result`,
-die `session_id:`-Kontrollzeile wird abgefangen (nie als Assistant-Text), exakt eine
-Kontrollzeile = Erfolg, fehlende/doppelte/ausschließlich-stderr-ID = sichtbarer Fehler,
-und eine Reader-Exception hängt die Session nicht für immer.
+Deckt ab: getippte Nachricht landet in `-q` (nicht `-z`), Erst- und Folge-Turn
+nutzen denselben `--continue`-Namen, Hermes-Metazeilen werden abgefangen, und eine
+Reader-Exception hängt die Session nicht für immer.
 """
 from __future__ import annotations
 
@@ -49,8 +47,8 @@ def _write_fake_hermes(tmp_path, *, resume_ref: str = "hermes-ref-xyz", fail: bo
 
 
 @pytest.mark.anyio
-async def test_first_input_uses_q_not_z_and_no_resume(monkeypatch):
-    """Erster Turn: Text in `-q`, kein `-z`, kein `--resume`."""
+async def test_first_input_creates_named_session(monkeypatch):
+    """Erster Turn: Text in `-q`, legt genau die benannte Session an."""
     profile = EngineProfile(
         key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
         models=["qwen3.5-397b-a17b"], bin="hermes",
@@ -77,11 +75,13 @@ async def test_first_input_uses_q_not_z_and_no_resume(monkeypatch):
     q_index = argv.index("-q")
     assert argv[q_index + 1] == "Hallo Hermes, bitte X tun"
     assert "--resume" not in argv, f"Erst-Turn darf kein --resume tragen: {argv}"
+    assert argv[argv.index("--continue") + 1] == "jupiter-s1"
+    assert "--create-if-missing" in argv
 
 
 @pytest.mark.anyio
-async def test_follow_up_turn_carries_resume_ref(monkeypatch):
-    """Folge-Turn: `--resume <ref>` mit exakt der gespeicherten ID."""
+async def test_follow_up_turn_uses_stable_session_name(monkeypatch):
+    """Folge-Turn: derselbe benannte Hermes-Chat, ohne stdout-Resume-ID."""
     profile = EngineProfile(
         key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
         models=["qwen3.5-397b-a17b"], bin="hermes",
@@ -91,8 +91,7 @@ async def test_follow_up_turn_carries_resume_ref(monkeypatch):
         session_id="s1", project_path="/home/dev/projects", model="fable",
         permission_mode="bypassPermissions", initial_prompt="",
     )
-    driver._resume_ref = "hermes-ref-abc123"
-
+    driver._resume_ref = "jupiter-s1"
     captured: dict[str, list[str]] = {}
 
     async def fake_spawn(argv, cwd, *, prompt=None):
@@ -103,14 +102,14 @@ async def test_follow_up_turn_carries_resume_ref(monkeypatch):
     await driver.send_input("Und jetzt weiter")
 
     argv = captured["argv"]
-    assert "--resume" in argv
-    assert argv[argv.index("--resume") + 1] == "hermes-ref-abc123"
+    assert "--resume" not in argv
+    assert argv[argv.index("--continue") + 1] == "jupiter-s1"
+    assert "--create-if-missing" not in argv
 
 
 @pytest.mark.anyio
-async def test_clean_turn_emits_waiting_and_captures_id(tmp_path):
-    """Sauberes Turn-Ende (rc=0 + exakt eine Kontrollzeile) → waiting, keine
-    `no_final_result`, Resume-Ref erfasst."""
+async def test_clean_turn_emits_waiting_without_id_dependency(tmp_path):
+    """Sauberes Turn-Ende → waiting, unabhängig von der stdout-ID."""
     profile = EngineProfile(
         key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
         models=["qwen3.5-397b-a17b"], bin=_write_fake_hermes(tmp_path),
@@ -139,7 +138,7 @@ async def test_clean_turn_emits_waiting_and_captures_id(tmp_path):
     assert not no_final_result, f"Fälschlich als abgebrochen gemeldet: {events}"
     waiting = [e for e in events if e.type == "system" and e.subtype == "waiting"]
     assert waiting, f"Erfolgreicher Turn muss in waiting enden: {events}"
-    assert driver._resume_ref == "hermes-ref-xyz"
+    assert driver.resume_id == "jupiter-s1"
 
 
 @pytest.mark.anyio
@@ -172,11 +171,12 @@ async def test_control_line_not_shown_as_assistant_text(tmp_path):
     assert all("session_id:" not in t for t in assistant_texts), (
         f"Kontrollzeile als Chat-Text durchgeschlüpft: {assistant_texts}"
     )
+    assert driver._intercept_line("↻ Resumed session test") is True
 
 
 @pytest.mark.anyio
-async def test_missing_control_line_is_error(tmp_path):
-    """Keine `session_id:`-Zeile → sichtbarer Fehler, KEIN waiting/closed-Erfolg."""
+async def test_missing_control_line_still_completes_named_turn(tmp_path):
+    """Der benannte Chat benötigt keine stdout-`session_id`."""
     script = tmp_path / "fake_hermes.sh"
     script.write_text(
         "#!/bin/bash\n"
@@ -204,9 +204,8 @@ async def test_missing_control_line_is_error(tmp_path):
     if driver._stderr_task is not None:
         driver._stderr_task.cancel()
 
-    errors = [e for e in events if e.type == "system" and e.subtype == "error"]
-    assert errors, f"Fehlende Kontrollzeile muss einen Fehler geben: {events}"
-    assert driver._resume_ref is None
+    assert not [e for e in events if e.type == "system" and e.subtype == "error"]
+    assert [e for e in events if e.type == "system" and e.subtype == "waiting"]
 
 
 @pytest.mark.anyio
@@ -240,7 +239,7 @@ async def test_rejected_resume_is_error(tmp_path):
     errors = [e for e in events if e.type == "system" and e.subtype == "error"]
     assert errors, f"Abgelehntes Resume muss einen Fehler geben: {events}"
     assert "Hermes-Fortsetzung fehlgeschlagen" in errors[-1].raw.get("message", "")
-    assert driver._resume_ref == "veraltet-123"  # unverändert, kein stiller Neustart
+    assert driver._resume_ref is None  # Benannter Chat verwendet keine Resume-ID.
 
 
 @pytest.mark.anyio
