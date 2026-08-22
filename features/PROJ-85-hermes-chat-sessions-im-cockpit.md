@@ -1,6 +1,6 @@
 # PROJ-85: Hermes-Chat-Sessions im Cockpit
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-08-22
 **Last Updated:** 2026-08-22
 
@@ -390,4 +390,7 @@ Volle Backend-Suite (`pytest -q`, PROJ-85-Worktree): **1314 passed, 1 xfailed, 5
 **READY.** Alle 13 Akzeptanzkriterien PASS (12 vollständig live verifiziert, AC13 teilweise durch Testkosten-Abbruch nur im negativen Pfad live + positivem Pfad via Suite belegt — kein Blocker). Kein Critical/High-Bug offen. BUG-4 (Low) bleibt dokumentiert, nicht gefixt.
 
 ## Deployment
-_To be added by /abc-deploy_
+
+Production URL: https://jupiter.auxevo.tech
+Deployed: 2026-08-22 · Version: 0.27.52
+Host: Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend`, Caddy, GitHub-Webhook Auto-Deploy auf `main`)
