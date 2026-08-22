@@ -108,6 +108,32 @@ async def test_follow_up_turn_uses_stable_session_name(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_three_follow_up_turns_keep_stable_session_name(monkeypatch):
+    profile = EngineProfile(
+        key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
+        models=["qwen3.5-397b-a17b"], bin="hermes",
+    )
+    driver = HermesChatDriver(profile, provider="anthropic", model="claude-fable-5")
+    driver._spec = LaunchSpec(
+        session_id="s1", project_path="/home/dev/projects", model="fable",
+        permission_mode="bypassPermissions", initial_prompt="",
+    )
+    driver._resume_ref = "jupiter-s1"
+    captured: list[list[str]] = []
+
+    async def fake_spawn(argv, cwd, *, prompt=None):
+        captured.append(argv)
+
+    monkeypatch.setattr(driver, "_spawn", fake_spawn)
+
+    for text in ("Weiter 1", "Weiter 2", "Weiter 3"):
+        await driver.send_input(text)
+
+    assert all(argv[argv.index("--continue") + 1] == "jupiter-s1" for argv in captured)
+    assert all("--create-if-missing" not in argv for argv in captured)
+
+
+@pytest.mark.anyio
 async def test_clean_turn_emits_waiting_without_id_dependency(tmp_path):
     """Sauberes Turn-Ende → waiting, unabhängig von der stdout-ID."""
     profile = EngineProfile(

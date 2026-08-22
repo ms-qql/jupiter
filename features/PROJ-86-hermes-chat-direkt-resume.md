@@ -1,6 +1,6 @@
 # PROJ-86: Hermes-Chat direkt fortsetzen — schneller Start und stabiler Kontext
 
-## Status: Deployed
+## Status: In Review
 **Created:** 2026-08-22
 **Last Updated:** 2026-08-22
 
@@ -450,3 +450,31 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 - **Feature-Bugs:** 0 offen.
 - **Security:** kein neuer Auth-, Owner- oder Injection-Befund.
 - **Production Ready:** **NO** — der bekannte vollständige-Backend-Suite-Blocker bleibt vor einem regulären Release zu klären.
+
+## QA Re-verification 4 — 2026-08-22
+
+### Acceptance Criteria Status
+
+- [x] AC 1–3: Hermes-Erststart, `waiting` und Whitespace-422 durch API-Regressionstests bestätigt.
+- [x] AC 4–7: Der im Named-Session-Fix bewusst ersetzte stdout-ID-Vertrag funktioniert über `--continue jupiter-<Session-ID>`; Erstturn mit `--create-if-missing`, drei Folge-Turns ohne stillen Neustart, Erfolg → `waiting`.
+- [x] AC 8–13: Direct-Transport, Liveness-/Reanimate-Gate, Rehydrate sowie Nicht-Hermes-Regressionen bestätigt.
+- [x] AC 14: Neuer Treiber-Regressionstest prüft drei Folge-Turns mit exakt demselben Namen.
+
+### Security Audit Results
+
+- [x] Live ohne JWT: `GET /sessions` und `POST /sessions/not-owned/input` liefern beide 401; die API gibt keine Sessiondaten preis.
+- [x] Owner-/Refresh-Regressionen: 20 Auth-Tests bestanden; alle Session-Schreibpfade führen serverseitig `_owned_or_404` aus.
+- [x] Eingabevalidierung: Hermes-Whitespace bleibt serverseitig 422; die Resume-Referenz ist kein Client-Feld.
+- [x] XSS/Secrets: Hermes-Metazeilen werden vor dem Assistant-Stream abgefangen; keine neue Browser- oder Secret-Oberfläche.
+
+### Automated Tests
+
+- [x] Backend, PROJ-86 + Auth/Session/Transport: **76 passed**, 1 externe TestClient-Deprecation-Warnung.
+- [x] Frontend: **205 passed**.
+- [ ] Vollständige Backend-Suite: startet 1.334 Tests, erreicht wieder 17 % und beendet nicht regulär innerhalb des 60-Sekunden-Zeitfensters (bekannter Alt-Test-Blocker, kein beobachteter PROJ-86-Fehler).
+
+### Re-QA Summary
+
+- **Feature-Bugs:** 0 offen.
+- **Bugs Found:** 0 neu; der bekannte vollständige-Suite-Blocker bleibt ein High-Release-Blocker.
+- **Production Ready:** **NO** — vollständige Backend-Regression muss vor regulärem Deploy abschließen.
