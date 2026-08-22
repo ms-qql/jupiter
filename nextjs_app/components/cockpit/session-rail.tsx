@@ -26,6 +26,7 @@ import {
 } from "@/lib/sidebar-config";
 import { Ampel } from "./ampel";
 import { DeleteSessionButton } from "./delete-session-button";
+import { HermesStartDialog } from "./hermes-start-dialog";
 import { NewSessionDialog } from "./new-session-dialog";
 import { ProviderBudgetWidget } from "./provider-budget-widget";
 import { SidebarConfigButton } from "./sidebar-config-panel";
@@ -124,6 +125,11 @@ export function SessionRail({ onItemClick }: { onItemClick?: () => void }) {
             + Neu
           </button>
         </NewSessionDialog>
+        <HermesStartDialog>
+          <button className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+            + Neu Hermes
+          </button>
+        </HermesStartDialog>
       </div>
       {/* PROJ-38: Workspace-Sektion. Überschrift + Einstellungs-Icon sind
           IMMER sichtbar (auch wenn alle Einträge ausgeblendet sind) — der
@@ -362,6 +368,11 @@ function RailItem({
         </div>
         <div className="truncate text-xs text-muted-foreground">
           {role ? `${role} · ${meta.label}` : meta.label}
+          {session.engine === "hermes" && (
+            <span className="ml-1.5 inline-flex items-center rounded border border-border px-1 text-[10px] uppercase text-muted-foreground">
+              Hermes
+            </span>
+          )}
         </div>
       </div>
       {isTerminal ? (

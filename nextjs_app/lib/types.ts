@@ -102,6 +102,13 @@ export interface Session {
   context_fill_threshold_pct: number;
   /** PROJ-5: true, sobald der bekannte Füllstand die Schwelle erreicht. */
   threshold_warning: boolean;
+  /** PROJ-85: Hermes-Kontextverbrauch. `context_usage_available` ist der
+   *  klare Schalter — nur wenn er true ist, enthalten die beiden Token-Felder
+   *  echte Werte (sonst null). Rohwerte werden nie verfälscht, der Balken
+   *  wird serverseitig/ hier auf 100 % geklemmt. */
+  context_usage_available: boolean;
+  context_used_tokens: number | null;
+  context_window_tokens: number | null;
   total_cost_usd: number;
   num_turns: number;
   error: string | null;
@@ -554,6 +561,35 @@ export interface SessionCreate {
   engine?: string;
   /** PROJ-73: globalen Standard verwenden oder nur diese Session überschreiben. */
   token_savings?: TokenSavingsChoice;
+}
+
+// --- PROJ-85: Hermes-Chat-Session im Cockpit -------------------------------
+
+/** Eine wählbare, Hermes-kompatible Modellkombination aus der Engine-Registry
+ *  (GET /sessions/hermes/options). `model` ist die Registry-Modell-ID; das
+ *  Backend löst sie pro Session in das Hermes-Modellformat auf. */
+export interface HermesModelOption {
+  model: string;
+  label: string;
+  engine: string;
+}
+
+/** Antwort von GET /sessions/hermes/options — nur verfügbare, Hermes-fähige
+ *  Modelle. `warning` != null markiert einen Teilfehler (z. B. Registry
+ *  temporär nicht lesbar), die Liste kann dann leer sein. */
+export interface HermesOptions {
+  models: HermesModelOption[];
+  warning: string | null;
+}
+
+/** Request für POST /sessions/hermes. Titel optional, die übrigen Felder
+ *  Pflicht (vom Backend erzwungen). Bypass + Token Savings sind serverseitige
+ *  Festwerte und werden NICHT mitgeschickt. */
+export interface HermesStartRequest {
+  title?: string | null;
+  project_path: string;
+  engine: string;
+  model: string;
 }
 
 export type TokenSavingsChoice = "standard" | "on" | "off";

@@ -33,6 +33,7 @@ from .generic_cli_driver import GenericCliDriver
 from .openai_driver import OpenAIDriver
 from .transport import TmuxTransport
 from .registry import DRIVER_GENERIC_CLI, DRIVER_OPENAI, EngineProfile, engine_registry
+from .hermes_resolver import HermesInvocation, resolve_hermes_invocation
 from .savings import SavingsChoice, savings_resolver
 from .cache_manager import CacheManager
 from .constitution import resolve_constitution
@@ -395,6 +396,17 @@ class SessionState:
     feature_packages: list[dict] = field(default_factory=list)  # interne Arbeitspakete
     feature_revision: int = 0  # fortlaufende Revision → schützt gegen Doppelverarbeitung nach Restart
     feature_blocker: dict | None = None  # genau eine offene Blockierungs-Decision-Card
+    # PROJ-85: Hermes-spezifisch. `hermes_resume_ref` ist die opaque Referenz, die
+    # Hermes für das Fortsetzen (``--resume``) liefert; None = keine (Erststart oder
+    # Engine lehnt Resume ab). Kontext-Snapshot wird NUR aus Hermes-Telemetrie
+    # (Usage-Datei) gefüllt — nie erfunden (ADR-85-3).
+    hermes_resume_ref: str | None = None
+    context_used_tokens: int | None = None
+    context_window_tokens: int | None = None
+    context_usage_available: bool = False
+    # PROJ-85: flüchtige, nicht persistierte Hermes-Invocation (provider/model) für
+    # genau diese Session — treibt den HermesChatDriver (kein Profil-Write, ADR-85-2).
+    hermes_invocation: object | None = None
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -468,6 +480,11 @@ class SessionState:
             "feature_packages": list(self.feature_packages),
             "feature_revision": self.feature_revision,
             "feature_blocker": self.feature_blocker,
+            # PROJ-85: Hermes-Kontext-Snapshot (nur aus Hermes-Telemetrie).
+            "hermes_resume_ref": self.hermes_resume_ref,
+            "context_used_tokens": self.context_used_tokens,
+            "context_window_tokens": self.context_window_tokens,
+            "context_usage_available": self.context_usage_available,
         }
 
 
@@ -655,6 +672,19 @@ class SessionRuntime:
                     self.state.error = (
                         "Der Prozess wurde beendet, ohne den Turn regulär abzuschließen."
                     )
+            elif event.subtype == "usage":
+                # PROJ-85: Hermes-Kontext-Snapshot aus der --usage-file (kein Stream-JSON).
+                # Nur echte Werte übernehmen (None bleibt None → „nicht verfügbar").
+                used = event.raw.get("used_tokens")
+                window = event.raw.get("window_tokens")
+                if used is not None or window is not None:
+                    self.state.context_used_tokens = (
+                        int(used) if used is not None else self.state.context_used_tokens
+                    )
+                    self.state.context_window_tokens = (
+                        int(window) if window is not None else self.state.context_window_tokens
+                    )
+                    self.state.context_usage_available = True
             # hook_* / thinking_tokens: kein Zustandswechsel.
 
         elif event.type == "assistant":
@@ -1284,14 +1314,23 @@ class SessionManager:
 
     # --- PROJ-18: Engine → Treiber ----------------------------------------
 
-    def _make_driver(self, profile: EngineProfile | None) -> EngineDriver:
+    def _make_driver(self, profile: EngineProfile | None, state: "SessionState | None" = None) -> EngineDriver:
         """Wählt den Treiber zur Engine. Claude → injizierbare ``driver_factory``
         (Tests/FakeDriver); sonst der Profil-Treiber (oder eine injizierte
-        ``engine_factory`` für Tests)."""
+        ``engine_factory`` für Tests — gilt auch für die Hermes-Engine)."""
         if profile is None or profile.is_claude:
             return self._driver_factory()
         if self._engine_factory is not None:
             return self._engine_factory(profile)
+        if profile.key == "hermes":
+            # PROJ-85: Hermes-CLI-Treiber (kriegt die aufgelöste provider/model-Kombi
+            # aus dem State, damit er sie nicht selbst aus der Registry raten muss).
+            from .hermes_chat_driver import HermesChatDriver
+
+            inv = getattr(state, "hermes_invocation", None)
+            provider = inv.provider if inv is not None else (profile.auth_env or "anthropic")
+            model = inv.model if inv is not None else (profile.default_model or "")
+            return HermesChatDriver(profile, provider=provider, model=model)
         if profile.driver == DRIVER_OPENAI:
             return OpenAIDriver(profile)
         return GenericCliDriver(profile)
@@ -1314,6 +1353,11 @@ class SessionManager:
         driver_resume_id = getattr(runtime.driver, "resume_id", None)
         if driver_resume_id:
             s.resume_id = driver_resume_id
+            # PROJ-85: für Hermes ist die Treiber-Resume-ID die engine-eigene
+            # Resume-Referenz (aus der --usage-file), die der Manager persistiert,
+            # damit ein Backend-Neustart den Kontext-Faden über --resume aufnimmt.
+            if s.engine == "hermes":
+                s.hermes_resume_ref = driver_resume_id
         return {
             "session_id": s.session_id,
             "owner": s.owner,
@@ -1351,6 +1395,11 @@ class SessionManager:
             "savings_pilot_task": s.savings_pilot_task,
             "savings_latency_ms": s.savings_latency_ms,
             "savings_pilot_safe": 1 if s.savings_pilot_safe else 0 if s.savings_pilot_safe is not None else None,
+            # PROJ-85: Hermes-Kontext-Snapshot (nur aus Hermes-Telemetrie).
+            "hermes_resume_ref": s.hermes_resume_ref,
+            "context_used_tokens": s.context_used_tokens,
+            "context_window_tokens": s.context_window_tokens,
+            "context_usage_available": 1 if s.context_usage_available else 0,
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -1629,6 +1678,11 @@ class SessionManager:
             feature_packages=self._json_field(row.get("feature_packages")) or [],
             feature_revision=int(row.get("feature_revision") or 0),
             feature_blocker=self._json_field(row.get("feature_blocker")),
+            # PROJ-85: Hermes-Kontext-Snapshot (nur aus Hermes-Telemetrie).
+            hermes_resume_ref=row.get("hermes_resume_ref"),
+            context_used_tokens=(int(row["context_used_tokens"]) if row.get("context_used_tokens") is not None else None),
+            context_window_tokens=(int(row["context_window_tokens"]) if row.get("context_window_tokens") is not None else None),
+            context_usage_available=bool(row.get("context_usage_available") or False),
         )
 
     @staticmethod
@@ -1767,7 +1821,7 @@ class SessionManager:
         if profile.driver == DRIVER_GENERIC_CLI or profile.is_claude:
             state.transport = transport_settings.transport_store.resolve(profile.key)
 
-        driver = self._make_driver(profile)
+        driver = self._make_driver(profile, state)
         runtime = SessionRuntime(
             state, driver, on_done=self._write_session_log, on_persist=self._persist
         )
@@ -1808,6 +1862,124 @@ class SessionManager:
             self._persist(runtime)  # PROJ-14: Fehlversuch spiegeln (zählt nicht aktiv).
             raise
         # PROJ-14: initialen Zustand spiegeln (falls noch kein Event den Status wechselte).
+        self._persist(runtime)
+        return runtime
+
+    async def create_hermes(
+        self,
+        *,
+        project_path: str,
+        engine: str,
+        model: str,
+        title: str | None = None,
+        owner: str | None = None,
+        session_id: str | None = None,
+    ) -> SessionRuntime:
+        """PROJ-85: schmaler Hermes-Startvertrag.
+
+        Erzwingt serverseitig Bypass (Hermes ``--yolo``) und Token Savings — der
+        Client kann diese Werte weder sehen noch setzen (ADR-85-1). Löst die
+        Registry-Modellkombination (``engine``/``model``) nur für DIESE Session in
+        die Hermes-CLI-Argumente auf (ADR-85-2, kein Profil-Write). Bei Erfolg
+        existiert eine Session mit ``engine="hermes"``; bei Fehler wird KEINE
+        aktive Session persistiert.
+        """
+        # 1) Modell/Kompatibilität gegen den FRESChen Registry-Snapshot prüfen
+        #    (Dialog- und Submit-Seitig identisch — Modellwechsel zwischen den
+        #    beiden wird so abgefangen, siehe Tech-Design E).
+        try:
+            inv = resolve_hermes_invocation(engine, model)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc  # → 400 im Route
+
+        # 2) Hermes-Profil/CLI verfügbar? (fehlende CLI → klare 503). Die Session
+        #    läuft IMMER über die Hermes-CLI, daher prüfen wir die Hermes-Engine —
+        #    nicht die Quell-Engine aus der Registry-Auswahl. So ist jede vom
+        #    Options-Endpoint (hermes_model_options) angebotene Registry-Engine
+        #    (claude/codex/opencode/…) tatsächlich startbar (Tech Design C:
+        #    „Registry-Modellkombination" — der Manager übersetzt sie pro Session).
+        hermes_profile = engine_registry.get("hermes", include_disabled=True)
+        if hermes_profile is None:
+            raise EngineUnavailableError(
+                "Hermes-Engine ist in der Registry nicht konfiguriert/aktiviert."
+            )
+        available, reason = hermes_profile.availability()
+        if not available:
+            raise EngineUnavailableError(reason or "Hermes-CLI nicht verfügbar.")
+
+        real_path = validate_project_path(project_path)
+        resolved = resolve_constitution(None, settings.constitution_dir)
+        # Token Savings IMMER aktiv (fester Wert, nicht im Dialog). Die Savings-
+        # Modul-Gesundheit ist engine-agnostisch → Repräsentativ-Engine "claude"
+        # (die Hermes-spezifischen Skills sind identisch; nur die Installation wird
+        # pro Engine geprüft).
+        savings = savings_resolver.resolve(
+            choice="on", engine="claude", project_path=real_path, base_prompt=resolved.text
+        )
+        plan = self._cache_manager.plan(savings.prompt, None)
+        effective = plan.prompt
+
+        session_id = session_id or str(uuid.uuid4())
+        state = SessionState(
+            session_id=session_id,
+            owner=owner or settings.default_owner,
+            project_path=real_path,
+            # Hermes-spezifisch aufgelöste provider/model-Kombination (nur diese Session).
+            model=inv.model,
+            permission_mode="bypassPermissions",  # ADR-85-1: Bypass serverseitig erzwungen.
+            engine="hermes",
+            role=resolved.role,
+            constitution_source=resolved.source,
+            effective_constitution=effective,
+            cache_key=plan.cache_key,
+            project_name=(title or "").strip() or os.path.basename(real_path) or real_path,
+            savings_enabled=savings.enabled,
+            savings_source=savings.source,
+            savings_profile_version=savings.profile_id,
+            savings_modules=list(savings.modules),
+            savings_degraded=list(savings.degraded),
+            savings_provenance=list(savings.provenance),
+            hermes_invocation=inv,  # flüchtig → treibt den HermesChatDriver.
+        )
+        # Hermes-Transport (PROJ-63-Muster): am State gehalten wie bei anderen Engines.
+        if hermes_profile.driver == DRIVER_GENERIC_CLI:
+            state.transport = transport_settings.transport_store.resolve(hermes_profile.key)
+
+        driver = self._make_driver(hermes_profile, state)
+        runtime = SessionRuntime(
+            state, driver, on_done=self._write_session_log, on_persist=self._persist
+        )
+
+        async with self._create_lock:
+            limit = self.max_parallel_sessions
+            if self.active_count() >= limit:
+                raise SessionLimitError(
+                    f"Limit erreicht: maximal {limit} gleichzeitige Sessions. "
+                    "Bitte eine laufende Session beenden, bevor eine neue startet."
+                )
+            self._sessions[session_id] = runtime
+
+        spec = LaunchSpec(
+            session_id=session_id,
+            project_path=real_path,
+            model=inv.model,
+            permission_mode="bypassPermissions",
+            initial_prompt=f"Starte Hermes-Session: {state.project_name}",
+            system_prompt_append=effective,
+            transport=state.transport,
+        )
+        try:
+            await driver.start(spec, runtime.handle_event)
+        except Exception as exc:  # Start fehlgeschlagen → Zustand markieren, Fehler weiterreichen.
+            state.status = ERROR
+            state.error = str(exc)
+            self._persist(runtime)
+            raise
+        # PROJ-85: Resume-Ref sofort nach dem ersten Turn aus dem Treiber übernehmen,
+        # damit sie im synchronen Response bereits steht (nicht erst im Persist-Task).
+        ref = driver.resume_id
+        if ref:
+            state.hermes_resume_ref = ref
         self._persist(runtime)
         return runtime
 
@@ -1912,7 +2084,7 @@ class SessionManager:
         state = runtime.state
         profile = engine_registry.get(state.engine)
         is_claude = profile is not None and profile.is_claude
-        driver = self._make_driver(profile)
+        driver = self._make_driver(profile, state)
         runtime.driver = driver
         runtime._done_fired = False  # erlaubt erneutes Vault-Log beim nächsten DONE
 
@@ -1920,6 +2092,14 @@ class SessionManager:
         resume_id: str | None = None
         if is_claude:
             state.context_status = "mit Kontext"
+        elif state.engine == "hermes":
+            # PROJ-85: Hermes nutzt seine eigene (`--resume`) Referenz, nicht die
+            # generische PROJ-56-`resume_id` (die bleibt None für Hermes).
+            if state.hermes_resume_ref:
+                resume_id = state.hermes_resume_ref
+                state.context_status = "mit Kontext"
+            else:
+                state.context_status = "kontextlos (keine Hermes-Resume-Referenz)"
         elif driver.supports_self_resume:
             if state.resume_id:
                 resume_id = state.resume_id

@@ -24,6 +24,8 @@ from ..schemas.sessions import (
     ConstitutionRead,
     DecisionResolve,
     HandoverPreview,
+    HermesOptionsResponse,
+    HermesSessionCreate,
     ResetRequest,
     SessionCreate,
     SessionDetail,
@@ -108,6 +110,43 @@ async def cleanup_sessions(request: Request, user: CurrentUser = Depends(get_cur
     """
     deleted = await _manager(request).cleanup_terminal(owner=user.user_id)
     return {"deleted": deleted}
+
+
+@router.get("/hermes/options", response_model=HermesOptionsResponse)
+async def hermes_options(request: Request, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """PROJ-85: verfügbare, Hermes-kompatible Registry-Modelle (Lese-Pfad vor dem
+    Startdialog). Kein Schreibzugriff; der Start validiert die Auswahl erneut.
+    """
+    from ..engine.hermes_resolver import hermes_model_options
+
+    return {"models": [m.__dict__ for m in hermes_model_options()]}
+
+
+@router.post("/hermes", response_model=SessionRead, status_code=201)
+async def create_hermes_session(
+    payload: HermesSessionCreate, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
+    """PROJ-85: schmaler Hermes-Startvertrag.
+
+    Erzwingt serverseitig Bypass + Token Savings (nicht im Payload setzbar). Löst das
+    Modell nur für diese Session auf. Bei Fehler wird KEINE aktive Session persistiert.
+    """
+    manager = _manager(request)
+    try:
+        runtime = await manager.create_hermes(
+            project_path=payload.project_path,
+            engine=payload.engine,
+            model=payload.model,
+            title=payload.title,
+            owner=user.user_id,  # PROJ-25: Owner IMMER aus dem Token, nie aus dem Payload.
+        )
+    except SessionLimitError as exc:  # PROJ-14: Limit aktiver Sessions erreicht.
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except EngineUnavailableError as exc:  # Hermes-CLI fehlt/nicht eingeloggt.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:  # ungültiger Pfad / Modell / unbekannte Engine.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return runtime.to_read()
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
