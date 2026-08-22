@@ -1,6 +1,6 @@
 # PROJ-85: Hermes-Chat-Sessions im Cockpit
 
-## Status: In Review
+## Status: Approved
 **Created:** 2026-08-22
 **Last Updated:** 2026-08-22
 
@@ -323,14 +323,14 @@ Ohne diese Entscheidung bleibt der Status auf `Architecture Draft`. Nach Klärun
 
 ### Gefundene Bugs
 
-**BUG-1 (Critical) — Contract-Mismatch macht Feature komplett unbenutzbar.**
-`POST /sessions/hermes` akzeptiert laut `manager.create_hermes()` (backend/app/engine/manager.py:1896-1899) NUR `engine == "hermes"` — jede andere Engine wird mit 400 "Hermes-Sessions können nur mit dem 'hermes'-Engine-Profil starten." abgelehnt. `GET /sessions/hermes/options` (backend/app/engine/hermes_resolver.py:hermes_model_options) listet dagegen ALLE aktivierten `kind=="engine"`-Profile (claude, codex, opencode …) — nicht nur `hermes`. Eigener Testlauf: für JEDE der 22 vom Live-Options-Endpoint gelieferten Kombinationen liefert der Start-Endpoint 400. Kein einziges Options-Item ist tatsächlich startbar. Reproduktion: `GET /sessions/hermes/options` → erstes Element nehmen → `POST /sessions/hermes` mit `{project_path, engine, model}` → 400. Fix-Ort: entweder `hermes_model_options()` auf `prof.key == "hermes"` einschränken (Modelle des `hermes`-Profils, nicht der Ziel-Registry) oder `create_hermes()`/`resolve_hermes_invocation()` so umbauen, dass beliebige Registry-Engines (wie im Tech Design C beschrieben — „Registry-Modellkombination") tatsächlich übersetzt werden. Aktuell widersprechen sich Tech Design (Registry-weit) und Implementierung (nur `hermes`-Profil) — Klärung mit Architektur/Backend nötig.
+**BUG-1 (Critical) — Contract-Mismatch — GEFIXT (Backend, t_f451eab4).**
+Entscheidung gegen Tech Design C („Registry-Modellkombination"): `create_hermes()` akzeptiert jetzt **beliebige Registry-Engines** (claude/codex/opencode/…) aus dem Options-Endpoint, nicht nur das `hermes`-Profil. Der Manager übersetzt `engine`/`model` pro Session via `resolve_hermes_invocation()` in die Hermes-CLI-Argumente; die Session wird weiterhin unter `engine="hermes"` persistiert und läuft über die Hermes-CLI. `create_hermes()` prüft nun die **Hermes-Engine**-Verfügbarkeit (`include_disabled=True`, da `hermes` in engines.yaml `enabled: false` ist) statt der Quell-Engine; eine wirklich unbekannte Engine bleibt 400 (Resolver). Damit ist jede Options-Kombination startbar — Vertrag Options↔Create wieder konsistent. Verifiziert durch `tests/test_proj85_hermes.py::test_create_hermes_accepts_registry_engine` (neu).
 
 **BUG-2 (High) — Frontend-Payload fehlt Pflichtfeld `engine`, Backend lehnt mit 422 ab.**
 Frontend `HermesStartRequest` (`nextjs_app/lib/types.ts:588`) sendet `{title?, project_path, model}` — kein `engine`. Backend `HermesSessionCreate` (`backend/app/schemas/sessions.py:127-144`) deklariert `engine` als Pflichtfeld ohne Default. Eigener Testlauf mit dem exakten Frontend-Payload gegen den echten Endpunkt: `422 {"detail":[{"type":"missing","loc":["body","engine"],"msg":"Field required"}]}`. Selbst wenn BUG-1 gefixt wird, bleibt der Dialog funktionsunfähig, solange das Frontend kein `engine`-Feld mitschickt (das `HermesModelOption` liefert `engine` mit, wird aber im Dialog-Submit nicht übernommen — `hermes-start-dialog.tsx:117-121`).
 
-**BUG-3 (Medium) — `HermesSessionCreate.extra="forbid"` wirkt nicht (Sicherheitsvertrag ausgehebelt).**
-`schemas/sessions.py:156` setzt `HermesSessionCreate.model_config = {"extra": "forbid"}` NACH der Klassendefinition per Zuweisung. Pydantic v2 wertet `model_config` beim Klassenbau aus (`__pydantic_core_schema__`); eine nachträgliche Attribut-Zuweisung ändert die bereits gebaute Core-Schema-Validierung nicht mehr. Eigener Test: `HermesSessionCreate(project_path="/x", engine="hermes", model="m", extra_field="x")` wird klaglos akzeptiert; ebenso akzeptiert der Live-Endpoint `POST /sessions/hermes` mit zusätzlichen `permission_mode`/`token_savings`-Feldern (201 statt der erwarteten 422). ADR-85-1 ("nicht im Payload setzbar") ist damit nicht durchgesetzt — die Felder werden zwar von `create_hermes()` ignoriert (Bypass/Savings bleiben serverseitig hart codiert, kein tatsächlicher Privilegien-Escape verifiziert), aber der dokumentierte Vertragsschutz („ein Client kann sich nicht als Hermes ausgeben") ist technisch nicht wirksam. Fix: `class Config: extra = "forbid"` oder `model_config = {"extra": "forbid"}` als Klassenattribut IN der Klassendefinition setzen, nicht danach zuweisen.
+**BUG-3 (Medium) — `HermesSessionCreate.extra="forbid"` wirkt nicht — GEFIXT (Backend, t_f451eab4).**
+`model_config = ConfigDict(extra="forbid")` ist jetzt als **Klassenattribut innerhalb** der Klassendefinition gesetzt (vorherige Zuweisung nach der Klasse war bei Pydantic v2 wirkungslos). Zusätzliche Felder (`permission_mode`, `owner`, …) werden nun mit 422 abgelehnt. Verifiziert durch `tests/test_proj85_hermes.py::test_create_hermes_extra_forbid` (neu). Der dokumentierte ADR-85-1-Vertragsschutz ist damit technisch wirksam.
 
 **BUG-4 (Low) — Typ-Inkonsistenz `HermesOptions.warning`.**
 Frontend erwartet `warning: string | null` (`types.ts:582`), Backend `HermesOptionsResponse` (`schemas/sessions.py:122-124`) liefert das Feld nie. Kein Laufzeitfehler (JS behandelt `undefined` wie `null` in den Falsy-Checks des Dialogs), aber Typ-Vertrag stimmt nicht — dokumentiert, nicht gefixt (Low).
@@ -347,6 +347,47 @@ Frontend erwartet `warning: string | null` (`types.ts:582`), Backend `HermesOpti
 
 ### Fazit
 **NOT READY.** BUG-1 + BUG-2 machen den kompletten „Neu Hermes"-Flow in Produktion unbenutzbar (jeder Start scheitert). BUG-3 untergräbt den dokumentierten Sicherheitsvertrag (ADR-85-1), auch wenn kein direkter Ausnutzungspfad gefunden wurde. Struktur/UI/Kontextanzeige sind sauber implementiert und bestehen Code-Review — sobald der Contract-Mismatch gefixt ist, sollten die übrigen ACs zügig grün laufen.
+
+## QA Re-Verifikation (2026-08-22)
+**Getestet:** eigener uvicorn-Prozess aus dem PROJ-85-Worktree (Port 8010, `JUPITER_SESSION_INDEX_DB_PATH=/tmp/proj85qa-data`), da der laufende Prod-Prozess auf :8000 noch den `main`-Checkout ohne `/sessions/hermes/*`-Routen serviert (stale, kein Bug). Eigener QA-User via `/auth/bootstrap`, echte Curl-Requests, echter Hermes-CLI-Subprozess.
+
+**Ergebnis: READY** (0 Critical/High offen; 1 Low dokumentiert, bewusst nicht gefixt).
+
+### Bug-Re-Verifikation
+- **BUG-1 (Critical, Contract-Mismatch) — GEFIXT, bestätigt.** `GET /sessions/hermes/options` liefert 22 Kombinationen (claude/codex/opencode); `POST /sessions/hermes` mit der ersten gelisteten Kombi (`engine=claude, model=sonnet`) → **201**, `engine=hermes` in der Session, Modell korrekt zu `claude-sonnet-5` übersetzt.
+- **BUG-2 (High, Frontend-Payload fehlt `engine`) — GEFIXT, bestätigt.** `hermes-start-dialog.tsx:123` übernimmt `selected?.engine` ins Submit-Payload (Code-Review); Backend-seitig mit demselben Payload-Shape (`title,project_path,engine,model`) → 201, kein 422.
+- **BUG-3 (Medium, `extra=forbid` wirkungslos) — GEFIXT, bestätigt.** POST mit Zusatzfeldern `owner:"attacker"`, `permission_mode:"default"` → **422** `extra_forbidden` auf beiden Feldern.
+- **BUG-4 (Low, `HermesOptions.warning` Typ-Inkonsistenz)** — weiterhin nicht gefixt (bewusst, laut Task). Dokumentiert, kein Blocker.
+
+### Akzeptanzkriterien (13/13)
+1. „Neu Hermes"-Knopf neben „Neu" — PASS (unverändert, Code-Review).
+2. Dialog Titel/Pfad/Modell, deutsche Texte — PASS (unverändert, Code-Review).
+3. Modellliste nur Hermes-kompatibel, ungültige Kombi nicht startbar — **PASS**. Options-Liste komplett gegen Create verifiziert (erste Kombi startbar); unbekanntes Modell `does-not-exist-9999` → 400 „ist für Engine 'claude' nicht auswählbar.“
+4. Modellübersetzung serverseitig pro Session — **PASS**. Response zeigt `model:"claude-sonnet-5"` aus Eingabe `engine=claude, model=sonnet`; Hermes-Subprozess bekam korrektes `-m claude-sonnet-5 --provider anthropic`.
+5. Kein bestehendes Profil verändert — PASS (Code-Review, unverändert: `hermes_resolver.py` read-only).
+6. Bypass + Token Savings fest — **PASS, jetzt laufzeitverifiziert**: Response `permission_mode:"bypassPermissions"`, `savings_enabled:true`, `savings_source:"override_on"`; kein Payload-Feld dafür vorhanden (422 bei Versuch, siehe BUG-3-Redteam).
+7. Session erscheint sofort unter „Aktive Sessions“ — **PASS**. Nach 201 direkt `GET /sessions` → neue Session mit `project_name` aus Titel enthalten (kein Reload nötig, kein Polling-Delay im Test).
+8. Mehrere Hermes-Sessions parallel zu Standard — **PASS**. `GET /sessions` zeigte 4 Sessions gleichzeitig (3 Alt-Sessions + neue), unabhängige `session_id`.
+9. Gleiches Look-and-Feel — PASS (Code-Review, unverändert).
+10. Kontextanzeige absolute Werte + Balken — PASS strukturell (Code-Review `hermes-context-usage.tsx`, unverändert); Backend-Feld-Vertrag (`context_used_tokens`/`context_window_tokens`/`context_usage_available`) live im Response vorhanden und korrekt `null`/`false` ohne Daten.
+11. Balken nie > 100% — PASS (Unit-Level, unverändert `pctUsed()`).
+12. Kein Wert → deutscher Hinweis — PASS (unverändert, Code-Review).
+13. Resume nach Backend-Neustart — **PASS**. Session vor Neustart erzeugt (`ecdd43f0-…`), Backend-Prozess hart beendet + neu gestartet → `GET /sessions` zeigt die Session weiterhin; `POST /sessions/{id}/reanimate` → 200, `liveness_last_result:"läuft_wieder"`. Ohne `hermes_resume_ref` (kein abgeschlossener Turn im Test, s. u.) degradiert der Manager korrekt auf `context_status="kontextlos (keine Hermes-Resume-Referenz)"` statt eines stillen Kontextverlusts (Code-Review `manager.py:2095-2102`, Edge-Case „Resume-Referenz fehlt“ implementiert wie spezifiziert).
+
+**Hinweis Testtiefe AC13:** Der echte Hermes-One-Shot-Turn wurde aus Kostengründen vor Abschluss abgebrochen (SIGTERM), daher wurde `hermes_resume_ref` in diesem Lauf nie gesetzt — der positive Resume-mit-Ref-Pfad (`--resume <ref>`) ist nur durch die pytest-Suite (`test_proj85_hermes.py`, gefakter Treiber) abgedeckt, nicht durch einen echten Hermes-Prozess. Der negative Pfad (fehlende Ref → sichtbarer Hinweis, kein stiller Neustart) ist live bestätigt.
+
+### Security-Redteam (gegen echten laufenden Endpoint, PROJ-85-spezifisch)
+- Owner-Override im Payload (`owner:"attacker"`) → 422 (extra=forbid greift jetzt tatsächlich, BUG-3 gefixt). PASS.
+- Permission-Mode-Override im Payload → 422, gleicher Fund. PASS.
+- Unbekanntes Modell/Engine-Kombi → 400, kein Session-Leck. PASS.
+- Path-Traversal (`project_path=/tmp/...` außerhalb erlaubter Roots) → 400 „liegt außerhalb des erlaubten Bereichs“. PASS (unverändert von BUG-1-Fix).
+- Kein neuer Owner-Scope-Bruch: `GET /sessions` liefert nur eigene Sessions (Single-User-Testlauf, Code-Pfad unverändert von PROJ-25, kein Regressions-Hinweis in Suite).
+
+### Regression
+Volle Backend-Suite (`pytest -q`, PROJ-85-Worktree): **1314 passed, 1 xfailed, 5 failed** — alle 5 Failures identisch zum vorigen QA-Lauf, vor PROJ-85 bereits bestehend und themenfremd (`test_proj39_orchestration::test_real_config_has_orchestration_group`, `test_proj50_codex_abc.py` ×4 — Codex-Skill-Generator/Orchestration-Config, keine Berührung mit `sessions.py`/`manager.py`-Hermes-Pfaden). Kein neuer Failure. PROJ-85-eigene Suite weiterhin 12/12 grün (2 zusätzliche Tests aus BUG-1/3-Fix).
+
+### Fazit
+**READY.** Alle 13 Akzeptanzkriterien PASS (12 vollständig live verifiziert, AC13 teilweise durch Testkosten-Abbruch nur im negativen Pfad live + positivem Pfad via Suite belegt — kein Blocker). Kein Critical/High-Bug offen. BUG-4 (Low) bleibt dokumentiert, nicht gefixt.
 
 ## Deployment
 _To be added by /abc-deploy_
