@@ -1329,7 +1329,9 @@ class SessionManager:
 
             inv = getattr(state, "hermes_invocation", None)
             provider = inv.provider if inv is not None else (profile.auth_env or "anthropic")
-            model = inv.model if inv is not None else (profile.default_model or "")
+            # PROJ-86: beim Rehydrieren (kein flüchtiges `hermes_invocation`) das
+            # persistierte `state.model` nutzen, nicht das Profil-Default-Modell.
+            model = inv.model if inv is not None else (state.model or profile.default_model or "")
             return HermesChatDriver(profile, provider=provider, model=model)
         if profile.driver == DRIVER_OPENAI:
             return OpenAIDriver(profile)
@@ -1408,6 +1410,14 @@ class SessionManager:
         Wird als ``on_persist``-Hook bei Zustandswechseln gefeuert. Fehler degradieren
         zu einer Warnung — der In-Memory-Pfad bleibt führend (AC „DB nicht erreichbar")."""
         runtime._last_persisted_status = runtime.state.status
+        # PROJ-85/86: eine vom Treiber frisch aufgefangene Resume-ID (Hermes) an den
+        # State übernehmen — MUSS auch ohne echtes Persistenz-Repo (Null-Repo) laufen,
+        # sonst bliebe `hermes_resume_ref` im In-Memory-State trotz gesetzter ID leer.
+        driver_resume_id = getattr(runtime.driver, "resume_id", None)
+        if driver_resume_id:
+            runtime.state.resume_id = driver_resume_id
+            if runtime.state.engine == "hermes":
+                runtime.state.hermes_resume_ref = driver_resume_id
         if isinstance(self._repo, NullSessionIndexRepository):
             return
         row = self._row(runtime)
@@ -1503,6 +1513,31 @@ class SessionManager:
                     runtime.transcript = [TranscriptEntry(**d) for d in json.loads(raw)]
             except Exception as exc:  # noqa: BLE001 — best-effort, In-Memory bleibt führend.
                 logger.warning("Transkript konnte nicht rehydriert werden (%s): %s", sid, exc)
+            if state.engine == "hermes" and state.status in ACTIVE_STATES:
+                # PROJ-86: eine ruhende Hermes-Session nach Backend-Neustart NICHT als
+                # verwaist/ERROR führen — sie bleibt sichtbar und fortsetzbar (direkter
+                # Driver, gespeicherte Conversation-ID). Kein generisches ERROR, kein
+                # Auto-Resume, keine tmux-Pane-Prüfung.
+                profile = engine_registry.get(state.engine, include_disabled=True)
+                driver = self._make_driver(profile, state)
+                ref = getattr(state, "hermes_resume_ref", None)
+                if ref:
+                    try:
+                        driver._resume_ref = ref  # nächster Turn setzt direkt fort
+                    except Exception:  # noqa: BLE001 — defensiv, nie kritisch
+                        pass
+                runtime = SessionRuntime(
+                    state, driver, on_done=self._write_session_log, on_persist=self._persist
+                )
+                runtime._last_persisted_status = state.status
+                self._sessions[sid] = runtime
+                try:
+                    raw = await self._repo.load_transcript(sid)
+                    if raw:
+                        runtime.transcript = [TranscriptEntry(**d) for d in json.loads(raw)]
+                except Exception as exc:  # noqa: BLE001 — best-effort, In-Memory bleibt führend.
+                    logger.warning("Transkript konnte nicht rehydriert werden (%s): %s", sid, exc)
+                continue
             if row.get("status") in ACTIVE_STATES:
                 if state.drained_at:
                     # PROJ-33: geordnet gedraint → Kandidat für Auto-Resume (drained_at bleibt
@@ -1584,6 +1619,9 @@ class SessionManager:
             return
         resumed = 0
         for runtime in [r for r in self._sessions.values() if r.state.drained_at]:
+            # PROJ-86: Hermes-Sessions (direkter Modus, kein Drain-Resume) überspringen.
+            if runtime.state.engine == "hermes":
+                continue
             if self.active_count() >= self.max_parallel_sessions:
                 logger.info("Auto-Resume gestoppt: Session-Limit (%d) erreicht.", self.max_parallel_sessions)
                 break
@@ -1941,9 +1979,11 @@ class SessionManager:
             savings_provenance=list(savings.provenance),
             hermes_invocation=inv,  # flüchtig → treibt den HermesChatDriver.
         )
-        # Hermes-Transport (PROJ-63-Muster): am State gehalten wie bei anderen Engines.
-        if hermes_profile.driver == DRIVER_GENERIC_CLI:
-            state.transport = transport_settings.transport_store.resolve(hermes_profile.key)
+        # PROJ-86: Hermes läuft IMMER im direkten Prozessmodus (ADR-86-3) — kein tmux,
+        # keine Pane-Liveness, keine Auto-Reanimation. Setzt den Transport bewusst
+        # fest und nicht aus dem Registry-Transport-Store (der für andere Engines tmux
+        # erlaubt).
+        state.transport = "direct"
 
         driver = self._make_driver(hermes_profile, state)
         runtime = SessionRuntime(
@@ -1964,9 +2004,11 @@ class SessionManager:
             project_path=real_path,
             model=inv.model,
             permission_mode="bypassPermissions",
-            initial_prompt=f"Starte Hermes-Session: {state.project_name}",
+            # PROJ-86: KEINE künstliche Initial-Nachricht — die Hermes-Session wartet
+            # sichtbar auf die erste echte Nutzereingabe (Status "waiting", kein Prozess).
+            initial_prompt="",
             system_prompt_append=effective,
-            transport=state.transport,
+            transport="direct",
         )
         try:
             await driver.start(spec, runtime.handle_event)
@@ -2024,7 +2066,12 @@ class SessionManager:
             await self._resume(runtime)
         await runtime.driver.send_input(text)
         runtime.transcript.append(TranscriptEntry("user", "text", text, _now().isoformat()))
-        runtime.state.status = RUNNING
+        # PROJ-86: nur auf "running" schalten, wenn der Treiber tatsächlich noch
+        # läuft. Ein direkter One-Shot-Treiber (Hermes) kehrt aus `send_input`
+        # bereits als "waiting" (Turn fertig) zurück — das darf nicht auf "running"
+        # zurückgesetzt werden.
+        if runtime.driver.is_alive:
+            runtime.state.status = RUNNING
         runtime.state.last_activity = _now()
         self._persist(runtime)  # PROJ-14: running (inkl. evtl. neuer PID nach resume) spiegeln.
 
@@ -2164,6 +2211,12 @@ class SessionManager:
         Der manuelle Eingriff setzt das Auto-Versuchs-Budget zurück (frischer Anlauf).
         """
         runtime = self._require(session_id)
+        # PROJ-86: Hermes-Sessions werden nicht reanimiert (direkter Modus, keine
+        # Auto-Reanimation) — bewusst mit 409 ablehnen statt einen Prozess zu erzeugen.
+        if runtime.state.engine == "hermes":
+            raise SessionAliveError(
+                "Hermes-Sessions werden nicht reanimiert — bitte einfach weiter eingeben."
+            )
         if runtime.derive_liveness() == liveness.LIVENESS_ACTIVE:
             raise SessionAliveError("Session läuft bereits — eine Reanimierung ist nicht nötig.")
         # Terminal → Reanimierung belegt einen NEUEN Slot: Limit prüfen (PROJ-14).
@@ -2216,6 +2269,10 @@ class SessionManager:
         max_attempts = cfg["max_auto_attempts"]
         backoff = cfg["backoff_seconds"]
         for runtime in list(self._sessions.values()):
+            # PROJ-86: Hermes-Sessions werden NICHT automatisch reanimiert — sie laufen
+            # im direkten Prozessmodus und gelten wartend als gesund (kein "tot").
+            if runtime.state.engine == "hermes":
+                continue
             live = runtime.derive_liveness(timeout)
             if (
                 live == liveness.LIVENESS_ACTIVE

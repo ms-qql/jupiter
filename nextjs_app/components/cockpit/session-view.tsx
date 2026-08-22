@@ -279,8 +279,9 @@ export function SessionView({ id, paneIndex }: { id: string; paneIndex: PaneInde
       {/* PROJ-46: Live-Aktivitäts-Ticker — zeigt die jüngste Tool-Aktion + Text-Schnipsel. */}
       <ActivityTicker lastActivity={lastActivity} liveText={liveText} className="my-1" />
 
-      {/* PROJ-27: Liveness-Banner — hängende/tote Sessions reanimieren. */}
-      {head && canReanimate(head.liveness) && (
+      {/* PROJ-27: Liveness-Banner — hängende/tote Sessions reanimieren.
+          PROJ-86: für Hermes ausgeblendet (kein tmux, keine Reanimation). */}
+      {head && head.engine !== "hermes" && canReanimate(head.liveness) && (
         <div
           className={cn(
             "my-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border px-3 py-2 text-sm",
@@ -319,6 +320,13 @@ export function SessionView({ id, paneIndex }: { id: string; paneIndex: PaneInde
       {(head?.status === "error" || head?.liveness === "tot") && head?.error && (
         <p className="my-2 rounded bg-red-500/10 px-3 py-2 text-sm text-red-400">
           {head.error}
+        </p>
+      )}
+
+      {/* PROJ-86: Hermes wartet vor dem ersten Turn und zwischen Turns auf Eingabe. */}
+      {head && head.engine === "hermes" && head.status === "waiting" && (
+        <p className="my-2 rounded border border-border bg-card/40 px-3 py-2 text-sm text-muted-foreground">
+          Wartet auf Eingabe
         </p>
       )}
 
@@ -371,13 +379,15 @@ export function SessionView({ id, paneIndex }: { id: string; paneIndex: PaneInde
         </div>
       )}
 
-      {/* Eingabe IMMER zeigen — an beendeten Sessions setzt eine Nachricht sie fort. */}
+      {/* Eingabe IMMER zeigen — an beendeten Sessions setzt eine Nachricht sie fort.
+          PROJ-86: Hermes-Fehler impliziert KEINEN Resume (kein neuer Chat). */}
       {ended && (
         <p className="mb-2 text-xs text-muted-foreground">
           {head?.status === "error"
-            ? "Session mit Fehler beendet"
-            : "Session beendet"}{" "}
-          — eine Nachricht setzt sie fort.
+            ? head?.engine === "hermes"
+              ? "Session mit Fehler beendet."
+              : "Session mit Fehler beendet — eine Nachricht setzt sie fort."
+            : "Session beendet — eine Nachricht setzt sie fort."}
         </p>
       )}
       {hasPending && (
@@ -393,7 +403,9 @@ export function SessionView({ id, paneIndex }: { id: string; paneIndex: PaneInde
             hasPending
               ? "Erst Decision Card entscheiden…"
               : ended
-                ? "Nachricht senden, um fortzusetzen…"
+                ? head?.engine === "hermes"
+                  ? "Nachricht an Hermes senden…"
+                  : "Nachricht senden, um fortzusetzen…"
                 : "Nachricht an die Session…"
           }
           rows={2}
@@ -422,7 +434,7 @@ export function SessionView({ id, paneIndex }: { id: string; paneIndex: PaneInde
         />
         <div className="flex flex-col gap-2">
           <Button type="submit" disabled={!input.trim() || busy || hasPending}>
-            {ended ? "Fortsetzen" : "Senden"}
+            {ended && head?.engine !== "hermes" ? "Fortsetzen" : "Senden"}
           </Button>
           <div className="flex gap-2">
             <PushToTalkButton

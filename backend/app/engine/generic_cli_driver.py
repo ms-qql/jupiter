@@ -349,6 +349,22 @@ class GenericCliDriver(EngineDriver):
         if self._on is not None:
             await self._on(event)
 
+    def _intercept_line(self, line: str) -> bool:
+        """Hook: eine Roh-Zeile abfangen, bevor der Adapter sie als Event übersetzt.
+
+        Default: nichts abfangen. Rückgabe ``True`` = Zeile verbraucht (wird weder
+        geparst noch als Assistant-Text angezeigt). Hermes (PROJ-86) nutzt das, um
+        seine stdout-Kontrollzeile ``session_id: <id>`` herauszufischen."""
+        return False
+
+    def _suppress_terminal_error(self, rc: int | None) -> bool:
+        """Hook: das generische terminale Fehler-Event (rc != 0) unterdrücken.
+
+        Default: nie unterdrücken. Ein Treiber, der sein Fehler-Event bereits selbst
+        emittiert hat (z. B. Hermes bei fehlgeschlagenem/abgelehntem Resume), gibt
+        hier ``True`` zurück, damit kein zweites, konkurrierendes Fehler-Event folgt."""
+        return False
+
     def _on_reader_done(self, task: asyncio.Task) -> None:
         """PROJ-47-Muster (bisher nur in ``claude_driver.py``): stirbt der stdout-Reader
         mit einer nicht abgefangenen Ausnahme, darf das nicht still passieren — ohne
@@ -396,10 +412,16 @@ class GenericCliDriver(EngineDriver):
             assert self._proc is not None and self._proc.stdout is not None
             stream = self._proc.stdout
         while True:
-            line = await stream.readline()
-            if not line:  # EOF → Prozess fertig
+            raw = await stream.readline()
+            if not raw:  # EOF → Prozess fertig
                 break
-            event = self._parse(line.decode("utf-8", errors="replace"))
+            line = raw.decode("utf-8", errors="replace")
+            # PROJ-86: Treiber dürfen eine Roh-Zeile abfangen (und unterdrücken),
+            # bevor sie den Adapter erreicht (z. B. Hermes' stdout-Kontrollzeile
+            # `session_id: <id>`). Rückgabe True = Zeile verbraucht → nicht anzeigen.
+            if self._intercept_line(line):
+                continue
+            event = self._parse(line)
             if event is None:
                 continue
             # PROJ-48: Resume-ID (z. B. Codex' thread_id) abfangen — kein Anzeige-Event.
@@ -435,6 +457,10 @@ class GenericCliDriver(EngineDriver):
                 StreamEvent("system", "closed", {"reason": "no_final_result"})
             )
         else:
+            # PROJ-86: Treiber kann das terminale Fehler-Event selbst emittiert haben
+            # (z. B. Hermes bei abgelehntem Resume) → Generic unterdrückt dann seins.
+            if self._suppress_terminal_error(rc):
+                return
             if is_tmux:
                 stderr_text = _strip_exit_marker(await self._transport_obj.read_stderr_text())
             else:

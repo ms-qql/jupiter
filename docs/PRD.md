@@ -87,6 +87,7 @@ Legende Priorität: **P0** = MVP (jetzt spezifiziert) · **P1** = Ausbau · **P2
 | PROJ-76 | Textdateien im Fileexplorer bearbeiten | P1 | Arbeitsraum / Dateien / Editor | Architected |
 | PROJ-77 | masterskill-creator — agenten-unabhängige Master-Skills in Hal + Pointer-Stubs je CLI | P1 | Skills / Agenten-Portabilität | Architected |
 | PROJ-78 | Session-Arbeitsbereich mit Zwei-Ansichten und Dateien | P1 | Cockpit / Session-Arbeitsraum / Dateien | Planned |
+| PROJ-86 | Hermes-Chat direkt fortsetzen — schneller Start und stabiler Kontext | P0 | Engine-Layer / Hermes-Chat / Resume | Planned |
 
 ---
 

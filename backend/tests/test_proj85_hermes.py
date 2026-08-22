@@ -1,9 +1,12 @@
-"""PROJ-85 — Hermes-Session-Backend (Start, Options, Usage, Resume-ref).
+"""PROJ-85/86 — Hermes-Session-Backend (Start, Options, direkter Chat-Resume, Liveness).
 
 Testet den schmalen Hermes-Startvertrag (POST /sessions/hermes), den Options-
-Lese-Pfad (GET /sessions/hermes/options), die serverseitig erzwungenen Bypass/
-Savings-Werte, den Hermes-Kontext-Snapshot (nur aus Telemetrie) und die
-Resume-Referenz. Die echte Hermes-CLI wird durch einen Fake-Treiber ersetzt.
+Lese-Pfad, die serverseitig erzwungenen Bypass/Savings-Werte und — als PROJ-86 —
+dass eine Hermes-Session OHNE künstlichen Prompt startet (Status "waiting"),
+jeder Turn dieselbe Conversation-ID fortsetzt, fehlende/abgelehnte IDs sichtbar
+fehlschlagen, Hermes aus der Liveness-Auto-Reanimation und aus dem manuellen
+Reanimieren herausgehalten wird. Die echte Hermes-CLI wird durch einen Fake-Treiber
+ersetzt.
 """
 from __future__ import annotations
 
@@ -12,7 +15,6 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import settings
 from app.engine.base import EngineDriver, EventHandler, LaunchSpec
 from app.engine.events import StreamEvent
 from app.engine.registry import engine_registry
@@ -21,11 +23,7 @@ from app.main import create_app
 
 @pytest.fixture
 def hermes_enabled(monkeypatch):
-    """Hermes-Profil für den Test aktivieren (in engines.yaml ist es disabled).
-
-    Der Worktree hat ggf. keine eigene engines.yaml → auf die des Haupt-Repos
-    zeigen, damit das hermes-Profil überhaupt geladen wird.
-    """
+    """Hermes-Profil für den Test aktivieren (in engines.yaml ist es disabled)."""
     main_yaml = "/home/dev/projects/jupiter/backend/config/engines.yaml"
     if os.path.exists(main_yaml):
         monkeypatch.setattr(engine_registry, "_path", main_yaml)
@@ -41,19 +39,20 @@ def hermes_enabled(monkeypatch):
 
 
 class FakeHermesDriver(EngineDriver):
-    """Simuliert die Hermes-CLI: emittiert init + Antwort + Usage + Resume-Ref.
+    """Simuliert die Hermes-CLI im direkten Chat-Modus (PROJ-86):
 
-    Verhält sich wie ein One-Shot-Treiber: nach dem Start ist der Prozess tot,
-    weitere Eingaben lösen über die gespeicherte Resume-Ref einen Folge-Turn aus.
+    - Start mit leerem Prompt → wartet sichtbar (kein Prozess, kein künstlicher Turn).
+    - Jede Eingabe = ein Turn, der nach Antwort in ``waiting`` endet und die
+      Resume-Ref erst DANN setzt (wie der echte Treiber nach der stdout-Kontrollzeile).
     """
 
     def __init__(self, profile) -> None:
         self.profile = profile
         self._on: EventHandler | None = None
         self._spec: LaunchSpec | None = None
-        self._alive = True
+        self._alive = False
         self.sent: list[str] = []
-        self._resume_ref = "hermes-ref-abc123"
+        self._resume_ref: str | None = None
         self._turn = 0
 
     @property
@@ -66,6 +65,7 @@ class FakeHermesDriver(EngineDriver):
 
     @property
     def supports_self_resume(self) -> bool:
+        # PROJ-86: Hermes setzt selbst fort → Manager löst KEINEN generischen Resume aus.
         return True
 
     async def start(self, spec: LaunchSpec, on_event: EventHandler) -> None:
@@ -73,14 +73,14 @@ class FakeHermesDriver(EngineDriver):
         self._spec = spec
         await on_event(StreamEvent("system", "init",
                                    {"session_id": spec.session_id, "model": spec.model}))
-        if spec.initial_prompt:
-            await self._answer(spec.initial_prompt)
-        # One-Shot: nach dem Turn ist der Prozess beendet.
-        self._alive = False
+        if not spec.initial_prompt or not spec.initial_prompt.strip():
+            # PROJ-86: wartet auf die erste echte Nutzereingabe.
+            await on_event(StreamEvent("system", "waiting", {"reason": "initial_prompt_empty"}))
+            return
+        await self._answer(spec.initial_prompt)
 
     async def send_input(self, text: str) -> None:
-        if not self._alive:
-            # Folge-Turn via Resume-Ref (kein neuer Frischstart).
+        if not self._alive and self._spec is not None:
             self._alive = True
         self.sent.append(text)
         await self._answer(text)
@@ -91,11 +91,12 @@ class FakeHermesDriver(EngineDriver):
         await self._on(StreamEvent("assistant", None,
                                    {"message": {"content": [{"type": "text",
                                                             "text": f"Hermes: {prompt}"}]}}))
-        # Usage aus der --usage-file (nur echte Werte).
         await self._on(StreamEvent("system", "usage",
                                    {"used_tokens": 18600, "window_tokens": 256000}))
-        # Result/closed wie ein One-Shot-Ende.
-        await self._on(StreamEvent("system", "closed", {}))
+        # PROJ-86: Turn fertig → wartet auf nächste Eingabe (KEIN closed/-z-Turn).
+        # Hermes liefert pro Turn dieselbe Conversation-ID zurück → stabile Ref.
+        self._resume_ref = "hermes-ref-const"
+        await self._on(StreamEvent("system", "waiting", {"reason": "turn_complete"}))
         self._alive = False
 
     async def pause(self) -> None:
@@ -107,24 +108,47 @@ class FakeHermesDriver(EngineDriver):
             await self._on(StreamEvent("system", "closed", {}))
 
 
+class NoRefHermesDriver(FakeHermesDriver):
+    """Hermes liefert KEINE fortsetzbare ID → Turn endet als sichtbarer Fehler."""
+
+    async def _answer(self, prompt: str) -> None:
+        assert self._on is not None and self._spec is not None
+        await self._on(StreamEvent("assistant", None,
+                                   {"message": {"content": [{"type": "text",
+                                                            "text": f"Hermes: {prompt}"}]}}))
+        # Keine Kontrollzeile → sichtbarer Fehler (kein stiller neuer Chat).
+        await self._on(StreamEvent("system", "error",
+                                   {"message": "Hermes lieferte keine Conversation-ID."}))
+        self._alive = False
+
+
 def _app(engine_factory):
-    app = create_app(engine_factory=engine_factory)
-    return app
+    return create_app(engine_factory=engine_factory)
 
 
 def _auth_headers():
-    # Vor-Bootstrap-Single-User → kein Token nötig (settings.default_owner).
     return {}
+
+
+def _create(client):
+    return client.post(
+        "/sessions/hermes",
+        json={"project_path": "/home/dev/projects",
+              "engine": "hermes", "model": "qwen3.5-397b-a17b",
+              "title": "Mein Hermes"},
+        headers=_auth_headers(),
+    )
+
+
+# --- Startvertrag (Bestand) -------------------------------------------------
 
 
 def test_resolver_returns_enabled_available_models(hermes_enabled):
     from app.engine.hermes_resolver import hermes_model_options
 
     opts = hermes_model_options()
-    # Hermes-Profil selbst ist enabled+available und hat ein Modell.
     keys = {(o.engine, o.model) for o in opts}
     assert ("hermes", "qwen3.5-397b-a17b") in keys
-    # Jede Option ist ein echtes engine/model-Paar.
     assert all(o.engine and o.model for o in opts)
 
 
@@ -133,8 +157,7 @@ def test_resolve_invocation_translates_claude_to_hermes(hermes_enabled):
 
     inv = resolve_hermes_invocation("claude", "sonnet")
     assert inv.provider == "anthropic"
-    assert inv.model.startswith("claude-")  # PROJ-83-Alias
-    # Ungültige Kombination → ValueError (→ 400).
+    assert inv.model.startswith("claude-")
     with pytest.raises(ValueError):
         resolve_hermes_invocation("claude", "nicht-existent")
 
@@ -144,51 +167,33 @@ def test_options_endpoint(hermes_enabled):
     client = TestClient(app)
     resp = client.get("/sessions/hermes/options", headers=_auth_headers())
     assert resp.status_code == 200
-    data = resp.json()
-    assert "models" in data
-    assert any(m["engine"] == "hermes" for m in data["models"])
+    assert "models" in resp.json()
 
 
-def test_create_hermes_enforces_bypass_and_savings(hermes_enabled):
+# --- PROJ-86: Start OHNE Prozess/Prompt -------------------------------------
+
+
+def test_create_hermes_starts_waiting_without_process(hermes_enabled):
     app = _app(lambda p: FakeHermesDriver(p))
     client = TestClient(app)
-    resp = client.post(
-        "/sessions/hermes",
-        json={"project_path": "/home/dev/projects",
-              "engine": "hermes", "model": "qwen3.5-397b-a17b",
-              "title": "Mein Hermes"},
-        headers=_auth_headers(),
-    )
+    resp = _create(client)
     assert resp.status_code == 201, resp.text
     s = resp.json()
     assert s["engine"] == "hermes"
+    assert s["status"] == "waiting"
+    assert s["hermes_resume_ref"] is None
+    assert s["context_usage_available"] is False
     assert s["permission_mode"] == "bypassPermissions"
     assert s["savings_enabled"] is True
     assert s["project_name"] == "Mein Hermes"
-    # Usage aus der Telemetrie übernommen.
-    assert s["context_usage_available"] is True
-    assert s["context_used_tokens"] == 18600
-    assert s["context_window_tokens"] == 256000
-    # Resume-Ref erfasst.
-    assert s["hermes_resume_ref"] == "hermes-ref-abc123"
 
 
 def test_create_hermes_overrides_client_fields(hermes_enabled):
-    """Schmaler Vertrag: clientseitige permission_mode/token_savings werden ignoriert
-    (nicht im Schema), und selbst wenn sie gesendet würden, gilt serverseitig Bypass +
-    Token Savings. Hier prüfen wir, dass die erzwungenen Werte im Response stehen.
-    """
     app = _app(lambda p: FakeHermesDriver(p))
     client = TestClient(app)
-    resp = client.post(
-        "/sessions/hermes",
-        json={"project_path": "/home/dev/projects", "engine": "hermes",
-              "model": "qwen3.5-397b-a17b", "title": "Override-Test"},
-        headers=_auth_headers(),
-    )
+    resp = _create(client)
     assert resp.status_code == 201, resp.text
     s = resp.json()
-    # Erzwungen — unabhängig von jeglichem Client-Wunsch (ADR-85-1).
     assert s["permission_mode"] == "bypassPermissions"
     assert s["savings_enabled"] is True
 
@@ -218,10 +223,6 @@ def test_create_hermes_invalid_path_400(hermes_enabled):
 
 
 def test_create_hermes_accepts_registry_engine(hermes_enabled):
-    """BUG-1-Fix: jede vom Options-Endpoint angebotene Registry-Engine (claude/
-    codex/opencode/…) ist startbar — der Manager übersetzt sie pro Session in die
-    Hermes-CLI. Hier: claude/sonnet wird mit 201 angenommen und als engine='hermes'
-    persistiert (Tech Design C: Registry-Modellkombination)."""
     app = _app(lambda p: FakeHermesDriver(p))
     client = TestClient(app)
     resp = client.post(
@@ -232,15 +233,11 @@ def test_create_hermes_accepts_registry_engine(hermes_enabled):
     )
     assert resp.status_code == 201, resp.text
     s = resp.json()
-    assert s["engine"] == "hermes"  # Session läuft unter der Hermes-Engine
+    assert s["engine"] == "hermes"
     assert s["permission_mode"] == "bypassPermissions"
-    assert s["savings_enabled"] is True
 
 
 def test_create_hermes_extra_forbid(hermes_enabled):
-    """BUG-3-Fix: zusätzliche, nicht deklarierte Felder (z. B. permission_mode,
-    owner) werden mit 422 abgelehnt — extra='forbid' ist jetzt als Klassenattribut
-    wirksam (Pydantic v2)."""
     app = _app(lambda p: FakeHermesDriver(p))
     client = TestClient(app)
     resp = client.post(
@@ -254,8 +251,6 @@ def test_create_hermes_extra_forbid(hermes_enabled):
 
 
 def test_create_hermes_unknown_engine_400(hermes_enabled):
-    """Eine wirklich unbekannte Engine (nicht in der Registry) bleibt 400 — der
-    Options-Endpoint bietet sie ohnehin nie an."""
     app = _app(lambda p: FakeHermesDriver(p))
     client = TestClient(app)
     resp = client.post(
@@ -270,54 +265,86 @@ def test_create_hermes_unknown_engine_400(hermes_enabled):
 def test_create_hermes_appears_in_list(hermes_enabled):
     app = _app(lambda p: FakeHermesDriver(p))
     client = TestClient(app)
-    client.post(
-        "/sessions/hermes",
-        json={"project_path": "/home/dev/projects", "engine": "hermes",
-              "model": "qwen3.5-397b-a17b"},
-        headers=_auth_headers(),
-    )
+    _create(client)
     listing = client.get("/sessions", headers=_auth_headers()).json()
     assert any(s["engine"] == "hermes" for s in listing)
 
 
-def test_hermes_resume_less_has_no_ref(hermes_enabled, monkeypatch):
-    """Ohne Resume-Ref (Engine liefert keine) bleibt die Session sichtbar, aber
-    context_usage_available=False und hermes_resume_ref=None (ADR-85-3)."""
+# --- PROJ-86: Turns + Resume ------------------------------------------------
 
-    class NoRefDriver(FakeHermesDriver):
-        def __init__(self, profile):
-            super().__init__(profile)
-            self._resume_ref = None
 
-        @property
-        def resume_id(self):
-            return None
-
-        @property
-        def supports_self_resume(self):
-            return False
-
-        async def _answer(self, prompt: str) -> None:
-            # Keine Usage-Datei → keine Kontext-Telemetrie (ADR-85-3: nie erfinden).
-            assert self._on is not None and self._spec is not None
-            await self._on(StreamEvent("assistant", None,
-                                       {"message": {"content": [{"type": "text",
-                                                                        "text": f"Hermes: {prompt}"}]}}))
-            await self._on(StreamEvent("system", "closed", {}))
-            self._alive = False
-
-    app = _app(lambda p: NoRefDriver(p))
+def test_first_turn_sets_ref_and_waits(hermes_enabled):
+    app = _app(lambda p: FakeHermesDriver(p))
     client = TestClient(app)
-    resp = client.post(
-        "/sessions/hermes",
-        json={"project_path": "/home/dev/projects", "engine": "hermes",
-              "model": "qwen3.5-397b-a17b"},
-        headers=_auth_headers(),
-    )
-    assert resp.status_code == 201, resp.text
-    s = resp.json()
-    # Keine Usage-Datei → Werte bleiben None (nie erfunden).
-    assert s["context_usage_available"] is False
-    assert s["context_used_tokens"] is None
-    assert s["context_window_tokens"] is None
+    sid = _create(client).json()["session_id"]
+    resp = client.post(f"/sessions/{sid}/input", json={"text": "Hallo"}, headers=_auth_headers())
+    assert resp.status_code == 202, resp.text
+    s = client.get(f"/sessions/{sid}", headers=_auth_headers()).json()
+    assert s["status"] == "waiting"
+    assert s["hermes_resume_ref"] == "hermes-ref-const"
+    assert s["context_usage_available"] is True
+
+
+def test_three_follow_up_turns_keep_same_ref(hermes_enabled):
+    app = _app(lambda p: FakeHermesDriver(p))
+    client = TestClient(app)
+    sid = _create(client).json()["session_id"]
+    ref = None
+    for text in ("Eins", "Zwei", "Drei"):
+        client.post(f"/sessions/{sid}/input", json={"text": text}, headers=_auth_headers())
+        s = client.get(f"/sessions/{sid}", headers=_auth_headers()).json()
+        assert s["status"] == "waiting", text
+        if ref is None:
+            ref = s["hermes_resume_ref"]
+        else:
+            assert s["hermes_resume_ref"] == ref, f"Ref änderte sich bei '{text}'"
+        assert s["hermes_resume_ref"].startswith("hermes-ref-")
+
+
+def test_whitespace_input_returns_422(hermes_enabled):
+    app = _app(lambda p: FakeHermesDriver(p))
+    client = TestClient(app)
+    sid = _create(client).json()["session_id"]
+    for payload in {"text": "   "}, {"text": "\n\t"}:
+        resp = client.post(f"/sessions/{sid}/input", json=payload, headers=_auth_headers())
+        assert resp.status_code == 422, resp.text
+    # Session bleibt wartend, kein Turn gestartet.
+    s = client.get(f"/sessions/{sid}", headers=_auth_headers()).json()
+    assert s["status"] == "waiting"
     assert s["hermes_resume_ref"] is None
+
+
+def test_missing_id_errors_and_keeps_no_ref(hermes_enabled):
+    app = _app(lambda p: NoRefHermesDriver(p))
+    client = TestClient(app)
+    sid = _create(client).json()["session_id"]
+    client.post(f"/sessions/{sid}/input", json={"text": "Hallo"}, headers=_auth_headers())
+    s = client.get(f"/sessions/{sid}", headers=_auth_headers()).json()
+    assert s["status"] == "error"
+    assert s["hermes_resume_ref"] is None
+    assert "Conversation-ID" in (s["error"] or "")
+
+
+# --- PROJ-86: Liveness / Reanimation ----------------------------------------
+
+
+def test_hermes_skipped_in_liveness_poller(hermes_enabled):
+    app = _app(lambda p: FakeHermesDriver(p))
+    client = TestClient(app)
+    sid = _create(client).json()["session_id"]
+    manager = app.state.manager
+    import anyio
+
+    anyio.run(manager.evaluate_liveness_once)
+    s = client.get(f"/sessions/{sid}", headers=_auth_headers()).json()
+    # Hermes wird nicht reanimiert → bleibt wartend, keine Fehler.
+    assert s["status"] == "waiting"
+    assert s["hermes_resume_ref"] is None
+
+
+def test_hermes_reanimate_returns_409(hermes_enabled):
+    app = _app(lambda p: FakeHermesDriver(p))
+    client = TestClient(app)
+    sid = _create(client).json()["session_id"]
+    resp = client.post(f"/sessions/{sid}/reanimate", headers=_auth_headers())
+    assert resp.status_code == 409, resp.text

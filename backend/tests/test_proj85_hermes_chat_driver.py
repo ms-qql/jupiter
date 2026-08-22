@@ -1,20 +1,14 @@
-"""Regressionstests — HermesChatDriver darf einen sauber beendeten Turn nicht als
-Absturz melden, und der erste getippte Text darf nicht verworfen werden.
+"""Regressionstests — HermesChatDriver (PROJ-86) über den direkten `hermes chat`-Vertrag.
 
-Bug 1 (Text verworfen): send_input spawnte den ersten Turn bei wartender Session
-aus dem alten, leeren LaunchSpec statt aus einem neuen mit dem getippten Text.
-
-Bug 2 (Fehlalarm "Prozess wurde beendet, ohne den Turn regulär abzuschließen"):
-_read_stdout las die Usage-Datei (Resume-Ref) SOFORT beim Start des Readers,
-lange bevor der Hermes-Prozess sie überhaupt geschrieben hat — die Basisklasse
-sah daher nie eine Resume-Ref UND nie ein "result"-Event (Hermes' plaintext-
-Adapter emittiert nie eins) und meldete jeden — auch einen völlig normal
-beendeten — Turn als abgebrochen.
+Deckt ab: getippte Nachricht landet in `-q` (nicht `-z`), Erst- vs. Folge-Turn
+(unterschiedliches `--resume`-Verhalten), sauberes Turn-Ende ohne `no_final_result`,
+die `session_id:`-Kontrollzeile wird abgefangen (nie als Assistant-Text), exakt eine
+Kontrollzeile = Erfolg, fehlende/doppelte/ausschließlich-stderr-ID = sichtbarer Fehler,
+und eine Reader-Exception hängt die Session nicht für immer.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import stat
 import tempfile
@@ -26,21 +20,28 @@ from app.engine.hermes_chat_driver import HermesChatDriver
 from app.engine.registry import EngineProfile
 
 
-def _write_fake_hermes(tmp_path, resume_ref: str = "hermes-ref-xyz") -> str:
-    """Ein Shell-Stub, der sich wie die echte Hermes-CLI verhält: druckt Text auf
-    stdout, schreibt die Usage-Datei ERST GANZ AM ENDE, exitet dann mit 0 —
-    genau die Reihenfolge, die den Timing-Bug (Bug 2) real auslöst."""
+def _write_fake_hermes(tmp_path, *, resume_ref: str = "hermes-ref-xyz", fail: bool = False) -> str:
+    """Shell-Stub im `hermes chat -q`-Vertrag.
+
+    - Druckt Assistant-Text + genau eine `session_id:`-Kontrollzeile auf stdout.
+    - Bei `--resume <id>` wird eine andere Ref zurückgegeben (Folge-Turn erkennbar).
+    - ``fail=True``: bricht mit stderr + Exit 1 OHNE Kontrollzeile ab (abgelehntes Resume).
+    """
     script = tmp_path / "fake_hermes.sh"
     script.write_text(
         "#!/bin/bash\n"
-        "usage_file=\"\"\n"
+        "ref=\"" + resume_ref + "\"\n"
         "while [[ $# -gt 0 ]]; do\n"
-        "  if [[ \"$1\" == \"--usage-file\" ]]; then usage_file=\"$2\"; fi\n"
+        "  if [[ \"$1\" == \"--resume\" ]]; then ref=\"RESUMED-$2\"; fi\n"
         "  shift\n"
         "done\n"
+        "if [[ \"" + ("1" if fail else "0") + "\" == \"1\" ]]; then\n"
+        "  echo 'Hermes: resume abgelehnt (unbekannt)' >&2\n"
+        "  exit 1\n"
+        "fi\n"
         "echo 'Hallo vom Fake-Hermes'\n"
         "sleep 0.2\n"
-        f"echo '{{\"session_id\": \"{resume_ref}\"}}' > \"$usage_file\"\n"
+        "echo \"session_id: $ref\"\n"
         "exit 0\n"
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
@@ -48,8 +49,8 @@ def _write_fake_hermes(tmp_path, resume_ref: str = "hermes-ref-xyz") -> str:
 
 
 @pytest.mark.anyio
-async def test_first_send_input_uses_typed_text_not_empty_prompt(monkeypatch):
-    """Bug 1."""
+async def test_first_input_uses_q_not_z_and_no_resume(monkeypatch):
+    """Erster Turn: Text in `-q`, kein `-z`, kein `--resume`."""
     profile = EngineProfile(
         key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
         models=["qwen3.5-397b-a17b"], bin="hermes",
@@ -72,16 +73,44 @@ async def test_first_send_input_uses_typed_text_not_empty_prompt(monkeypatch):
 
     assert driver._awaiting_first_input is False
     argv = captured["argv"]
-    assert "Hallo Hermes, bitte X tun" in argv, argv
-    z_index = argv.index("-z")
-    assert argv[z_index + 1] == "Hallo Hermes, bitte X tun"
+    assert "-z" not in argv, f"Hermes darf nicht -z (One-Shot) nutzen: {argv}"
+    q_index = argv.index("-q")
+    assert argv[q_index + 1] == "Hallo Hermes, bitte X tun"
+    assert "--resume" not in argv, f"Erst-Turn darf kein --resume tragen: {argv}"
 
 
 @pytest.mark.anyio
-async def test_clean_turn_does_not_emit_no_final_result(tmp_path):
-    """Bug 2 — echter Subprozess (kein Fake-Treiber), reproduziert die reale
-    asyncio-Spawn-/Reader-Kette. Vor dem Fix: `closed` mit reason=no_final_result
-    trotz rc=0 und vorhandener Usage-Datei. Nach dem Fix: `closed` ohne Reason."""
+async def test_follow_up_turn_carries_resume_ref(monkeypatch):
+    """Folge-Turn: `--resume <ref>` mit exakt der gespeicherten ID."""
+    profile = EngineProfile(
+        key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
+        models=["qwen3.5-397b-a17b"], bin="hermes",
+    )
+    driver = HermesChatDriver(profile, provider="anthropic", model="claude-fable-5")
+    driver._spec = LaunchSpec(
+        session_id="s1", project_path="/home/dev/projects", model="fable",
+        permission_mode="bypassPermissions", initial_prompt="",
+    )
+    driver._resume_ref = "hermes-ref-abc123"
+
+    captured: dict[str, list[str]] = {}
+
+    async def fake_spawn(argv, cwd, *, prompt=None):
+        captured["argv"] = argv
+
+    monkeypatch.setattr(driver, "_spawn", fake_spawn)
+
+    await driver.send_input("Und jetzt weiter")
+
+    argv = captured["argv"]
+    assert "--resume" in argv
+    assert argv[argv.index("--resume") + 1] == "hermes-ref-abc123"
+
+
+@pytest.mark.anyio
+async def test_clean_turn_emits_waiting_and_captures_id(tmp_path):
+    """Sauberes Turn-Ende (rc=0 + exakt eine Kontrollzeile) → waiting, keine
+    `no_final_result`, Resume-Ref erfasst."""
     profile = EngineProfile(
         key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
         models=["qwen3.5-397b-a17b"], bin=_write_fake_hermes(tmp_path),
@@ -103,31 +132,121 @@ async def test_clean_turn_does_not_emit_no_final_result(tmp_path):
     if driver._stderr_task is not None:
         driver._stderr_task.cancel()
 
-    # Sauberes, fortsetzbares Turn-Ende (rc=0 + Resume-Ref) → gar kein `closed`
-    # (Session bleibt "wartet auf nächste Eingabe", siehe PROJ-48-Kommentar in
-    # generic_cli_driver.py). Vor dem Fix kam hier fälschlich ein `closed` mit
-    # reason=no_final_result, weil die Usage-Datei zu früh gelesen wurde.
     no_final_result = [
         e for e in events
-        if e.type == "system" and e.subtype == "closed"
-        and e.raw.get("reason") == "no_final_result"
+        if e.type == "system" and e.subtype == "closed" and e.raw.get("reason") == "no_final_result"
     ]
-    assert not no_final_result, (
-        f"Fälschlich als abgebrochen gemeldet trotz sauberem rc=0-Turn-Ende: {events}"
-    )
+    assert not no_final_result, f"Fälschlich als abgebrochen gemeldet: {events}"
+    waiting = [e for e in events if e.type == "system" and e.subtype == "waiting"]
+    assert waiting, f"Erfolgreicher Turn muss in waiting enden: {events}"
     assert driver._resume_ref == "hermes-ref-xyz"
 
 
 @pytest.mark.anyio
+async def test_control_line_not_shown_as_assistant_text(tmp_path):
+    """Die `session_id:`-Zeile darf NICHT als Assistant-Nachricht erscheinen."""
+    profile = EngineProfile(
+        key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
+        models=["qwen3.5-397b-a17b"], bin=_write_fake_hermes(tmp_path),
+    )
+    driver = HermesChatDriver(profile, provider="anthropic", model="claude-fable-5")
+
+    events: list = []
+
+    async def on_event(event):
+        events.append(event)
+
+    spec = LaunchSpec(
+        session_id="s1", project_path=str(tmp_path), model="fable",
+        permission_mode="bypassPermissions", initial_prompt="Hallo",
+    )
+    await driver.start(spec, on_event)
+    await asyncio.wait_for(driver._reader_task, timeout=5)
+    if driver._stderr_task is not None:
+        driver._stderr_task.cancel()
+
+    assistant_texts = [
+        e.raw.get("message", {}).get("content", [{}])[0].get("text", "")
+        for e in events if e.type == "assistant"
+    ]
+    assert all("session_id:" not in t for t in assistant_texts), (
+        f"Kontrollzeile als Chat-Text durchgeschlüpft: {assistant_texts}"
+    )
+
+
+@pytest.mark.anyio
+async def test_missing_control_line_is_error(tmp_path):
+    """Keine `session_id:`-Zeile → sichtbarer Fehler, KEIN waiting/closed-Erfolg."""
+    script = tmp_path / "fake_hermes.sh"
+    script.write_text(
+        "#!/bin/bash\n"
+        "echo 'Hallo ohne Ref'\n"
+        "exit 0\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    profile = EngineProfile(
+        key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
+        models=["qwen3.5-397b-a17b"], bin=str(script),
+    )
+    driver = HermesChatDriver(profile, provider="anthropic", model="claude-fable-5")
+
+    events: list = []
+
+    async def on_event(event):
+        events.append(event)
+
+    spec = LaunchSpec(
+        session_id="s1", project_path=str(tmp_path), model="fable",
+        permission_mode="bypassPermissions", initial_prompt="Hallo",
+    )
+    await driver.start(spec, on_event)
+    await asyncio.wait_for(driver._reader_task, timeout=5)
+    if driver._stderr_task is not None:
+        driver._stderr_task.cancel()
+
+    errors = [e for e in events if e.type == "system" and e.subtype == "error"]
+    assert errors, f"Fehlende Kontrollzeile muss einen Fehler geben: {events}"
+    assert driver._resume_ref is None
+
+
+@pytest.mark.anyio
+async def test_rejected_resume_is_error(tmp_path):
+    """Resume abgelehnt (rc != 0, keine ID) → deutscher Fehler + Hermes-Ursache."""
+    profile = EngineProfile(
+        key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
+        models=["qwen3.5-397b-a17b"], bin=_write_fake_hermes(tmp_path, fail=True),
+    )
+    driver = HermesChatDriver(profile, provider="anthropic", model="claude-fable-5")
+    driver._spec = LaunchSpec(
+        session_id="s1", project_path=str(tmp_path), model="fable",
+        permission_mode="bypassPermissions", initial_prompt="",
+    )
+    driver._resume_ref = "veraltet-123"
+
+    events: list = []
+
+    async def on_event(event):
+        events.append(event)
+
+    spec = LaunchSpec(
+        session_id="s1", project_path=str(tmp_path), model="fable",
+        permission_mode="bypassPermissions", initial_prompt="Weiter",
+    )
+    await driver.start(spec, on_event)  # kein awaiting_first_input → Folge-Turn
+    await asyncio.wait_for(driver._reader_task, timeout=5)
+    if driver._stderr_task is not None:
+        driver._stderr_task.cancel()
+
+    errors = [e for e in events if e.type == "system" and e.subtype == "error"]
+    assert errors, f"Abgelehntes Resume muss einen Fehler geben: {events}"
+    assert "Hermes-Fortsetzung fehlgeschlagen" in errors[-1].raw.get("message", "")
+    assert driver._resume_ref == "veraltet-123"  # unverändert, kein stiller Neustart
+
+
+@pytest.mark.anyio
 async def test_reader_exception_does_not_hang_session_forever(tmp_path, monkeypatch):
-    """Bug 3 (PROJ-47-Lücke) — eine Ausnahme im stdout-Reader (z. B. beim Auswerten der
-    Usage-Datei) durfte die Task bisher fire-and-forget sterben lassen: kein Log, kein
-    Event, die Session blieb für immer auf `running` stehen (Liveness erkennt den toten
-    Prozess zwar separat als "tot", aber `state.status`/`state.error` werden
-    ausschließlich vom Reader selbst gesetzt). `claude_driver.py` hatte für genau diesen
-    Fall bereits einen `_on_reader_done`-Callback (PROJ-47) — `GenericCliDriver` (Basis
-    von Hermes/Codex/OpenCode) nicht. Nach dem Fix: die Ausnahme erzeugt ein sichtbares
-    `system/error`-Event statt eine stumm verschwundene Task."""
+    """Eine Ausnahme im Nachlauf (nach Prozessende) darf die Reader-Task nicht
+    lautlos sterben lassen — sie muss ein sichtbares `system/error` erzeugen."""
     profile = EngineProfile(
         key="hermes", label="Hermes (Agent)", kind="engine", driver="generic_cli",
         models=["qwen3.5-397b-a17b"], bin=_write_fake_hermes(tmp_path),
@@ -135,7 +254,7 @@ async def test_reader_exception_does_not_hang_session_forever(tmp_path, monkeypa
     driver = HermesChatDriver(profile, provider="anthropic", model="claude-fable-5")
 
     def boom(rc):
-        raise RuntimeError("kaputte Usage-Datei (simuliert)")
+        raise RuntimeError("kaputte Kontrollzeile (simuliert)")
 
     monkeypatch.setattr(driver, "_after_process_exit", boom)
 
@@ -150,17 +269,14 @@ async def test_reader_exception_does_not_hang_session_forever(tmp_path, monkeypa
     )
     await driver.start(spec, on_event)
     assert driver._reader_task is not None
-    # Task selbst wirft (fire-and-forget) — nur der done-Callback darf das auffangen.
     for _ in range(50):
         if driver._reader_task.done():
             break
         await asyncio.sleep(0.05)
-    await asyncio.sleep(0.05)  # dem synchronen done-Callback Zeit geben, das Event zu schedulen
+    await asyncio.sleep(0.05)
     if driver._stderr_task is not None:
         driver._stderr_task.cancel()
 
     error_events = [e for e in events if e.type == "system" and e.subtype == "error"]
-    assert error_events, (
-        f"Reader-Exception blieb unsichtbar — Session wäre für immer 'running' geblieben: {events}"
-    )
-    assert "kaputte Usage-Datei" in error_events[-1].raw.get("message", "")
+    assert error_events, f"Reader-Exception blieb unsichtbar: {events}"
+    assert "kaputte Kontrollzeile" in error_events[-1].raw.get("message", "")

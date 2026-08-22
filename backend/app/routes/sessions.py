@@ -165,7 +165,14 @@ async def send_input(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     manager = _manager(request)
-    _owned_or_404(manager, session_id, user)
+    runtime = _owned_or_404(manager, session_id, user)
+    # PROJ-86: leere/Whitespace-Eingabe startet bei Hermes keinen Prozess und erzeugt
+    # keine Transkriptzeile — serverseitig mit 422 abweisen. Andere Engines unverändert.
+    if runtime.state.engine == "hermes" and (not payload.text or not payload.text.strip()):
+        raise HTTPException(
+            status_code=422,
+            detail="Eingabe darf nicht leer sein — bitte einen Text senden, um die Hermes-Session zu starten.",
+        )
     try:
         await manager.send_input(session_id, payload.text)
     except RuntimeError as exc:  # pausiert / nicht aktiv
