@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..config import MAX_INPUT_CHARS
 
@@ -112,6 +112,50 @@ class DecisionResolve(BaseModel):
     edited_body: str | None = Field(default=None, max_length=MAX_INPUT_CHARS)
 
 
+class HermesModelOption(BaseModel):
+    """Ein im „Neu Hermes"-Dialog wählbares, Hermes-kompatibles Modell (PROJ-85)."""
+    engine: str
+    model: str
+    label: str
+
+
+class HermesOptionsResponse(BaseModel):
+    """GET /sessions/hermes/options — verfügbare Hermes-Modelle (Lese-Pfad)."""
+    models: list[HermesModelOption]
+
+
+class HermesSessionCreate(BaseModel):
+    """POST /sessions/hermes — schmaler Hermes-Startvertrag (PROJ-85).
+
+    Titel optional; Projektpfad + Registry-Modellkombination erforderlich. Bypass
+    und Token Savings werden serverseitig erzwungen (nie im Payload). ``engine``/
+    ``model`` bezeichnen die QUELL-Registry-Kombination; der Manager übersetzt sie
+    für genau diese Session in die Hermes-CLI-Argumente.
+    """
+    # Schmaler Vertrag: unbekannte Felder (z. B. permission_mode, token_savings,
+    # initial_prompt) werden abgelehnt, damit ein normaler Client sich nicht als
+    # Hermes ausgeben kann (ADR-85-1). Als Klassenattribut gesetzt (Pydantic v2
+    # wertet model_config beim Klassenbau aus; eine spätere Zuweisung wirkt nicht).
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(
+        default=None, max_length=120,
+        description="Sprechender Titel; ohne Angabe wird der Projektname abgeleitet.",
+    )
+    project_path: str = Field(..., min_length=1, description="Arbeitsverzeichnis der Session.")
+    engine: str = Field(
+        ..., pattern=r"^[A-Za-z0-9_-]{1,64}$",
+        description="Engine-Schlüssel aus der Registry (Quelle des Modells).",
+    )
+    model: str = Field(..., min_length=1, description="Modell aus der gewählten Engine.")
+
+    @model_validator(mode="after")
+    def _no_forbidden_fields(self) -> "HermesSessionCreate":
+        # Der schmale Vertrag erlaubt KEINE frei setzbaren Sicherheits-/Savings-Werte.
+        # Ein Client, der sie mitliefert, bekommt 422 (siehe extra="forbid" oben).
+        return self
+
+
 class SessionRead(BaseModel):
     session_id: str
     owner: str
@@ -120,6 +164,12 @@ class SessionRead(BaseModel):
     permission_mode: str
     engine: str = "claude"  # PROJ-18: welche Engine die Session fährt (Default „claude").
     role: str | None = None
+    # PROJ-85: Hermes-Kontext-Snapshot (absolute Werte, nur aus Hermes-Telemetrie).
+    # Fehlende Einzelwerte bleiben None (nicht 0); Anzeige-Prozent niemals > 100.
+    hermes_resume_ref: str | None = None
+    context_used_tokens: int | None = None
+    context_window_tokens: int | None = None
+    context_usage_available: bool = False
     constitution_source: str | None = None
     status: str
     created_at: str

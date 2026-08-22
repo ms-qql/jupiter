@@ -17,6 +17,7 @@ import { Ampel } from "@/components/cockpit/ampel";
 import { DecisionCard } from "@/components/cockpit/decision-card";
 import { ThemeToggle } from "@/components/cockpit/theme-toggle";
 import { ContextGauge } from "@/components/cockpit/context-gauge";
+import { HermesContextUsage } from "@/components/cockpit/hermes-context-usage";
 import { ThresholdBadge } from "@/components/cockpit/threshold-badge";
 import { HandoverDialog } from "@/components/cockpit/handover-dialog";
 import { HeartbeatDot } from "@/components/cockpit/heartbeat-dot";
@@ -188,6 +189,11 @@ export function SessionView({ id, paneIndex }: { id: string; paneIndex: PaneInde
         {head && (
           <>
             <Badge variant="secondary">{modelLabel(head.model)}</Badge>
+            {head.engine === "hermes" && (
+              <Badge variant="outline" className="text-[10px] uppercase">
+                Hermes
+              </Badge>
+            )}
             <span className="text-sm text-muted-foreground">{meta?.label}</span>
             {head.role && (
               <span className="text-sm text-muted-foreground">· {head.role}</span>
@@ -248,6 +254,16 @@ export function SessionView({ id, paneIndex }: { id: string; paneIndex: PaneInde
               onChange={(s) => setDetail((d) => (d ? { ...d, ...s } : d))}
             />
           </span>
+        </div>
+      )}
+
+      {head && head.engine === "hermes" && (
+        <div className="border-b border-border py-2">
+          <HermesContextUsage
+            available={head.context_usage_available}
+            used={head.context_used_tokens}
+            window={head.context_window_tokens}
+          />
         </div>
       )}
 

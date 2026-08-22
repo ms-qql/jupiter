@@ -127,6 +127,8 @@ import type {
   FeaturePlan,
   FeaturePlanItem,
   FeatureRun,
+  HermesOptions,
+  HermesStartRequest,
   PermissionMode,
   CompletionProof,
   TextFileRead,
@@ -339,6 +341,24 @@ export function getSession(id: string, signal?: AbortSignal): Promise<SessionDet
 
 export function createSession(body: SessionCreate): Promise<Session> {
   return request<Session>("/sessions", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// --- PROJ-85: Hermes-Chat-Session starten ---------------------------------
+
+/** Liefert die verfügbaren, Hermes-kompatiblen Modelle aus der Engine-Registry
+ *  (VOR dem Öffnen/Senden des „Neu Hermes"-Dialogs). Schreibt nichts. */
+export function getHermesOptions(signal?: AbortSignal): Promise<HermesOptions> {
+  return request<HermesOptions>("/sessions/hermes/options", { signal });
+}
+
+/** Startet eine neue Hermes-Chat-Session (Bypass + Token Savings sind
+ *  serverseitige Festwerte und werden nicht übergeben). Gibt die übliche
+ *  Session zurück (engine="hermes"). */
+export function startHermesSession(body: HermesStartRequest): Promise<Session> {
+  return request<Session>("/sessions/hermes", {
     method: "POST",
     body: JSON.stringify(body),
   });

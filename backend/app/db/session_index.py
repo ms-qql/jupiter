@@ -91,6 +91,13 @@ COLUMNS: tuple[str, ...] = (
     "feature_packages",
     "feature_revision",
     "feature_blocker",
+    # PROJ-85: Hermes-Kontext-Snapshot (absolute Werte, nur aus Hermes-Telemetrie).
+    # `hermes_resume_ref` ist die opaque Resume-Referenz; die Kontext-Spalten sind
+    # nullable (None = "nicht verfügbar", nie erfunden — ADR-85-3).
+    "hermes_resume_ref",
+    "context_used_tokens",
+    "context_window_tokens",
+    "context_usage_available",
 )
 
 SCHEMA_SQL = """
@@ -201,6 +208,11 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("feature_packages", "TEXT DEFAULT '[]'"),  # PROJ-79 (JSON)
     ("feature_revision", "INTEGER DEFAULT 0"),  # PROJ-79
     ("feature_blocker", "TEXT"),  # PROJ-79 (JSON)
+    # PROJ-85: Hermes-Kontext-Snapshot (absolute Werte, nur aus Hermes-Telemetrie).
+    ("hermes_resume_ref", "TEXT"),
+    ("context_used_tokens", "INTEGER"),
+    ("context_window_tokens", "INTEGER"),
+    ("context_usage_available", "INTEGER DEFAULT 0"),
 )
 
 
