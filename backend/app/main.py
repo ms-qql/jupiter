@@ -37,7 +37,6 @@ from .deps import get_current_user
 from .engine import liveness
 from .engine.auth import AuthService
 from .engine.base import EngineDriver
-from .engine.challenge import ChallengeService
 from .engine.consumers import consumer_registry
 from .engine.coordinator import CoordinatorService, FeatureCoordinatorService
 from .engine.files import FileService
@@ -64,7 +63,6 @@ from .routes import (
     auth as auth_routes,
     book_nuggets,
     clipboard,
-    challenge,
     constitution,
     coordinator,
     engines,
@@ -408,8 +406,6 @@ def create_app(
     app.state.feature_coordinator = FeatureCoordinatorService(
         app.state.manager, vault_service, app.state.auth
     )
-    # PROJ-23: Cross-Agent-Review — Challenge eines Artefakts durch eine andere Engine.
-    app.state.challenge = ChallengeService(app.state.manager, vault_service)
     # PROJ-25: geschützte Router verlangen ein gültiges Token (Soft-Gate in
     # ``get_current_user``: vor dem Bootstrap anonym, danach scharf). Ausgenommen:
     # ``/auth`` (eigene Auth), ``/internal`` (Hook-Token), ``/vault/v1`` (Consumer-Key)
@@ -442,7 +438,6 @@ def create_app(
     # PROJ-80: Feature-Routen akzeptieren zusätzlich eng geschnittene
     # Koordinator-Capabilities; ihr eigener Gate prüft weiter Owner und Aktion.
     app.include_router(coordinator.router)
-    app.include_router(challenge.router, dependencies=auth_gate)
     app.include_router(terminal.router, dependencies=auth_gate)
     app.include_router(registry.router, dependencies=auth_gate)  # PROJ-26: Marktplatz/Registry
     app.include_router(hermes_kanban.router, dependencies=auth_gate)  # PROJ-82: native Hermes-Kanban-Ansicht
