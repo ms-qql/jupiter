@@ -1,8 +1,9 @@
 # PROJ-23: Cross-Agent-Review / Challenge (adversariell, engine-übergreifend)
 
-## Status: Deployed
+## Status: Entfernt
 **Created:** 2026-06-23
-**Last Updated:** 2026-06-25
+**Last Updated:** 2026-08-22
+**Entfernt:** Commit 65eb010 (2026-08-22) — Session-Workflow braucht keinen Reviewer-Session-Pfad mehr. UI, API-Routen, Service, Schemas, Client-Calls und Tests vollständig entfernt.
 **Baustein:** #30
 **Prio:** P2 (Phase 2 — Skalierung)
 
