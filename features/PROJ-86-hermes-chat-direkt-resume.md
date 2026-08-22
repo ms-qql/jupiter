@@ -1,6 +1,6 @@
 # PROJ-86: Hermes-Chat direkt fortsetzen — schneller Start und stabiler Kontext
 
-## Status: Architecture Draft
+## Status: Deployed
 **Created:** 2026-08-22
 **Last Updated:** 2026-08-22
 
@@ -391,4 +391,12 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 - **Recommendation:** Suite-Blocker untersuchen, dann `/abc-qa 86` einmal abschließend wiederholen.
 
 ## Deployment
-_To be added by /abc-deploy_
+
+**Production URL:** https://jupiter.auxevo.tech  
+**Deployed:** 2026-08-22  
+**Version:** 0.27.56  
+**Host project:** jupiter
+
+- Hermes Direct-Chat-Resume einschließlich Provider-Persistenz und sicherem Rehydrate ausgerollt.
+- User hat den Deploy trotz des bekannten vollständigen-Backend-Suite-Blockers ausdrücklich freigegeben.
+- Smoke-Test nach erfolgreichem Auto-Deploy ausstehend: Login, neue Hermes-Session, Erstturn, Folgeturn/Resume und Fehleranzeige prüfen.
