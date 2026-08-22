@@ -97,7 +97,16 @@ class HermesChatDriver(GenericCliDriver):
             raise RuntimeError("Session ist pausiert — keine Eingaben möglich.")
         if self._awaiting_first_input and self._spec is not None:
             self._awaiting_first_input = False
-            await self._spawn(self._build_argv(self._spec), self._spec.project_path, prompt=None)
+            spec = LaunchSpec(
+                session_id=self._spec.session_id,
+                project_path=self._spec.project_path,
+                model=self._spec.model,
+                permission_mode=self._spec.permission_mode,
+                initial_prompt=text,
+                transport=self._spec.transport,
+            )
+            self._spec = spec
+            await self._spawn(self._build_argv(spec), spec.project_path, prompt=None)
             return
         if self.is_alive:
             raise RuntimeError("Antwort läuft noch — bitte warten, bis der aktuelle Turn abgeschlossen ist.")

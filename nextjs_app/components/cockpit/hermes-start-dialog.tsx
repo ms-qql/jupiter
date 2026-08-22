@@ -185,7 +185,7 @@ export function HermesStartDialog({ children }: { children: React.ReactNode }) {
             <div className="grid gap-2">
               <Label htmlFor="hermes_model">Modell (Pflicht)</Label>
               <Select value={model} onValueChange={(v) => v && setModel(v)}>
-                <SelectTrigger id="hermes_model">
+                <SelectTrigger id="hermes_model" className="w-full">
                   <SelectValue
                     placeholder={
                       optionsLoading

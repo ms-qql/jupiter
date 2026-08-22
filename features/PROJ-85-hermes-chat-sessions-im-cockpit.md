@@ -394,3 +394,33 @@ Volle Backend-Suite (`pytest -q`, PROJ-85-Worktree): **1314 passed, 1 xfailed, 5
 Production URL: https://jupiter.auxevo.tech
 Deployed: 2026-08-22 · Version: 0.27.52
 Host: Dev-VPS host-native (systemd `jupiter-backend`/`jupiter-frontend`, Caddy, GitHub-Webhook Auto-Deploy auf `main`)
+
+## Post-Deploy Bugfix (abc-backoffice, 2026-08-22)
+
+Nutzer meldete: (1) Modell-Dropdown im Startdialog abgeschnitten/kaum lesbar, (2) neue Session
+sofort "beendet, ohne Turn regulär abzuschließen" + 404-Modellfehler beim ersten Tippen, (3)
+initialer Eingabetext nach Neustart nicht übernommen.
+
+- **Ursache (2)+(3):** `hermes_chat_driver.py:98-101` (`HermesChatDriver.send_input`) spawnte den
+  ersten Turn bei wartender Session (`_awaiting_first_input`) aus dem **alten** `self._spec`
+  (leerer `initial_prompt`) statt — wie die Basisklasse `GenericCliDriver.send_input` es korrekt
+  vormacht — aus einem neuen `LaunchSpec` mit dem getippten Text. Hermes wurde mit `-z ""`
+  aufgerufen: der Text ging verloren, der leere Prompt ließ den One-Shot-Prozess abnormal enden.
+- **Fix (2)+(3):** `send_input` baut jetzt bei `_awaiting_first_input` einen neuen `LaunchSpec` mit
+  `initial_prompt=text` (analog zur Basisklasse) und aktualisiert `self._spec`.
+- **Ursache (1):** `SelectTrigger` im Startdialog (`hermes-start-dialog.tsx:188`) ohne
+  Breiten-Klasse → Default `w-fit`, gebunden an den Platzhaltertext. `SelectContent`
+  (`select.tsx:86`) bindet die Popup-Breite an `w-(--anchor-width)` (Trigger-Breite) → lange
+  Modellnamen wurden mit `overflow-x-hidden` abgeschnitten.
+- **Fix (1):** `SelectTrigger` bekommt `className="w-full"` — Popup-Breite folgt jetzt der vollen
+  Dialogbreite.
+- **Verifikation:** neuer Test `backend/tests/test_proj85_hermes_chat_driver.py` — vor dem Fix rot
+  (`argv` enthielt `-z ""`), nach dem Fix grün. Volle `test_proj85_hermes*.py`-Suite: 13/13 grün,
+  kein Regressionsbruch. Frontend-`tsc --noEmit`: identische 7 vorbestehende Fehler vor/nach dem
+  Fix (unabhängige Test-Mock-Typen, nicht in `hermes-start-dialog.tsx`/`select.tsx`).
+- **Nicht live reproduziert:** der gemeldete 404-Modellfehler selbst — die tmux-Session war beim
+  Check bereits neu gestartet und lief fehlerfrei; kein Log mit der ursprünglichen Session-ID
+  auffindbar. Plausibelste Erklärung: Folgeeffekt des leeren `-z ""`-Aufrufs. Sollte der 404 nach
+  diesem Fix (Text kommt jetzt korrekt an) erneut auftreten, weiteres Signal für eine separate
+  Ursache in der Modell-/Provider-Auflösung — dann neuer Ticket.
+- **Knowledge:** `bug-geloest-jupiter-hermes-chat-first-turn-empty-prompt.md`
