@@ -373,5 +373,22 @@ Beide offene Punkte sind Technik-Detailentscheidungen für die Umsetzung (welche
 - [x] Backend: **42 passed** (PROJ-86 + Transport-/Rehydrate-Regressionen).
 - [x] Frontend: **205 passed**.
 
+## QA Re-verification 2
+
+**Re-tested:** 2026-08-22
+
+- [x] AC 1–14: gezielte Backend-, Rehydrate-, Nicht-Hermes-Transport- sowie Auth-/Owner-Regressionstests bestätigen den Vertrag; insbesondere Provider-Persistenz und der unterbrochene laufende Turn nach Backend-Neustart.
+- [x] BUG-1 bis BUG-3: verifiziert behoben.
+- [x] Security: Auth-/Owner-Regressionen **33 passed**; kein bestätigter Auth-, Owner- oder Injection-Befund.
+- [x] Backend gezielt: **75 passed** (1 externe TestClient-Deprecation-Warnung).
+- [x] Frontend: **205 passed**.
+- [ ] Vollständige Backend-Suite: reproduzierbar nach ca. 10 % CPU-intensiv ohne Abschluss; für ein Release muss dieser Suite-Blocker separat geklärt werden.
+
+### Re-QA Summary
+
+- **Feature-Bugs:** 0 offen.
+- **Production Ready:** **NO** — vollständige Backend-Regression noch nicht abschließbar.
+- **Recommendation:** Suite-Blocker untersuchen, dann `/abc-qa 86` einmal abschließend wiederholen.
+
 ## Deployment
 _To be added by /abc-deploy_
