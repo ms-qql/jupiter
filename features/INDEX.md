@@ -99,7 +99,7 @@ Status-Werte: Planned → Architected → In Progress → In Review → Approved
 | PROJ-84 | Hermes-Kanban – Arbeitsfluss verfeinern | P1 | Deployed | PROJ-82, PROJ-20 | [Spec](PROJ-84-hermes-kanban-arbeitsfluss-verfeinerung.md) — deployed v0.27.51, 2026-08-20; BUG-1 (Critical) gefixt + re-verifiziert, alle ACs PASS |
 | PROJ-85 | Hermes-Chat-Sessions im Cockpit | P1 | Deployed | PROJ-3, PROJ-18, PROJ-51, PROJ-56, PROJ-83, PROJ-73 | [Spec](PROJ-85-hermes-chat-sessions-im-cockpit.md) |
 | PROJ-86 | Hermes-Chat direkt fortsetzen — schneller Start und stabiler Kontext | P0 | Deployed | PROJ-85, PROJ-3, PROJ-56 | [Spec](PROJ-86-hermes-chat-direkt-resume.md) |
-| PROJ-87 | Hermes-Profilwahl im Neue-Hermes-Session-Dialog | P1 | Architecture Draft | PROJ-85, PROJ-86, PROJ-83 | [Spec](PROJ-87-hermes-profilwahl-neue-session.md) |
+| PROJ-87 | Hermes-Profilwahl im Neue-Hermes-Session-Dialog | P1 | Architected | PROJ-85, PROJ-86, PROJ-83 | [Spec](PROJ-87-hermes-profilwahl-neue-session.md) |
 
 ## Phase 2 — Skalierung (Orchestrierung & Team)
 

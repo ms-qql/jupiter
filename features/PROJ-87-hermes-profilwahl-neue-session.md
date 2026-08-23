@@ -1,6 +1,6 @@
 # PROJ-87: Hermes-Profilwahl im Neue-Hermes-Session-Dialog
 
-## Status: Planned
+## Status: Architected
 **Created:** 2026-08-23
 **Last Updated:** 2026-08-23
 
@@ -372,6 +372,64 @@ aus dem Dateisystem abgeleitet (kein Cache, kein zweiter Speicherort).
   vermeidet Änderungen an `discover_profiles()`s bewusstem Default-Ausschluss.
 - **ADR-87-4 — Ungescopte Profilliste:** angenommen, konsistent mit PROJ-83s
   bereits etabliertem, ungescoptem `GET /settings/hermes-profiles`.
+
+### G) Implementierungsinvarianten aus dem Codebase-Abgleich
+
+- **Profilauflösung ist ein vollständiger Start-Snapshot:** Der neue Profile-Endpoint
+  liefert pro Eintrag mindestens `profile`, `label`, `engine`, `model`, `error` und
+  `warning`; für `default` wird Engine/Modell aus der normalen Hermes-Home-Konfiguration
+  gelesen, ohne Secrets in die Antwort aufzunehmen. Ein kaputtes Profil bleibt als
+  fehlerhafter Eintrag sichtbar, ist aber nicht startbar. Der Client darf nur
+  startfähige Profile wählen; das explizit sichtbare Fehlerprofil erklärt den
+  Ablehnungsgrund statt beim Submit auf ein anderes Profil zurückzufallen.
+- **Engine und Modell bleiben ein Paar:** Der Frontend-State und `POST /sessions/hermes`
+  transportieren die vom Profil vorgeschlagene bzw. vom Nutzer gewählte
+  `{ engine, model }`-Kombination gemeinsam. Das Modell-Select wird aus
+  `GET /sessions/hermes/options` auf die Engine des aktuell gewählten Profils gefiltert;
+  bei einer manuellen Modellwahl wird die zugehörige Engine mitgespeichert. Die Auswahl
+  darf nicht allein per Modellstring aufgelöst werden, weil Registry-Modelle künftig
+  engineübergreifend gleich heißen können.
+- **`HERMES_HOME` muss jeden echten Hermes-Turn erreichen:** `create_hermes()` setzt
+  `LaunchSpec.env` aus dem validierten Profilpfad. `HermesChatDriver._spec_with_prompt()`
+  kopiert `env` (sowie den übrigen Launch-Kontext) in den Folge-Turn-Spec, damit der
+  direkte Respawn nicht auf die Prozessumgebung zurückfällt. Beim Rehydrieren einer
+  wartenden Hermes-Session wird aus dem persistierten `hermes_profile` ein vollständiger
+  `LaunchSpec` für den nächsten Input rekonstruiert; nur den Driver mit einer
+  Resume-Referenz zu erzeugen genügt nicht. Für `default` wird die explizite,
+  konfigurierte Standard-Home verwendet bzw. ein geerbtes `HERMES_HOME` entfernt, damit
+  ein möglicherweise profilbehafteter Backend-Prozess nicht versehentlich ein anderes
+  Profil auswählt.
+- **Persistenzpfad vollständig erweitern:** `hermes_profile` gehört konsistent in
+  `SessionState`, `to_read()`, `SessionRead`, Frontend-`Session`, `COLUMNS`,
+  `SCHEMA_SQL`, `_MIGRATIONS`, `_row()` und `_state_from_row()`. Der Migrations-Default
+  ist `"default"`; somit bleiben bestehende Datensätze und gemischte Frontend-/Backend-
+  Rollouts kompatibel. Der WebSocket nutzt bereits `to_read()` und erhält das Feld damit
+  ohne einen separaten Event-Vertrag.
+- **Fehler- und Auth-Vertrag:** `GET /sessions/hermes/profiles` verwendet wie die
+  bestehenden `/sessions`-Read-Endpunkte `get_current_user`. `POST /sessions/hermes`
+  validiert zuerst den frischen Profil-Snapshot (Name, realpath, lesbare Konfiguration),
+  danach die zusammengehörige Engine/Modell-Kombination und startet erst anschließend den
+  Driver. Ungültige/zwischenzeitlich entfernte Profile und nicht startfähige Kombinationen
+  liefern `400` mit deutscher, secret-freier Detailmeldung; Options-Ladefehler bleiben im
+  Dialog mit Wiederholen behandelbar.
+
+## Architecture Review (abc-review-architecture)
+**Reviewed:** 2026-08-23 · **Verdict:** Architected
+
+### Checklist
+- [x] Component structure — `HermesStartDialog` nutzt die vorhandenen shadcn-`Select`-Primitiven; Profil-Select, nach Engine gefiltertes Modell-Select und nicht-default Profil-Badge in `SessionTile` sind konkret zugeordnet.
+- [x] Data model — `hermes_profile: str` ist als unveränderlicher Session-Snapshot mit SQLite-Migration, Rehydrierung und Response-Propagation festgelegt; der Migrationsdefault schützt alte Sessions.
+- [x] API shape — neuer authentifizierter `GET /sessions/hermes/profiles` sowie der additive `POST /sessions/hermes`-Vertrag haben Methode, Pfad, Payload, erneute serverseitige Validierung und deutsche Fehlersemantik.
+- [x] Tech decisions — `HERMES_HOME` ersetzt das nicht vorhandene `--profile`-Flag; warum der Wert über alle Folge-Turns und nach Rehydrierung weitergereicht werden muss, wurde präzisiert.
+- [x] Dependencies — keine neue Bibliothek nötig; `discover_profiles()`, `LaunchSpec.env`, SQLite-Add-Column-Migration, `GenericCliDriver`-Env-Merge und bestehende Frontend-API-/Typmuster sind vorhanden.
+- [x] Branch field — `specs/PROJ-87-hermes-profilwahl-neue-session` existiert lokal und ist der aktuelle Branch.
+- [x] Conflict-free — `/sessions/hermes/profiles` ist ein neues statisches Segment und kollidiert weder mit `/sessions/hermes/options` noch mit `/{session_id}`; `hermes_profile` ist kein bestehendes Session-Index-Feld.
+- [x] Acceptance-criteria coverage — Dialog, dynamischer Read-Pfad, Default, Modell-Vorbelegung/Override, vollständige Profilprozessumgebung, Fehlerpfade, Badge und Resume-Snapshot sind jeweils Komponenten bzw. API-/Persistenzpfaden zugeordnet.
+
+### Autonom behoben
+- Den Header auf `Architected` korrigiert, damit er mit dem vorherigen Architecture-Draft und dem Status-Gate übereinstimmt.
+- Den Designvertrag um vollständige Engine/Modell-Paare, den Folge-Turn-/Rehydrate-Transport von `HERMES_HOME`, die Default-Home-Isolation, die gesamte Persistenzkette und präzise Fehlerreihenfolge ergänzt. Diese Punkte folgen direkt aus den vorhandenen Implementierungsseams und ändern keine Produktanforderung.
+- Codebase-Cross-Check berücksichtigt: `discover_profiles()` liefert derzeit nur `jupiter-*`; `default` muss daher separat, aber auslesbar und ohne Secret-Leak ergänzt werden. Die bestehende `LaunchSpec.env`-Unterstützung wird im direkten Spawn gemergt, aber von `HermesChatDriver._spec_with_prompt()` noch nicht automatisch bewahrt; die Umsetzung muss dies schließen.
 
 ## QA Test Results
 _To be added by /abc-qa_
