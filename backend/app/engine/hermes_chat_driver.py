@@ -7,6 +7,12 @@ von einer unzuverlässigen stdout-Conversation-ID ab.
 Hermes läuft IMMER im direkten Prozessmodus (ADR-86-3): kein tmux, keine
 Pane-Liveness, keine Auto-Reanimation — das schützt alle anderen Engines vor
 Regressionen, weil nur der `engine="hermes"`-Zweig berührt wird.
+
+PROJ-87: die Session läuft mit dem gewählten Hermes-Profil. Ein Profil wird
+über die Prozessumgebung `HERMES_HOME` gesetzt (analog zur realen Hermes-CLI,
+die kein `--profile`-Flag kennt). Für `default` wird bewusst KEIN `HERMES_HOME`
+gesetzt, damit eine ggf. profilbehaftete Backend-Umgebung nicht versehentlich
+ein anderes Profil erbt.
 """
 from __future__ import annotations
 
@@ -31,10 +37,17 @@ class HermesChatDriver(GenericCliDriver):
         self._provider = provider
         self._hermes_model = model
         self._resume_ref: str | None = None  # Legacy-Metadatum für rehydrierte Sessions.
+        # PROJ-87: HERMES_HOME für ein gewähltes Nicht-Default-Profil (None bei default).
+        self._hermes_home: str | None = None
+
+    def set_hermes_home(self, path: str) -> None:
+        """PROJ-87: Profil über HERMES_HOME setzen (nur für Nicht-Default wirksam)."""
+        self._hermes_home = path
 
     @property
     def resume_id(self) -> str | None:
         return self._resume_ref
+
     @property
     def supports_self_resume(self) -> bool:
         # Hermes setzt den Folge-Turn selbst über den stabilen Session-Namen fort.
@@ -108,6 +121,11 @@ class HermesChatDriver(GenericCliDriver):
 
     def _spec_with_prompt(self, text: str) -> LaunchSpec:
         assert self._spec is not None
+        # PROJ-87: HERMES_HOME (gewähltes Profil) in jeden Folge-Turn kopieren, damit
+        # der direkte Respawn nicht auf die geerbte Prozessumgebung zurückfällt.
+        env = dict(self._spec.env or {})
+        if self._hermes_home is not None:
+            env["HERMES_HOME"] = self._hermes_home
         return LaunchSpec(
             session_id=self._spec.session_id,
             project_path=self._spec.project_path,
@@ -115,6 +133,7 @@ class HermesChatDriver(GenericCliDriver):
             permission_mode=self._spec.permission_mode,
             initial_prompt=text,
             transport="direct",
+            env=env or None,
         )
 
     async def _after_process_exit(self, rc: int | None) -> None:

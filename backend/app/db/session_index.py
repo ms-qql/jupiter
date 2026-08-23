@@ -96,6 +96,8 @@ COLUMNS: tuple[str, ...] = (
     # nullable (None = "nicht verfügbar", nie erfunden — ADR-85-3).
     "hermes_resume_ref",
     "hermes_provider",
+    # PROJ-87: gewähltes Hermes-Profil (Session-Snapshot). Default „default“.
+    "hermes_profile",
     "context_used_tokens",
     "context_window_tokens",
     "context_usage_available",
@@ -152,6 +154,7 @@ CREATE TABLE IF NOT EXISTS session_index (
     feature_blocker       TEXT,
     hermes_resume_ref     TEXT,
     hermes_provider       TEXT,
+    hermes_profile        TEXT DEFAULT 'default',
     context_used_tokens   INTEGER,
     context_window_tokens INTEGER,
     context_usage_available INTEGER DEFAULT 0
@@ -217,6 +220,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     # PROJ-85: Hermes-Kontext-Snapshot (absolute Werte, nur aus Hermes-Telemetrie).
     ("hermes_resume_ref", "TEXT"),
     ("hermes_provider", "TEXT"),  # PROJ-86: Resume muss denselben Provider verwenden.
+    ("hermes_profile", "TEXT DEFAULT 'default'"),  # PROJ-87: Session-Snapshot.
     ("context_used_tokens", "INTEGER"),
     ("context_window_tokens", "INTEGER"),
     ("context_usage_available", "INTEGER DEFAULT 0"),

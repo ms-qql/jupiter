@@ -408,6 +408,10 @@ class SessionState:
     # PROJ-85: flüchtige, nicht persistierte Hermes-Invocation (provider/model) für
     # genau diese Session — treibt den HermesChatDriver (kein Profil-Write, ADR-85-2).
     hermes_invocation: object | None = None
+    # PROJ-87: gewähltes Hermes-Profil (Session-Snapshot, ADR-87-2). Default „default“.
+    # Fällt NICHT mit dem Modell zusammen — das Profil bestimmt Skills/Tools/Konstitution
+    # über die Prozessumgebung (→ HERMES_HOME), das Modell ist davon unabhängig überschreibbar.
+    hermes_profile: str = "default"
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -486,6 +490,8 @@ class SessionState:
             "context_used_tokens": self.context_used_tokens,
             "context_window_tokens": self.context_window_tokens,
             "context_usage_available": self.context_usage_available,
+            # PROJ-87: gewähltes Hermes-Profil (Session-Snapshot).
+            "hermes_profile": self.hermes_profile,
         }
 
 
@@ -1327,13 +1333,19 @@ class SessionManager:
             # PROJ-85: Hermes-CLI-Treiber (kriegt die aufgelöste provider/model-Kombi
             # aus dem State, damit er sie nicht selbst aus der Registry raten muss).
             from .hermes_chat_driver import HermesChatDriver
+            from .hermes_profiles import profile_home
 
             inv = getattr(state, "hermes_invocation", None)
             provider = inv.provider if inv is not None else (state.hermes_provider or "anthropic")
             # PROJ-86: beim Rehydrieren (kein flüchtiges `hermes_invocation`) das
             # persistierte `state.model` nutzen, nicht das Profil-Default-Modell.
             model = inv.model if inv is not None else (state.model or profile.default_model or "")
-            return HermesChatDriver(profile, provider=provider, model=model)
+            # PROJ-87: HERMES_HOME aus dem persistierten Profil - genau wie beim Erststart.
+            hermes_home = profile_home(getattr(state, "hermes_profile", "default") or "default")
+            driver = HermesChatDriver(profile, provider=provider, model=model)
+            if hermes_home is not None:
+                driver.set_hermes_home(hermes_home)
+            return driver
         if profile.driver == DRIVER_OPENAI:
             return OpenAIDriver(profile)
         return GenericCliDriver(profile)
@@ -1401,6 +1413,9 @@ class SessionManager:
             # PROJ-85: Hermes-Kontext-Snapshot (nur aus Hermes-Telemetrie).
             "hermes_resume_ref": s.hermes_resume_ref,
             "hermes_provider": s.hermes_provider,
+            # PROJ-87: gewähltes Hermes-Profil (Session-Snapshot) — treibt nach
+            # Restart die HERMES_HOME-Rekonstruktion im Treiber.
+            "hermes_profile": s.hermes_profile,
             "context_used_tokens": s.context_used_tokens,
             "context_window_tokens": s.context_window_tokens,
             "context_usage_available": 1 if s.context_usage_available else 0,
@@ -1732,6 +1747,8 @@ class SessionManager:
             context_used_tokens=(int(row["context_used_tokens"]) if row.get("context_used_tokens") is not None else None),
             context_window_tokens=(int(row["context_window_tokens"]) if row.get("context_window_tokens") is not None else None),
             context_usage_available=bool(row.get("context_usage_available") or False),
+            # PROJ-87: gewähltes Hermes-Profil (Session-Snapshot, Default „default“ für Alt-Daten).
+            hermes_profile=row.get("hermes_profile") or "default",
         )
 
     @staticmethod
@@ -1922,17 +1939,41 @@ class SessionManager:
         model: str,
         title: str | None = None,
         owner: str | None = None,
+        profile: str = "default",
         session_id: str | None = None,
     ) -> SessionRuntime:
-        """PROJ-85: schmaler Hermes-Startvertrag.
+        """PROJ-85/87: schmaler Hermes-Startvertrag.
 
         Erzwingt serverseitig Bypass (Hermes ``--yolo``) und Token Savings — der
         Client kann diese Werte weder sehen noch setzen (ADR-85-1). Löst die
         Registry-Modellkombination (``engine``/``model``) nur für DIESE Session in
-        die Hermes-CLI-Argumente auf (ADR-85-2, kein Profil-Write). Bei Erfolg
+        die Hermes-CLI-Argumente auf (ADR-85-2, kein Profil-Write). ``profile``
+        wählt das Hermes-Profil (PROJ-87): die Session läuft vollständig mit
+        dessen Skills/Tools/Konstitution (via ``HERMES_HOME``), das Modell wird
+        davon unabhängig durch die Registry-Kombination überschrieben. Bei Erfolg
         existiert eine Session mit ``engine="hermes"``; bei Fehler wird KEINE
         aktive Session persistiert.
         """
+        # 0) PROJ-87: Profil gegen den FRESChen Snapshot prüfen (vor Modell/CLI).
+        #    Kein stiller Fallback auf „default“ — ein defektes/nicht mehr
+        #    vorhandenes Profil liefert 400 mit deutscher Meldung.
+        from .hermes_profiles import profile_home, validate_profile
+
+        try:
+            profile_entry = validate_profile(profile)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc  # → 400 im Route
+        if profile_entry.get("error"):
+            raise ValueError(
+                f"Hermes-Profil '{profile}' ist defekt und nicht startbar: "
+                f"{profile_entry['error']}"
+            )
+        # HERMES_HOME nur für Nicht-Default (ADR-87-1/Default-Isolation).
+        hermes_env = None
+        home = profile_home(profile)
+        if home is not None:
+            hermes_env = {"HERMES_HOME": home}
+
         # 1) Modell/Kompatibilität gegen den FRESChen Registry-Snapshot prüfen
         #    (Dialog- und Submit-Seitig identisch — Modellwechsel zwischen den
         #    beiden wird so abgefangen, siehe Tech-Design E).
@@ -1990,6 +2031,8 @@ class SessionManager:
             savings_provenance=list(savings.provenance),
             hermes_invocation=inv,  # flüchtig → treibt den HermesChatDriver.
             hermes_provider=inv.provider,
+            hermes_profile=profile,  # PROJ-87: Session-Snapshot (unveränderlich für die Sitzung).
+            env=hermes_env,  # PROJ-87: HERMES_HOME für Nicht-Default (None bei default).
         )
         # PROJ-86: Hermes läuft IMMER im direkten Prozessmodus (ADR-86-3) — kein tmux,
         # keine Pane-Liveness, keine Auto-Reanimation. Setzt den Transport bewusst
@@ -2021,6 +2064,8 @@ class SessionManager:
             initial_prompt="",
             system_prompt_append=effective,
             transport="direct",
+            # PROJ-87: HERMES_HOME für Nicht-Default (None bei default → geerbtes Env entfernen).
+            env=hermes_env,
         )
         try:
             await driver.start(spec, runtime.handle_event)

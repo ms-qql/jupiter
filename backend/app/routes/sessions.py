@@ -25,6 +25,7 @@ from ..schemas.sessions import (
     DecisionResolve,
     HandoverPreview,
     HermesOptionsResponse,
+    HermesProfilesResponse,
     HermesSessionCreate,
     ResetRequest,
     SessionCreate,
@@ -122,14 +123,46 @@ async def hermes_options(request: Request, user: CurrentUser = Depends(get_curre
     return {"models": [m.__dict__ for m in hermes_model_options()]}
 
 
+@router.get("/hermes/profiles", response_model=HermesProfilesResponse)
+async def hermes_profiles(request: Request, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """PROJ-87: erkannte Hermes-Profile fürs „Neu Hermes"-Dropdown (Lese-Pfad).
+
+    Liefert ``default`` + alle erkannten ``jupiter-*``-Profile, jeweils mit
+    ``profile``/``label``/``engine``/``model``/``error``/``warning``. Reine
+    Leseoperation (ungescopt, wie PROJ-83s ``GET /settings/hermes-profiles``).
+    Bei nicht erreichbarem Profilverzeichnis bleibt ``default`` in der Liste und
+    es wird nur ``warning`` gesetzt — nie eine leere Liste.
+    """
+    from ..engine.hermes_profiles import list_profiles_for_select
+
+    snap = list_profiles_for_select()
+    return {
+        "profiles": [
+            {
+                "profile": e["profile"],
+                "label": e["label"],
+                "engine": e.get("engine"),
+                "model": e.get("model"),
+                "error": e.get("error"),
+                "warning": e.get("warning"),
+            }
+            for e in snap["entries"]
+        ],
+        "warning": snap.get("warning"),
+    }
+
+
 @router.post("/hermes", response_model=SessionRead, status_code=201)
 async def create_hermes_session(
     payload: HermesSessionCreate, request: Request, user: CurrentUser = Depends(get_current_user)
 ) -> dict:
-    """PROJ-85: schmaler Hermes-Startvertrag.
+    """PROJ-85/87: schmaler Hermes-Startvertrag.
 
-    Erzwingt serverseitig Bypass + Token Savings (nicht im Payload setzbar). Löst das
-    Modell nur für diese Session auf. Bei Fehler wird KEINE aktive Session persistiert.
+    Erzwingt serverseitig Bypass + Token Savings (nicht im Payload setzbar). Löst
+    das Modell nur für diese Session auf. ``profile`` wählt das Hermes-Profil
+    (PROJ-87) — serverseitig erneut gegen den frischen Snapshot validiert; ein
+    zwischenzeitlich gelöschtes/defektes Profil liefert 400 (kein Fallback auf
+    ``default``). Bei Fehler wird KEINE aktive Session persistiert.
     """
     manager = _manager(request)
     try:
@@ -137,6 +170,7 @@ async def create_hermes_session(
             project_path=payload.project_path,
             engine=payload.engine,
             model=payload.model,
+            profile=payload.profile,
             title=payload.title,
             owner=user.user_id,  # PROJ-25: Owner IMMER aus dem Token, nie aus dem Payload.
         )
@@ -144,7 +178,7 @@ async def create_hermes_session(
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except EngineUnavailableError as exc:  # Hermes-CLI fehlt/nicht eingeloggt.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:  # ungültiger Pfad / Modell / unbekannte Engine.
+    except ValueError as exc:  # ungültiger Pfad / Modell / unbekannte Engine / Profil.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return runtime.to_read()
 

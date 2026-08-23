@@ -220,6 +220,118 @@ def discover_profiles(profiles_dir: str | None = None) -> tuple[list[dict], str 
     return entries, warning
 
 
+def _default_home() -> str | None:
+    """Der tatsächliche HERMES_HOME-Pfad des `default`-Profils.
+
+    Liefert ``~/.hermes`` (von der CLI als Default angenommen); ist das
+    Verzeichnis nicht vorhanden, wird ``None`` geliefert (das Profil ist
+    trotzdem wählbar — kein Home bedeutet nur „kein Standardmodell lesbar“).
+    """
+    path = os.path.expanduser("~/.hermes")
+    return path if os.path.isdir(path) else None
+
+
+def _default_entry() -> dict:
+    """Synthetischer `default`-Listeneintrag (kein Verzeichnis-Scan, ADR-87-3).
+
+    Engine/Modell werden aus der regulären Hermes-Home-Konfiguration gelesen,
+    ohne Secrets in die Antwort aufzunehmen. Ein fehlendes/nicht lesbares
+    ``config.yaml`` führt zu ``error`` + ``engine``/``model`` = ``None``
+    (Edge Case „kein Standardmodell“), aber der Eintrag bleibt startbar als
+    Fallback-Basis.
+    """
+    entry = {
+        "profile": _DEFAULT_PROFILE,
+        "label": "Standard",
+        "engine": None,
+        "model": None,
+        "provider": None,
+        "default": None,
+        "error": None,
+        "warning": None,
+    }
+    home = _default_home()
+    if home is None:
+        entry["warning"] = "Hermes-Standardverzeichnis (~/.hermes) nicht gefunden."
+        return entry
+    cfg_path = os.path.join(home, "config.yaml")
+    if not os.path.isfile(cfg_path):
+        # Kein config.yaml im Default-Home: nicht fatal, nur kein Standardmodell.
+        return entry
+    try:
+        with open(cfg_path, encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError) as exc:
+        entry["error"] = "Profil-Konfiguration nicht lesbar: {exc}".format(exc=exc)
+        return entry
+    if not isinstance(data, dict):
+        entry["error"] = "Profil-Konfiguration ist kein gültiges Mapping."
+        return entry
+    model_block = data.get("model")
+    if isinstance(model_block, dict):
+        provider = model_block.get("provider")
+        default = model_block.get("default")
+        entry["provider"] = provider
+        entry["default"] = default
+        engine, model = _reverse(provider, default, allowed_engine_models())
+        entry["engine"] = engine
+        entry["model"] = model
+    return entry
+
+
+def list_profiles_for_select(profiles_dir: str | None = None) -> dict:
+    """PROJ-87: Profilliste fürs „Neu Hermes“-Dropdown.
+
+    Liefert ``{entries, warning}``: der ``default``-Eintrag (synthetisch,
+    vorangestellt) plus alle erkannten ``jupiter-*``-Profile aus
+    ``discover_profiles()``. ``warning`` ist gesetzt, wenn das
+    Profilverzeichnis nicht erreichbar war (der ``default``-Eintrag wird
+    trotzdem geliefert, nie eine leere Liste — Edge Case „keine Profile
+    gefunden“ ist damit ausgeschlossen).
+    """
+    abc_entries, warning = discover_profiles(profiles_dir)
+    return {"entries": [_default_entry(), *abc_entries], "warning": warning}
+
+
+def validate_profile(profile: str, profiles_dir: str | None = None) -> dict:
+    """PROJ-87: Profilname gegen den frischen Snapshot prüfen.
+
+    Wirft ``ValueError`` mit deutscher Meldung, wenn der Name nicht ``default``
+    ist und nicht in den erkannten ``jupiter-*``-Profilen enthalten ist
+    (Format-/Whitelist-/Realpath-Schutz analog PROJ-83). Bei Erfolg wird der
+    vollständige Listeneintrag (inkl. ``error`` bei defektem Profil) zurück-
+    gegeben — der Aufrufer entscheidet anhand von ``entry["error"]``, ob das
+    Profil tatsächlich startbar ist.
+    """
+    if profile == _DEFAULT_PROFILE:
+        return _default_entry()
+    if not isinstance(profile, str) or not _PROFILE_RE.match(profile):
+        raise ValueError("Ungültiges Hermes-Profil.")
+    snap = list_profiles_for_select(profiles_dir)
+    known = {e["profile"]: e for e in snap["entries"]}
+    if profile not in known:
+        raise ValueError("Hermes-Profil existiert nicht (evtl. zwischenzeitlich entfernt).")
+    return known[profile]
+
+
+def profile_home(profile: str, profiles_dir: str | None = None) -> str | None:
+    """PROJ-87: HERMES_HOME für ein Profil.
+
+    ``default`` → ``None`` (bewusst KEIN explizites HERMES_HOME setzen, damit
+    eine ggf. profilbehaftete Backend-Umgebung nicht versehentlich ein anderes
+    Profil erbt; die CLI nutzt ~/.hermes als Default). ``jupiter-*`` →
+    ``<profiles_dir>/<name>`` (Realpath-Auflösung gegen Path-Traversal).
+    """
+    if profile == _DEFAULT_PROFILE:
+        return None
+    base = profiles_dir or settings.hermes_profiles_dir
+    candidate = os.path.realpath(os.path.join(base, profile))
+    if not _is_within(candidate, base):
+        # Sollte durch validate_profile() nie erreicht werden, aber defensiv.
+        raise ValueError("Ungültiges Hermes-Profil.")
+    return candidate
+
+
 def _is_within(path: str, base: str) -> bool:
     """True, wenn ``path`` (realpath) innerhalb des Verzeichnisses ``base`` liegt.
 

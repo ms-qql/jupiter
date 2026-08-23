@@ -124,13 +124,45 @@ class HermesOptionsResponse(BaseModel):
     models: list[HermesModelOption]
 
 
+class HermesProfileOption(BaseModel):
+    """Ein im „Neu Hermes"-Dialog wählbares Hermes-Profil (PROJ-87).
+
+    ``profile`` ist der interne Name (z. B. ``default`` oder ``jupiter-backend``),
+    ``label`` die menschenlesbare Bezeichnung. ``engine``/``model`` sind das aus
+    der Profil-``config.yaml`` rückübersetzte Standardmodell (``None``, wenn nicht
+    auflösbar — der Client lässt das Modell-Dropdown dann ohne Vorauswahl).
+    ``error`` markiert ein defektes Profil (nicht startbar, aber sichtbar);
+    ``warning`` ist eine strukturelle Hinweismeldung (z. B. fehlendes Default-Home).
+    Keine Secrets/Credentials werden gespiegelt.
+    """
+    profile: str
+    label: str
+    engine: str | None = None
+    model: str | None = None
+    error: str | None = None
+    warning: str | None = None
+
+
+class HermesProfilesResponse(BaseModel):
+    """GET /sessions/hermes/profiles — alle erkannten Hermes-Profile (PROJ-87).
+
+    ``default`` ist stets enthalten (synthetisch, vorangestellt). ``warning`` ist
+    gesetzt, wenn das Profilverzeichnis nicht erreichbar war; die Liste ist dann
+    trotzdem nicht leer (mindestens ``default``).
+    """
+    profiles: list[HermesProfileOption]
+    warning: str | None = None
+
+
 class HermesSessionCreate(BaseModel):
-    """POST /sessions/hermes — schmaler Hermes-Startvertrag (PROJ-85).
+    """POST /sessions/hermes — schmaler Hermes-Startvertrag (PROJ-85/87).
 
     Titel optional; Projektpfad + Registry-Modellkombination erforderlich. Bypass
     und Token Savings werden serverseitig erzwungen (nie im Payload). ``engine``/
     ``model`` bezeichnen die QUELL-Registry-Kombination; der Manager übersetzt sie
-    für genau diese Session in die Hermes-CLI-Argumente.
+    für genau diese Session in die Hermes-CLI-Argumente. ``profile`` wählt das
+    Hermes-Profil (PROJ-87) — Default ``"default"`` für Rückwärtskompatibilität
+    beim Rollout zwischen Backend und Frontend.
     """
     # Schmaler Vertrag: unbekannte Felder (z. B. permission_mode, token_savings,
     # initial_prompt) werden abgelehnt, damit ein normaler Client sich nicht als
@@ -148,6 +180,10 @@ class HermesSessionCreate(BaseModel):
         description="Engine-Schlüssel aus der Registry (Quelle des Modells).",
     )
     model: str = Field(..., min_length=1, description="Modell aus der gewählten Engine.")
+    profile: str = Field(
+        default="default", pattern=r"^(default|jupiter-[a-z0-9_-]+)$",
+        description="Hermes-Profil (PROJ-87). 'default' oder ein erkanntes jupiter-*-Profil.",
+    )
 
     @model_validator(mode="after")
     def _no_forbidden_fields(self) -> "HermesSessionCreate":
@@ -167,6 +203,7 @@ class SessionRead(BaseModel):
     # PROJ-85: Hermes-Kontext-Snapshot (absolute Werte, nur aus Hermes-Telemetrie).
     # Fehlende Einzelwerte bleiben None (nicht 0); Anzeige-Prozent niemals > 100.
     hermes_resume_ref: str | None = None
+    hermes_profile: str = "default"  # PROJ-87: gewähltes Hermes-Profil (Session-Snapshot).
     context_used_tokens: int | None = None
     context_window_tokens: int | None = None
     context_usage_available: bool = False

@@ -130,6 +130,11 @@ class EngineDriver(ABC):
         bevor der nächste Turn läuft. Default: No-op (Treiber ohne In-Memory-Verlauf)."""
         return None
 
+    def set_hermes_home(self, path: str) -> None:
+        """PROJ-87: optionaler Hook, um das Hermes-Profil über HERMES_HOME zu setzen.
+        Nur der HermesChatDriver wertet dies aus; andere Treiber ignorieren es (No-op)."""
+        return None
+
 
 class DeadDriver(EngineDriver):
     """Platzhalter-Treiber ohne Prozess (PROJ-14).
