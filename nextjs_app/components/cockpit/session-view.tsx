@@ -24,6 +24,8 @@ import { HeartbeatDot } from "@/components/cockpit/heartbeat-dot";
 import { ActivityTicker } from "@/components/cockpit/activity-ticker";
 import { ReanimateButton } from "@/components/cockpit/reanimate-button";
 import { ResetSessionButton } from "@/components/cockpit/reset-session-button";
+import { DeleteSessionButton } from "@/components/cockpit/delete-session-button";
+import { ArchiveHermesSessionButton } from "@/components/cockpit/archive-hermes-session-button";
 import { SessionThresholdControl } from "@/components/cockpit/threshold-control";
 import { SessionClipboardButton } from "@/components/cockpit/session-clipboard-button";
 import { PushToTalkButton } from "@/components/cockpit/push-to-talk-button";
@@ -231,6 +233,36 @@ export function SessionView({ id, paneIndex }: { id: string; paneIndex: PaneInde
             >
               Nachfolger-Session →
             </Link>
+          )}
+        </div>
+      )}
+
+      {/* PROJ-88: Hermes-Detailaktionen — nur für engine=hermes.
+          waiting/starting/running → „Beenden & archivieren";
+          error → „Ins Archiv verschieben";  done/error → „Session löschen". */}
+      {head && head.engine === "hermes" && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border py-2">
+          {(head.status === "waiting" ||
+            head.status === "starting" ||
+            head.status === "running") && (
+            <ArchiveHermesSessionButton
+              sessionId={id}
+              projectName={displayName(head)}
+              mode="beenden"
+            />
+          )}
+          {head.status === "error" && (
+            <ArchiveHermesSessionButton
+              sessionId={id}
+              projectName={displayName(head)}
+              mode="verschieben"
+            />
+          )}
+          {(head.status === "done" || head.status === "error") && (
+            <DeleteSessionButton
+              sessionId={id}
+              projectName={displayName(head)}
+            />
           )}
         </div>
       )}

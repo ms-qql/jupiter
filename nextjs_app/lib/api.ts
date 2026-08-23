@@ -528,6 +528,17 @@ export function deleteSession(id: string): Promise<void> {
   return request<void>(`/sessions/${id}`, { method: "DELETE" });
 }
 
+// --- PROJ-88: Hermes-Session bewusst beenden & archivieren ------------------
+
+/** Eine Hermes-Session in den Archivzustand (`done`) überführen. Bei aktivem
+ *  Turn wird dieser zuvor sauber gestoppt (bestehende stop()-Semantik).
+ *  200 → aktualisierter Session-Snapshot · 404 fremd/unbekannt · 409 Nicht-Hermes
+ *  oder unzulässiger Status · 503 Turn ließen sich nicht sauber stoppen
+ *  (→ ApiError.status). */
+export function archiveSession(id: string): Promise<Session> {
+  return request<Session>(`/sessions/${id}/archive`, { method: "POST" });
+}
+
 /** Bulk „Erledigte aufräumen": entfernt alle terminalen Sessions, aktive werden
  *  serverseitig still übersprungen. Liefert die Anzahl gelöschter Sessions. */
 export function cleanupSessions(): Promise<{ deleted: number }> {

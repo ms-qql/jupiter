@@ -101,6 +101,10 @@ COLUMNS: tuple[str, ...] = (
     "context_used_tokens",
     "context_window_tokens",
     "context_usage_available",
+    # PROJ-88: bewusster Abschluss/Ausblenden aus der Aktive-Sessions-Liste
+    # (Live-Index-Flag; Vault/Log bleiben erhalten). Archivierte Sessions zählen
+    # nicht gegen das Session-Limit und werden vom Cockpit ausgeblendet.
+    "archived",
 )
 
 SCHEMA_SQL = """
@@ -157,7 +161,8 @@ CREATE TABLE IF NOT EXISTS session_index (
     hermes_profile        TEXT DEFAULT 'default',
     context_used_tokens   INTEGER,
     context_window_tokens INTEGER,
-    context_usage_available INTEGER DEFAULT 0
+    context_usage_available INTEGER DEFAULT 0,
+    archived              INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_session_index_status ON session_index(status);
 
@@ -224,6 +229,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("context_used_tokens", "INTEGER"),
     ("context_window_tokens", "INTEGER"),
     ("context_usage_available", "INTEGER DEFAULT 0"),
+    ("archived", "INTEGER DEFAULT 0"),  # PROJ-88
 )
 
 

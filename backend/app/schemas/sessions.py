@@ -204,6 +204,8 @@ class SessionRead(BaseModel):
     # Fehlende Einzelwerte bleiben None (nicht 0); Anzeige-Prozent niemals > 100.
     hermes_resume_ref: str | None = None
     hermes_profile: str = "default"  # PROJ-87: gewähltes Hermes-Profil (Session-Snapshot).
+    # PROJ-88: bewusst abgeschlossen/ausgeblendet (erscheint nicht mehr unter „Aktive“).
+    archived: bool = False
     context_used_tokens: int | None = None
     context_window_tokens: int | None = None
     context_usage_available: bool = False

@@ -89,7 +89,12 @@ async def create_session(
 @router.get("", response_model=list[SessionRead])
 async def list_sessions(request: Request, user: CurrentUser = Depends(get_current_user)) -> list[dict]:
     # PROJ-25: nur die eigenen Sessions (Scope auf owner aus dem Token).
-    return [r.to_read() for r in _manager(request).list() if r.state.owner == user.user_id]
+    # PROJ-88: archivierte Sessions bleiben ausgeblendet (bewusster Abschluss).
+    return [
+        r.to_read()
+        for r in _manager(request).list()
+        if r.state.owner == user.user_id and not r.state.archived
+    ]
 
 
 @router.get("/limits")
@@ -300,6 +305,26 @@ async def stop_session(
     manager = _manager(request)
     _owned_or_404(manager, session_id, user)
     await manager.stop(session_id)
+    return {"ok": True}
+
+
+@router.post("/{session_id}/archive")
+async def archive_session(
+    session_id: str, request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict:
+    """PROJ-88: Hermes-Session bewusst abschließen (archivieren).
+
+    Schließt die Session ab (Prozess wird ggf. beendet, offene Cards aufgelöst)
+    und blendet sie aus der Aktive-Sessions-Liste aus. Das Session-Log im Vault
+    bleibt erhalten. 404 unbekannt/fremd; 409 wenn die Session noch aktiv ist und
+    nicht gestoppt werden kann (sollte nach ``stop`` nie eintreten, da archive
+    selbst stoppt — abgedeckt für den Fall eines Race)."""
+    manager = _manager(request)
+    _owned_or_404(manager, session_id, user)  # PROJ-25: kein Fremd-Archivieren.
+    try:
+        await manager.archive_hermes(session_id)
+    except SessionActiveError as exc:  # läuft und konnte nicht gestoppt werden.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True}
 
 

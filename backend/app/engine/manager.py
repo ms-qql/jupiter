@@ -412,6 +412,11 @@ class SessionState:
     # Fällt NICHT mit dem Modell zusammen — das Profil bestimmt Skills/Tools/Konstitution
     # über die Prozessumgebung (→ HERMES_HOME), das Modell ist davon unabhängig überschreibbar.
     hermes_profile: str = "default"
+    # PROJ-88: bewusster Abschluss/Ausblenden einer Hermes-Session aus der
+    # Aktive-Sessions-Liste. Setzt den Live-Index auf „archiviert“ (bleibt aber im
+    # Vault/Log erhalten — „Live-Index, nicht die Wahrheit“). Archivierte Sessions
+    # zählen NICHT gegen das Session-Limit und erscheinen nicht mehr unter „Aktive“.
+    archived: bool = False
 
     @property
     def effective_threshold_pct(self) -> int:
@@ -492,6 +497,8 @@ class SessionState:
             "context_usage_available": self.context_usage_available,
             # PROJ-87: gewähltes Hermes-Profil (Session-Snapshot).
             "hermes_profile": self.hermes_profile,
+            # PROJ-88: bewusst abgeschlossen/ausgeblendet (erscheint nicht mehr unter „Aktive“).
+            "archived": self.archived,
         }
 
 
@@ -1419,6 +1426,8 @@ class SessionManager:
             "context_used_tokens": s.context_used_tokens,
             "context_window_tokens": s.context_window_tokens,
             "context_usage_available": 1 if s.context_usage_available else 0,
+            # PROJ-88: Archivierungs-Flag (Live-Index; Vault/Log bleiben erhalten).
+            "archived": 1 if s.archived else 0,
         }
 
     def _persist(self, runtime: SessionRuntime) -> None:
@@ -1749,6 +1758,8 @@ class SessionManager:
             context_usage_available=bool(row.get("context_usage_available") or False),
             # PROJ-87: gewähltes Hermes-Profil (Session-Snapshot, Default „default“ für Alt-Daten).
             hermes_profile=row.get("hermes_profile") or "default",
+            # PROJ-88: Archivierungs-Flag (Live-Index; Vault/Log bleiben erhalten).
+            archived=bool(row.get("archived") or False),
         )
 
     @staticmethod
@@ -2383,6 +2394,23 @@ class SessionManager:
         # Sicherheitsnetz: offene Cards auflösen (der closed-Event tut das i. d. R. schon).
         runtime.abandon_decisions("Session gestoppt — Freigabe hinfällig.")
         self._persist(runtime)  # PROJ-14: terminalen Zustand (PID weg) spiegeln.
+
+    # --- Archivieren (PROJ-88) --------------------------------------------
+
+    async def archive_hermes(self, session_id: str) -> None:
+        """Hermes-Session bewusst abschließen und aus der Aktive-Liste ausblenden.
+
+        Wiederverwendet die bestehende ``stop()``-Semantik (Prozess beenden +
+        offene Cards auflösen), setzt zusätzlich das ``archived``-Flag am
+        Live-Index. Die Session bleibt im Vault/Log erhalten („Live-Index, nicht
+        die Wahrheit“) und erscheint nicht mehr unter „Aktive Sessions“.
+        """
+        runtime = self._require(session_id)  # KeyError → 404 (Route/owner-Prüfung).
+        # Stop-Semantik nur auf dem Prozess anwenden, wenn dieser noch lebt.
+        if runtime.state.status in ACTIVE_STATES:
+            await self.stop(session_id)
+        runtime.state.archived = True
+        self._persist(runtime)  # archivierten Zustand spiegeln (PROJ-14).
 
     # --- Löschen / Aufräumen (PROJ-21) -------------------------------------
 
