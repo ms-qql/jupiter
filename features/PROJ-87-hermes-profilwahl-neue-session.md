@@ -1,6 +1,6 @@
 # PROJ-87: Hermes-Profilwahl im Neue-Hermes-Session-Dialog
 
-## Status: Approved
+## Status: Deployed
 **Created:** 2026-08-23
 **Last Updated:** 2026-08-23
 
@@ -485,4 +485,20 @@ Keine Low-Bugs gefunden.
 **READY.** Status auf **Approved** setzen möglich. Nächster Schritt: `/abc-deploy`.
 
 ## Deployment
-_To be added by /abc-deploy_
+**Deployed:** 2026-08-23 · **Version:** v0.27.59-PROJ-87 · **URL:** https://jupiter.auxevo.tech
+
+Deployment wurde via GitHub-Webhook & systemd ausgelöst nach `git push origin main` (d54f7c3).
+
+### Smoke-Test Checklist
+- [x] Health-Route `GET /api/health` → 200 OK
+- [x] Frontend lädt; Login-Screen rendert
+- [x] Backend antwortet auf Anfragen (PROJ-87 API `/sessions/hermes/profiles` verlangt JWT, kein anonymer Test möglich)
+- [x] Hermes-Sessions-Cockpit reagiert (bestehende Funktionalität, keine Regression)
+- [x] CodeGraph re-indexed: 8,283 Nodes, 23,573 Edges in 1.4s
+
+### Browser-Only Feature Verification (empfohlen)
+Die Profilwahl im UI-Dialog (shadcn Select-Komponente, Modell-Vorbelegung bei Profilwechsel, Profil-Badge in Session-Kachel) sollte nach Anmeldung stichprobenartig verifiziert werden:
+- [ ] Hermes-Start-Dialog: Profil-Dropdown vorhanden, „default" vorausgewählt
+- [ ] Modell-Dropdown automatisch auf Standardmodell des gewählten Profils vorbelegt
+- [ ] Profil-Badge (≠ default) auf Session-Kachel sichtbar nach Start
+- [ ] Resume-Flow behält Profil über die gesamte Sitzungsdauer bei
