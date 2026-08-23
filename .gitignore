@@ -56,3 +56,4 @@ backend/config/provider_budgets.yaml
 
 # PROJ-26: Marktplatz/Registry — installierte Pakete + Import/Export-Staging (Laufzeit-Daten).
 backend/registry/
+.worktrees/
