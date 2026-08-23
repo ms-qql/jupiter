@@ -1,6 +1,6 @@
 # PROJ-87: Hermes-Profilwahl im Neue-Hermes-Session-Dialog
 
-## Status: Architected
+## Status: Approved
 **Created:** 2026-08-23
 **Last Updated:** 2026-08-23
 
