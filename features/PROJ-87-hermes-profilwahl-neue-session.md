@@ -177,7 +177,201 @@ laufende Session und keine `config.yaml` wird durch die Auswahl verändert.
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /abc-architecture_
+**Erstellt:** 2026-08-23 · **Stack:** Next.js/shadcn + FastAPI + bestehender raw-SQL/SQLite-Session-Index mit JWT-Owner-Scope; Hermes CLI; Dokploy · **Branch:** specs/PROJ-87-hermes-profilwahl-neue-session
+
+### Ziel und Abgrenzung
+
+PROJ-87 ergänzt den bestehenden `HermesStartDialog` (PROJ-85/86) um ein zweites
+Dropdown — **Profil** — neben dem vorhandenen Modell-Dropdown. Die Auswahl
+bestimmt, mit welchem Hermes-Profil (`default` oder ein erkanntes `jupiter-*`-
+Profil) der `HermesChatDriver` seinen `hermes chat`-Prozess startet. Alle
+übrigen PROJ-85/86-Verträge (Session-Hülle, direkter Chat-Transport, Resume
+über `--continue jupiter-<id>`) bleiben unverändert; PROJ-87 fügt ausschließlich
+die Profildimension hinzu.
+
+**Wichtige Korrektur gegenüber der Spec-Annahme:** Hermes kennt **kein**
+CLI-Flag `--profile <name>`. Ein Profil wird ausschließlich über die
+Umgebungsvariable `HERMES_HOME` gewählt — `~/.hermes` für `default`,
+`~/.hermes/profiles/<name>` für ein `jupiter-*`-Profil (siehe
+`get_hermes_home()`/`get_active_profile_name()` in der Hermes-CLI,
+`hermes_cli/profiles.py:1962-1986`, sowie `hermes profile list`, das exakt
+diese Verzeichnisstruktur zeigt). Der komplette Skill-/Tool-/Konstitutions-
+Kontext eines Profils folgt automatisch aus `HERMES_HOME` — nicht aus einem
+Extra-Flag. `LaunchSpec.env` (PROJ-80, `backend/app/engine/base.py:70`) ist
+bereits der vorgesehene Mechanismus, um zusätzliche Prozess-Umgebungsvariablen
+in den Subprozess zu mergen; PROJ-87 nutzt ihn, statt ein nicht existierendes
+Flag zu simulieren.
+
+### A) Komponenten und Ablauf
+
+```
+HermesStartDialog (erweitert)
+├── Titel (optional)
+├── Projekt-Pfad (Pflicht)
+├── Profil (Pflicht; Default „default“ vorausgewählt)   ← NEU (PROJ-87)
+└── Modell (Pflicht; beim Profilwechsel auf dessen Standardmodell vorbelegt,
+    danach frei änderbar)
+
+HermesStartDialog
+└── POST /sessions/hermes { title?, project_path, profile, engine, model }
+    ├── Profil-Validierung (Whitelist gegen frischen discover_profiles()-Snapshot)
+    ├── Modell-Validierung (bestehender PROJ-85-Resolver, unverändert)
+    ├── HermesChatDriver(profile, provider, model, hermes_env)
+    │     └── hermes_env = {"HERMES_HOME": <profil-pfad>} (nur bei Nicht-Default)
+    └── bestehender SessionManager / Session-Index (erweitert um `hermes_profile`)
+
+Aktive Sessions / SessionRail
+└── bestehende Session-Kachel: Engine-Badge „Hermes“ + Modell-Label
+    + NEUES Profil-Badge (z. B. „Backend“), nur sichtbar wenn ≠ default
+```
+
+Der Dialog lädt seine Profil-Liste aus einem **neuen, schmalen Lese-Endpunkt**
+parallel zur bestehenden Modell-Options-Anfrage. Beide Ladevorgänge sind
+unabhängig; das Modell-Dropdown reagiert auf Profilwechsel per lokalem
+State-Effekt (kein Server-Roundtrip), analog zum bestehenden Muster, das die
+Modell-Auswahl bereits beim ersten Laden der Optionen vorbelegt
+(`hermes-start-dialog.tsx:70-76`).
+
+### B) Datenmodell und Besitz
+
+Kein neues Domänenobjekt, keine MinIO-Objekte. Ein Feld wird additiv an
+Bestehendes angehängt; die Profilliste selbst bleibt weiterhin zur Laufzeit
+aus dem Dateisystem abgeleitet (kein Cache, kein zweiter Speicherort).
+
+1. **Hermes-Profil-Liste** (kein persistiertes Objekt, PROJ-83-Vorlage)
+   - Wiederverwendung von `discover_profiles()`
+     (`backend/app/engine/hermes_profiles.py:158-220`) UNVERÄNDERT: liefert
+     bereits `jupiter-*`-Profile mit Format-/Whitelist-/Realpath-Schutz gegen
+     Path-Traversal. PROJ-87 ergänzt in der Antwort lediglich einen
+     **synthetischen `default`-Eintrag** (kein Verzeichnis-Scan nötig — er
+     existiert per Definition), vorangestellt in der Liste.
+   - Ein Profil ohne auflösbares `model.default`/`model.provider` (bereits
+     heute `entry["engine"]=None`/`entry["model"]=None` bei nicht
+     zurückübersetzbarer Kombination) liefert dem Frontend explizit „kein
+     Standardmodell“ — das Modell-Dropdown bleibt dann ohne Vorauswahl
+     (Edge Case aus der Spec).
+   - **Schreiber/Owner:** Kein Schreibzugriff durch PROJ-87 — identisch zu
+     PROJ-85s Prinzip bei Modellen. `PATCH /settings/hermes-profiles` (PROJ-83)
+     bleibt der einzige Schreibpfad für Profil-`config.yaml`.
+   - **Lesepfad:** neuer `GET /sessions/hermes/profiles` vor dem Öffnen des
+     Dialogs; `POST /sessions/hermes` validiert die Auswahl serverseitig
+     erneut gegen denselben frischen Snapshot (identisches Muster zu
+     Modell-Validierung, PROJ-85 Tech Design Punkt E).
+
+2. **Session** (bestehend, additiv erweitert)
+   - Neues Feld `hermes_profile: str` (Default `"default"`), analog zu den
+     bestehenden `engine`/`model`-Feldern rein informativ persistiert — dient
+     der Badge-Anzeige und der Rehydrierung nach Backend-Neustart (damit ein
+     wiederaufgenommener Turn wieder mit demselben `HERMES_HOME` läuft, nicht
+     mit `default`).
+   - **Schreiber/Owner:** `POST /sessions/hermes` setzt das Feld beim Erstellen;
+     danach unveränderlich für die Sitzungsdauer (kein Profilwechsel während
+     laufender Session, siehe Non-Goals).
+   - **Lesepfade:** `GET /sessions`, `GET /sessions/{id}`, WS-Snapshot — additiv,
+     wie die bestehenden Hermes-Kontextfelder aus PROJ-85.
+
+3. **HermesChatDriver-Prozessumgebung** (flüchtig, kein Datenbankfeld)
+   - Der Manager übergibt dem Driver bei jedem Turn (Erst- und Folge-Turn) ein
+     `env`-Dict mit `HERMES_HOME`, abgeleitet aus dem persistierten
+     `hermes_profile` — nicht neu vom Client pro Turn. Für `default` wird
+     bewusst **kein** `HERMES_HOME` gesetzt (identisches Verhalten zum
+     bisherigen, profil-losen Prozessstart), um keine Regression für alle
+     bestehenden Hermes-Sessions (vor PROJ-87 immer `default`) zu riskieren.
+
+### C) API-Vertrag
+
+- **NEU:** `GET /sessions/hermes/profiles` — liefert `default` + alle
+  erkannten `jupiter-*`-Profile (`profile`, `label`, `engine`, `model`,
+  `error`). Reine Leseoperation, JWT erforderlich (kein Owner-Scope nötig, da
+  Profile serverweit gleich sichtbar sind — wie schon `GET
+  /settings/hermes-profiles` aus PROJ-83, das keinerlei Owner-Filterung
+  kennt). Fehler: liefert bei nicht erreichbarem Profilverzeichnis `warning`
+  + trotzdem den `default`-Eintrag (nie eine leere Liste, Edge Case „keine
+  Profile gefunden“ ist damit strukturell ausgeschlossen).
+- **GEÄNDERT:** `POST /sessions/hermes` — Request erhält ein neues Pflichtfeld
+  `profile: str` (Default `"default"`, falls vom Client nicht mitgeschickt —
+  Rückwärtskompatibilität für den Fall unfertiger Frontend-Deployments
+  zwischen Backend- und Frontend-Rollout). Server validiert `profile` gegen
+  denselben frischen Snapshot wie der Options-Endpoint (Whitelist,
+  `discover_profiles()`); ein zwischenzeitlich gelöschtes/defektes Profil
+  liefert `400` mit deutscher Fehlermeldung (**kein** stiller Fallback auf
+  `default`, exakt wie in den Edge Cases gefordert). Antwort bleibt der
+  normale `SessionRead`-Snapshot, jetzt zusätzlich mit `hermes_profile`.
+- **GEÄNDERT (additiv):** `GET /sessions`, `GET /sessions/{id}`, `WS
+  /sessions/{id}/stream` — erhalten additiv `hermes_profile: str` (bei
+  Nicht-Hermes-Sessions `"default"` oder `null`, siehe Entscheidung D).
+- Alle übrigen PROJ-85/86-Endpunkte (`POST /sessions/{id}/input`, Resume,
+  Reanimation) bleiben vertraglich unverändert; sie lesen `hermes_profile`
+  intern aus dem persistierten `SessionState`, nie aus einem neuen
+  Client-Payload.
+
+### D) Entscheidungen (und warum)
+
+- **`HERMES_HOME`-Env statt erfundenes `--profile`-Flag:** Die Spec nennt
+  `--profile <name>` als Platzhalter für „äquivalenter Hermes-Aufruf“ — die
+  tatsächliche Hermes-CLI kennt dieses Flag nicht. Der reale, vom Hermes-CLI-
+  Code selbst genutzte Mechanismus ist `HERMES_HOME` (`hermes_cli/
+  profiles.py:1962-1986`). Diese Korrektur ändert nichts an den
+  Akzeptanzkriterien (volle Profilwirkung inkl. Skills/Tools/Konstitution),
+  nur an der technischen Umsetzung — `HERMES_HOME` ist sogar vollständiger,
+  weil es exakt der Mechanismus ist, den `hermes profile use`/die reale CLI
+  selbst verwenden.
+- **Additive Felder statt neuer Tabellen:** Wie PROJ-85/86 bleibt der
+  bestehende SQLite-Session-Index führend; `hermes_profile` ist ein einzelnes
+  zusätzliches Feld, keine neue Domäne.
+- **Kein Owner-Scope auf der Profilliste:** Profile sind serverweite
+  Konfiguration (identisch zu PROJ-83s `GET /settings/hermes-profiles`, das
+  ebenfalls ungescoped ist) — kein Widerspruch zu PROJ-25, weil Profile kein
+  Nutzerdatum sind, sondern Serverzustand, der für jeden authentifizierten
+  Jupiter-Nutzer gleich sichtbar ist.
+- **`default` ist ein synthetischer Listeneintrag, kein Verzeichnis-Scan:**
+  Vermeidet eine Sonderbehandlung/Race gegenüber `discover_profiles()`, das
+  `default` bewusst ausschließt (`_DEFAULT_PROFILE`, `hermes_profiles.py:40`).
+- **Kein Profilwechsel innerhalb einer laufenden Session:** Deckt sich mit der
+  Spec (Non-Goals) und mit PROJ-86s ADR-86-3 (Hermes läuft immer direkt, ohne
+  tmux/Reanimation) — `HERMES_HOME` wird nur beim ersten Turn-Aufbau aus dem
+  persistierten Feld gelesen, danach unverändert für jeden Folge-Turn
+  wiederverwendet.
+- **Rückwärtskompatibler `profile`-Default `"default"`:** Verhindert einen
+  Breaking-Change-Zeitraum zwischen Backend- und Frontend-Deploy (wie in
+  PROJ-85 BUG-2 bereits einmal real aufgetreten — Contract-Mismatch zwischen
+  Front-/Backend-Rollout-Reihenfolge).
+
+### E) Delivery-Reihenfolge und Akzeptanzzuordnung
+
+1. **Backend:** `GET /sessions/hermes/profiles` (Wiederverwendung
+   `discover_profiles()` + synthetischer `default`-Eintrag), `profile`-Feld in
+   `HermesSessionCreate`/`SessionState`/`SessionRead`, `HERMES_HOME`-Env-
+   Weiterreichung in `SessionManager.create_hermes()` → `HermesChatDriver`
+   (über `LaunchSpec.env`, wiederverwendet aus PROJ-80). Deckt ACs zu
+   Profil-Erkennung, Default-Vorauswahl, Start-Ablehnung bei ungültigem/
+   verschwundenem Profil.
+2. **Frontend:** Profil-Dropdown im `HermesStartDialog` (gleiches
+   shadcn-`Select`-Muster wie das bestehende Modell-Dropdown), Laden via
+   neuem Endpoint, Vorbelegung des Modell-Dropdowns bei Profilwahl (lokaler
+   State-Effekt, kein Server-Call), Profil-Badge auf der Session-Kachel
+   (`session-tile.tsx`, gleiches Muster wie das bestehende Engine-/
+   Transport-Badge, nur sichtbar bei `hermes_profile !== "default"`). Deckt
+   ACs zu Formularverhalten, deutschen Fehlermeldungen, Badge-Sichtbarkeit.
+3. **QA:** Profilwechsel im Dialog vor Submit, Start mit gelöschtem/defektem
+   Profil zwischen Laden und Submit, parallele Sessions mit unterschiedlichen
+   Profil-/Modell-Kombinationen, Resume/Folge-Turn behält `HERMES_HOME` über
+   die gesamte Sitzungsdauer, Skills/Tools eines gewählten `jupiter-*`-Profils
+   sind im laufenden Chat tatsächlich aktiv (Stichprobe: mind. ein Profil mit
+   abweichenden Skills gegenüber `default`).
+
+### F) ADRs
+
+- **ADR-87-1 — `HERMES_HOME`-Env statt `--profile`-Flag:** angenommen. Einzige
+  reale, vom Hermes-CLI-Code unterstützte Profilwahl-Methode; volle
+  funktionale Äquivalenz zu einem CLI-Aufruf mit diesem Profil.
+- **ADR-87-2 — Profil ist ein Session-Snapshot, kein laufzeitänderbares
+  Feld:** angenommen, analog zu ADR-85-2 (Modell ist Session-Snapshot). Ein
+  einmal gestarteter Chat behält sein Profil für die gesamte Sitzungsdauer.
+- **ADR-87-3 — `default` als synthetischer Listeneintrag:** angenommen,
+  vermeidet Änderungen an `discover_profiles()`s bewusstem Default-Ausschluss.
+- **ADR-87-4 — Ungescopte Profilliste:** angenommen, konsistent mit PROJ-83s
+  bereits etabliertem, ungescoptem `GET /settings/hermes-profiles`.
 
 ## QA Test Results
 _To be added by /abc-qa_
