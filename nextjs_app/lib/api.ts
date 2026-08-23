@@ -128,6 +128,7 @@ import type {
   FeaturePlanItem,
   FeatureRun,
   HermesOptions,
+  HermesProfiles,
   HermesStartRequest,
   PermissionMode,
   CompletionProof,
@@ -352,6 +353,17 @@ export function createSession(body: SessionCreate): Promise<Session> {
  *  (VOR dem Öffnen/Senden des „Neu Hermes"-Dialogs). Schreibt nichts. */
 export function getHermesOptions(signal?: AbortSignal): Promise<HermesOptions> {
   return request<HermesOptions>("/sessions/hermes/options", { signal });
+}
+
+/** Liefert die zur Laufzeit erkannten, startbaren Hermes-Profile (PROJ-87) aus
+ *  GET /sessions/hermes/profiles — „default“ + alle jupiter-*-Profile mit
+ *  jeweiligem Standardmodell. Schreibt nichts. (Nicht zu verwechseln mit
+ *  getHermesProfileModels() aus PROJ-83, das die Profil-Modellkonfiguration
+ *  der Settings liefert.) */
+export function getHermesStartProfiles(
+  signal?: AbortSignal,
+): Promise<HermesProfiles> {
+  return request<HermesProfiles>("/sessions/hermes/profiles", { signal });
 }
 
 /** Startet eine neue Hermes-Chat-Session (Bypass + Token Savings sind

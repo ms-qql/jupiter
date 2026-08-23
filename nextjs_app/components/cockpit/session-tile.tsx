@@ -71,6 +71,20 @@ export function SessionTile({
             tmux
           </Badge>
         )}
+        {/* PROJ-87: Hermes-Profil-Badge — nur bei abweichendem Profil (≠ "default")
+            sichtbar. Zeigt die Rolle der Session (Skills/Tools/Konstitution), damit
+            erkennbar ist, mit welchem Profil die Hermes-Session läuft. */}
+        {session.engine === "hermes" &&
+          session.hermes_profile &&
+          session.hermes_profile !== "default" && (
+            <Badge
+              variant="outline"
+              className="shrink-0 text-[10px] uppercase"
+              title={`Hermes-Profil: ${session.hermes_profile}`}
+            >
+              {session.hermes_profile}
+            </Badge>
+          )}
         {canReanimate(session.liveness) && (
           <ReanimateButton sessionId={session.session_id} />
         )}

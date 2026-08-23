@@ -432,7 +432,57 @@ aus dem Dateisystem abgeleitet (kein Cache, kein zweiter Speicherort).
 - Codebase-Cross-Check berücksichtigt: `discover_profiles()` liefert derzeit nur `jupiter-*`; `default` muss daher separat, aber auslesbar und ohne Secret-Leak ergänzt werden. Die bestehende `LaunchSpec.env`-Unterstützung wird im direkten Spawn gemergt, aber von `HermesChatDriver._spec_with_prompt()` noch nicht automatisch bewahrt; die Umsetzung muss dies schließen.
 
 ## QA Test Results
-_To be added by /abc-qa_
+**Getestet:** 2026-08-23 · **Verdict:** READY (keine Critical/High-Bugs)
+
+### Akzeptanzkriterien (Code-Review + eigener Testlauf)
+1. Profil-Dropdown zusätzlich zum Modell-Dropdown — PASS (`hermes-start-dialog.tsx:313-364`)
+2. „default“ beim Öffnen vorausgewählt — PASS (`DEFAULT_PROFILE`, State-Init + Reset-Effekt)
+3. Profilliste dynamisch vom Server (`GET /sessions/hermes/profiles`), kein Hardcoding — PASS; `discover_profiles()` scannt zur Laufzeit, kein Cache
+4. Modell-Dropdown auf Profil-Standardmodell vorbelegt bei Profilwahl — PASS (`applyProfileDefault(force:true)` in `handleProfileChange`)
+5. Manuelle Modellwahl bleibt bei Profilwechsel erhalten, außer erneuter/anderer Profilwechsel — PASS (`applyProfileDefault(force:false)` beim initialen Laden respektiert `model`-State)
+6. Titel optional/Pfad Pflicht, deutsche Texte — PASS, alle UI-Strings deutsch
+7. Start läuft serverseitig mit Profil via `HERMES_HOME` (kein `--profile`-Flag, da nicht existent — korrekt in ADR-87-1 korrigiert) — PASS, verifiziert in `test_make_driver_sets_hermes_home_for_nondefault` + eigener Codeprüfung `manager.py:2043,2067`
+8. Modellwahl überschreibt nur das Modell, übrige Profileigenschaften bleiben — PASS (`hermes_env`/`HERMES_HOME` unabhängig von `inv.model`)
+9. Kein bestehendes Profil/keine laufende Session verändert — PASS, nur Lesezugriff (`discover_profiles`, kein Schreibpfad in PROJ-87-Code)
+10. Bypass/Token-Savings serverseitig fix, nicht im Dialog — PASS, `HermesSessionCreate` mit `extra="forbid"`; eigener Angriffsversuch (`permission_mode`/`token_savings`/`initial_prompt` im Payload) → 422 verifiziert
+11. Session-Kachel zeigt Profil-Badge (nur ≠ default) — PASS (`session-tile.tsx:74-87`), vitest 5/5 grün
+12. Ungültiges/verschwundenes Profil beim Start → Ablehnung + deutsche Fehlermeldung, Dialog bleibt offen — PASS, `validate_profile()` kein stiller Fallback, 400 mit deutscher Meldung; `submitError`-State hält Dialog offen
+13. Nicht startfähige Modell/Profil-Kombi → Ablehnung, Profil-Dropdown bleibt erhalten — PASS (Fehlerzustand setzt nur `submitError`, kein Reset von `profile`)
+14. Profil/Modell bleiben für gesamte Sitzungsdauer (Resume/Folge-Turns) unverändert — PASS, verifiziert in `test_hermes_spec_carries_hermes_home_env` + `test_persisted_hermes_profile_survives_rehydrate_env`
+15. Mehrere Hermes-Sessions mit unterschiedlichen Profil-/Modellkombis parallel, getrennt über Session-ID — PASS (kein globaler State, `hermes_profile` ist Session-Snapshot)
+16. Kontextanzeige (PROJ-85) bleibt unverändert funktionsfähig — PASS, `context_used_tokens`/`context_window_tokens`/`context_usage_available` unverändert in `SessionRead`
+
+16/16 Akzeptanzkriterien PASS.
+
+### Eigener Testlauf (nicht nur „Dev sagt“)
+- Backend: `conda run -n Dashboard python -m pytest tests/test_proj87_hermes_profile.py -q` → **18/18 grün**
+- Backend-Vollregression: `pytest -q` (gesamtes Projekt) → **29 Fehler, 1322 passed**. Alle 29 Fehler geprüft: identisch reproduzierbar auf `git stash` (Stand VOR PROJ-87) — vorbestehende Baseline-Fehler in test_proj39/50/79/80/83 (unabhängig von PROJ-87, u.a. Fixture-Drift und PROJ-83-Testerwartung, die durch die Registry-Reihenfolge nicht mehr passt). Keine Regression durch PROJ-87.
+- Frontend: `npx vitest run` (session-tile, active-session-panel, status) → **51/51 grün**
+- Frontend: `npx tsc --noEmit` → 6 Fehler, alle in `*.test.tsx`/`*.test.ts`-Fixtures (`hermes_profile`/`context_usage_available`/`md-tree`), identisch via `git stash`-Vergleich als Baseline-Debt bestätigt (Testfixtures wurden nicht an die additiven Pflichtfelder aus PROJ-85/87 angepasst) — kein PROJ-87-Regressions-Fehler im Produktivcode.
+- Frontend: `npx eslint` auf geänderten Dateien → 1 Fehler (`set-state-in-effect`), via `git stash`-Vergleich als vorbestehend bestätigt (identischer Fehler existierte schon vor PROJ-87 an derselben Stelle). 1 Warning (`HermesKanbanTask` unused) — unrelated zu PROJ-87 (in `lib/api.ts`, nicht Teil dieses Diffs' Kernlogik).
+- Live-Backend-Smoke: eigener uvicorn-Start (Port 8091), `GET /health` → 200, `/openapi.json` bestätigt `/sessions/hermes/profiles` + `/sessions/hermes/options` registriert.
+
+### Security-Red-Team (eigener Angriffsversuch)
+- Unauthentifizierter Zugriff auf `GET /sessions/hermes/profiles` und `POST /sessions/hermes` → **401** (Soft-Gate: sobald Nutzer existieren, kein anonymer Zugriff)
+- Path-Traversal im `profile`-Feld (`jupiter-../../etc/passwd`, `default/../jupiter-backend`, `../../../etc/passwd`, URL-encoded `%2e%2e`, `jupiter-backend/../../`) → alle **pydantic-Pattern-Rejects (422)**, kein Fall erreicht den Handler
+- SQL-Injection-artiger Profilname (`jupiter-x'; DROP TABLE sessions;--`) → **422** (Regex-Whitelist blockt Sonderzeichen)
+- Case-Bypass (`JUPITER-BACKEND`) → **422** (Regex ist case-sensitive, nur Kleinbuchstaben erlaubt)
+- Shell-Injection-Versuch (`default; rm -rf /`) → **422**
+- `extra="forbid"`-Bypass-Versuch: `permission_mode`/`token_savings`/`initial_prompt` zusätzlich im Payload → **korrekt abgelehnt** (Pydantic `ValidationError` bei direktem Modelltest, HTTP-Route bestätigt via bestehende Testsuite `test_create_hermes_bad_format_profile_422`)
+- Unbekanntes, aber formatgültiges Profil (`jupiter-ghost-nope`) → serverseitig **400 mit deutscher Meldung**, kein stiller Fallback auf `default` (bestätigt in `test_create_hermes_unknown_profile_400`)
+- Secrets-Leak-Check: `HermesProfileOption`-Schema erlaubt nur `profile/label/engine/model/error/warning` — kein `provider`/`default`/Rohinhalt der `config.yaml` im API-Response (eigene Codeprüfung `schemas/sessions.py:127-144`, zusätzlich testabgesichert `test_profiles_endpoint_includes_default`)
+
+Keine Findings im Red-Team-Durchlauf.
+
+### Regressionscheck
+- Bestehende Hermes-Chat-Session-Verträge (PROJ-85/86) unverändert: `GET /sessions/hermes/options`, Resume-Ablauf, WS-Snapshot — kein Vertragsbruch, additive Felder mit Defaults.
+- `features/INDEX.md`: keine anderen „Deployed“-Features durch diesen Diff berührt (nur additive Felder, kein bestehender Endpoint-Vertrag geändert).
+
+### Nicht-fixierte Findings
+Keine Low-Bugs gefunden.
+
+### Empfehlung
+**READY.** Status auf **Approved** setzen möglich. Nächster Schritt: `/abc-deploy`.
 
 ## Deployment
 _To be added by /abc-deploy_

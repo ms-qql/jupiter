@@ -102,6 +102,10 @@ export interface Session {
   context_fill_threshold_pct: number;
   /** PROJ-5: true, sobald der bekannte Füllstand die Schwelle erreicht. */
   threshold_warning: boolean;
+  /** PROJ-87: gewähltes Hermes-Profil dieser Session (Snapshot, unverändert für
+   *  die Sitzungsdauer). „default“ = reguläres Hermes-Profil. Bei Nicht-Hermes-
+   *  Sessions stets „default“. Dient der Badge-Anzeige und Rehydrierung. */
+  hermes_profile: string;
   /** PROJ-85: Hermes-Kontextverbrauch. `context_usage_available` ist der
    *  klare Schalter — nur wenn er true ist, enthalten die beiden Token-Felder
    *  echte Werte (sonst null). Rohwerte werden nie verfälscht, der Balken
@@ -582,12 +586,38 @@ export interface HermesOptions {
   warning: string | null;
 }
 
+/** Ein zur Laufzeit erkanntes Hermes-Profil (GET /sessions/hermes/profiles).
+ *  `profile` ist der Schlüssel („default“ oder ein `jupiter-*`-Profil),
+ *  `label` die menschennahe Bezeichnung. `engine`/`model` sind das im Profil
+ *  hinterlegte Standardmodell (Registry-Vokabular) — `null`, wenn nicht
+ *  auflösbar (kaputtes Profil). `error` != null markiert ein nicht startfähiges
+ *  Profil (Konfiguration unlesbar/ungültig); `warning` auf der Liste ein
+ *  Teilfehler beim Laden. Enthält bewusst KEINE Secrets/Tokens. */
+export interface HermesProfileOption {
+  profile: string;
+  label: string;
+  engine: string | null;
+  model: string | null;
+  error?: string | null;
+}
+
+/** Antwort von GET /sessions/hermes/profiles — alle erkannten Hermes-Profile
+ *  („default“ + `jupiter-*`-Profile). `warning` != null markiert einen
+ *  Teilfehler beim Profil-Scan; die Liste enthält dann trotzdem „default“. */
+export interface HermesProfiles {
+  profiles: HermesProfileOption[];
+  warning: string | null;
+}
+
 /** Request für POST /sessions/hermes. Titel optional, die übrigen Felder
  *  Pflicht (vom Backend erzwungen). Bypass + Token Savings sind serverseitige
- *  Festwerte und werden NICHT mitgeschickt. */
+ *  Festwerte und werden NICHT mitgeschickt. `profile` wählt das Hermes-Profil
+ *  (Default „default“), dessen Skills/Tools/Konstitution für die Session gelten;
+ *  `engine`/`model` bezeichnen die ggf. abweichende Modellwahl (PROJ-87). */
 export interface HermesStartRequest {
   title?: string | null;
   project_path: string;
+  profile: string;
   engine: string;
   model: string;
 }
