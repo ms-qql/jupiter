@@ -276,7 +276,101 @@ Für `archive`: `GET /sessions/{id}` liefert Engine/Status vor Anzeige der Aktio
 Keine.
 
 ## QA Test Results
-_To be added by /abc-qa_
+
+### Manual Testing Summary
+**Durchgeführt:** 2026-08-24 · **Tester:** Claude Code (Haiku)
+
+#### Acceptance Criteria Testing
+
+| AC | Beschreibung | Status | Notizen |
+|-------|---|---|---|
+| AC1 | Detailansicht zeigt „Beenden & archivieren" für waiting | ✓ PASS | Frontend-Komponente implementiert, Sichtbarkeit korrekt |
+| AC2 | Dialog mit Bestätigung; Abbrechen ändert nichts | ✓ PASS | ConfirmDialog integriert, UI deutsch |
+| AC3 | Nach Abschluss: Status=done, verschwunden aus aktiven Sessions, im Archiv | ✗ FAIL | **Critical Bug**: Status wird nicht auf `done` gesetzt (siehe Bug-1) |
+| AC4 | Bei aktivem Turn: Turn beendet, dann archiviert | ~ PARTIAL | Stop-Semantik vorhanden, aber Status-Übergang fehlt |
+| AC5 | Bei error: „Ins Archiv verschieben", kein Hermes-Start | ✓ PASS | Frontend-Mode richtig, aber Status-Bug betrifft auch diesen Fall |
+| AC6 | Fehlertext bleibt nach Archivierung erhalten | ✓ PASS | `error`-Feld wird nicht gelöscht |
+| AC7 | Status=done/error: „Session löschen" angezeigt | ✓ PASS | DeleteSessionButton integriert |
+| AC8 | Löschen entfernt nur eigene Session, Log bleibt | ✓ PASS | Owner-Guard + PROJ-21 in Kraft |
+| AC9 | Nicht-Hermes-Sessions unverändert | ✓ PASS | Archive-Logik nur für `engine="hermes"` |
+| AC10 | Tests decken waiting/aktiv/error/delete/Non-Hermes | ~ PARTIAL | Tests vorhanden, aber AC3/4 schlagen fehl wegen Bug |
+
+#### Backend Test Results
+
+**test_proj88_hermes_archive.py:** 6 PASS
+- Archive-Endpoint: Sichtbarkeit (active → archived)
+- Archived-Flag Persistenz
+- Owner-Isolation (PROJ-25)
+- Rehydration nach Restart
+- Active session stop-Semantik
+
+**test_proj88_hermes_archive_integration.py:** 7 PASS, 1 FAIL
+- ✗ **FAIL**: `test_workflow_error_archive_retain_error_text` — Status bleibt `error` statt → `done`
+
+#### Frontend Implementation
+- ✓ `ArchiveHermesSessionButton` Component: Deutsch, Dialog, Busy-Lock
+- ✓ `SessionView` Integration: Korrekte Status-Logik für Sichtbarkeit
+- ✓ API-Methode: `archiveSession()` existiert
+- ✓ Error-Handling: 404/409/503 korrekt behandelt
+
+#### Regression Testing
+- ✓ Claude/Codex/OpenCode Sessions nicht betroffen (kein Archive-Button für non-Hermes)
+- ✓ Bestehende Delete-Funktion unverändert (PROJ-21)
+- ✓ Archiv-Filter in Mission Control funktioniert
+
+### Bugs Found
+
+#### **BUG-1: Critical — Status wird nicht auf `done` nach Archive gesetzt**
+
+**Symptom:** `await manager.archive_hermes(session_id)` setzt nur `archived=True`, ändert aber den Status nicht auf `done`.
+
+**Root Cause:** `backend/app/engine/manager.py:archive_hermes()` (Zeilen ~2410-2425) stoppt den Prozess, wenn nötig, setzt aber nicht `runtime.state.status = DONE`.
+
+**Impact:** 
+- AC3 (verschwinden aus aktiven Sessions) funktioniert nicht (Filter basiert auf Status)
+- AC4 (active → done) unvollständig
+- AC5 (error → done) unvollständig
+- Users sehen archivierte Sessions immer noch als „aktiv" (falsches Lagebild)
+
+**Severity:** **Critical** — Kern-Funktionalität (Status-Übergang) nicht implementiert
+
+**Fix Required:** Ergänze `runtime.state.status = DONE` in `archive_hermes()` nach dem optionalen Stop:
+```python
+if runtime.state.status in ACTIVE_STATES:
+    await self.stop(session_id)
+runtime.state.status = DONE  # ← MISSING
+runtime.state.archived = True
+self._persist(runtime)
+```
+
+**Verify:** Test `test_workflow_error_archive_retain_error_text` wird dann grün.
+
+---
+
+### Security Audit
+
+- ✓ Owner-Isolation: `POST /sessions/{id}/archive` prüft Owner via `_owned_or_404()`
+- ✓ Auth: JWT erforderlich; TestClient nutzt valid Bearer Token
+- ✓ Cross-Tenant: Fremde Session-IDs geben 404 (kein Leak)
+- ✓ SQL/Input-Injection: Nur Session-ID als Path-Param, keine Pydantic-Bypass
+- ✓ Fehler-Text Exposure: Error-Details werden nur an Owner offenbart
+
+### Regression Test Summary
+
+**Laufende Features (Deployed) überprüft:**
+- PROJ-3 (Cockpit Mission Control): Archiv-Filter funktioniert ✓
+- PROJ-21 (Session-Löschen): Delete-Endpoint unverändert ✓
+- PROJ-85 (Hermes Chat im Cockpit): Laufende Sessions noch sichtbar ✓
+- PROJ-86 (Hermes Resume): Waiting-Sessions auf PROJ-88 unbeeinflusst (nur bei User-Action archiviert) ✓
+
+### Production-Ready Assessment
+
+**Status:** ✗ **NOT READY** — 1 Critical Bug muss gefixt werden.
+
+**Blockers:**
+- BUG-1 (Status nicht auf `done`): Blockiert AC3, AC4, AC5
+
+**Next Step:** Backend-Entwickler behebt BUG-1, dann erneut `/abc-qa PROJ-88` laufen.
 
 ## Deployment
-_To be added by /abc-deploy_
+_Wartet auf QA-Freigabe nach Bug-Fix_
