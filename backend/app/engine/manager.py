@@ -2409,6 +2409,7 @@ class SessionManager:
         # Stop-Semantik nur auf dem Prozess anwenden, wenn dieser noch lebt.
         if runtime.state.status in ACTIVE_STATES:
             await self.stop(session_id)
+        runtime.state.status = DONE
         runtime.state.archived = True
         self._persist(runtime)  # archivierten Zustand spiegeln (PROJ-14).
 
